@@ -1,16 +1,29 @@
 import { db } from '@/lib/db/client';
 import { newId, reviveDates, rows, unwrap } from '@/lib/db/rows';
 import type { Dealer, DealerLead, LeadStatus } from '@/lib/db/types';
+import { hashPassword } from '@/lib/auth/password';
 import type { DealerLeadInput } from './schema';
 
 export type LeadWithDealer = DealerLead & { dealer: Pick<Dealer, 'id' | 'name' | 'status'> | null };
 
-/** Persists a validated lead from the public sign-up form. */
+/** Persists a validated lead from the public sign-up form; the password is stored only as a hash. */
 export async function createLead(input: DealerLeadInput, source = 'landing'): Promise<DealerLead> {
   const row = unwrap(await db().from('DealerLead').insert({
-    id: newId(), shopName: input.shopName, province: input.province, types: input.types, phone: input.phone, lineId: input.lineId || null, source,
+    id: newId(), shopName: input.shopName, province: input.address.province, types: input.types, phone: input.phone, lineId: input.lineId || null, source,
+    email: input.email, passwordHash: hashPassword(input.password), address: input.address,
   }).select('*').single());
   return reviveDates<DealerLead>(row);
+}
+
+/** A not-yet-handled lead (NEW / CONTACTED) that already uses this email. */
+export async function findOpenLeadByEmail(email: string): Promise<DealerLead | null> {
+  const data = unwrap(await db().from('DealerLead').select('*').eq('email', email.trim().toLowerCase()).in('status', ['NEW', 'CONTACTED']).order('createdAt', { ascending: false }).limit(1).maybeSingle());
+  return data ? reviveDates<DealerLead>(data) : null;
+}
+
+/** Drops the stored password hash once the lead no longer needs it (approved or rejected). */
+export async function clearLeadPassword(id: string): Promise<void> {
+  unwrap(await db().from('DealerLead').update({ passwordHash: null }).eq('id', id));
 }
 
 export async function listLeads(status?: LeadStatus): Promise<LeadWithDealer[]> {

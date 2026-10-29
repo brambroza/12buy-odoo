@@ -6,7 +6,8 @@ import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 
 const ACCEPT = 'image/jpeg,image/png,image/webp';
-const MAX_BYTES = 5 * 1024 * 1024;
+// Vercel caps a request body at 4.5 MB; phone photos are shrunk well below this first.
+const MAX_BYTES = 4 * 1024 * 1024;
 /** Phone photos are 3–8 MB; shrink anything larger than this so the upload stays fast. */
 const COMPRESS_ABOVE_BYTES = 1.5 * 1024 * 1024;
 const MAX_EDGE = 2000;
@@ -62,7 +63,7 @@ export function SlipUpload({ orderId, action, replacing }: { orderId: string; ac
     setPreparing(true);
     const ready = await shrinkImage(picked);
     setPreparing(false);
-    if (ready.size > MAX_BYTES) { setError('ไฟล์ใหญ่เกิน 5 MB'); return; }
+    if (ready.size > MAX_BYTES) { setError('ไฟล์ใหญ่เกิน 4 MB'); return; }
     setFile(ready);
     setPreview(URL.createObjectURL(ready));
   };

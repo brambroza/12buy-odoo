@@ -7,6 +7,7 @@ import { verifyPassword } from '@/lib/auth/password';
 import { homeFor, type Role } from '@/lib/auth/roles';
 import { createSession, destroySession } from '@/lib/auth/session';
 import { findUserByEmail, updateUser } from '@/lib/auth/users';
+import { findOpenLeadByEmail } from '@/lib/leads/repo';
 import { safeNext } from '@/lib/safe-next';
 
 export type LoginResult = { ok: false; message: string } | null;
@@ -26,6 +27,11 @@ export async function loginAction(_prev: LoginResult, formData: FormData): Promi
   if (!parsed.success) return { ok: false, message: parsed.error.issues[0]?.message ?? 'ข้อมูลไม่ครบ' };
 
   const user = await findUserByEmail(parsed.data.email);
+  if (!user) {
+    // A shop that signed up but is not approved yet: say so instead of "wrong password".
+    const lead = await findOpenLeadByEmail(parsed.data.email);
+    if (lead?.passwordHash && verifyPassword(parsed.data.password, lead.passwordHash)) return { ok: false, message: 'ใบสมัครของร้านอยู่ระหว่างตรวจสอบ ทีมงานจะติดต่อกลับภายใน 1 วันทำการ' };
+  }
   if (!user || !verifyPassword(parsed.data.password, user.passwordHash)) {
     await audit(user?.id ?? null, 'login.failed', 'User', user?.id ?? parsed.data.email.toLowerCase());
     return { ok: false, message: GENERIC };

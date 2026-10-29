@@ -9,6 +9,7 @@ import { cn } from '@/lib/utils';
 import type { LeadStatus } from '@/lib/db/types';
 import { approveLeadAction, setLeadStatusAction } from '../dealer-actions';
 import Link from 'next/link';
+import { formatThaiAddress, parseThaiAddress } from '@/lib/thai-address';
 
 const STATUS: Record<LeadStatus, string> = { NEW: 'ใหม่', CONTACTED: 'ติดต่อแล้ว', APPROVED: 'อนุมัติแล้ว', REJECTED: 'ไม่ผ่าน' };
 const STATUS_CLASS: Record<LeadStatus, string> = { NEW: 'bg-amber-500/15 text-amber-700', CONTACTED: 'bg-blue-500/15 text-blue-700', APPROVED: 'bg-emerald-500/15 text-emerald-700', REJECTED: 'bg-muted text-muted-foreground' };
@@ -26,7 +27,7 @@ export default async function LeadsPage({ searchParams }: { searchParams: Promis
     <div className="space-y-4">
       <div>
         <h1 className="text-2xl font-bold">ใบสมัครดีลเลอร์</h1>
-        <p className="text-sm text-muted-foreground">จากฟอร์มสมัครบนหน้าเว็บ · อนุมัติ = สร้างร้านในระบบทันที แล้วไปสร้างบัญชีเข้าสู่ระบบให้ร้าน</p>
+        <p className="text-sm text-muted-foreground">จากฟอร์มสมัครบนหน้าเว็บ · อนุมัติ = สร้างร้านและบัญชีเจ้าของร้าน (อีเมล/รหัสผ่านที่ร้านตั้งตอนสมัคร) ทันที</p>
       </div>
       <div className="flex flex-wrap gap-2">
         {(Object.keys(STATUS) as LeadStatus[]).map((s) => (
@@ -43,6 +44,13 @@ export default async function LeadsPage({ searchParams }: { searchParams: Promis
               <span className="text-xs text-muted-foreground">{lead.province} · {lead.types.map((t) => DEALER_TYPE_LABELS[t as DealerType]).join(', ')} · {fmt.format(lead.createdAt)}</span>
             </div>
             <p className="mt-1 text-xs text-muted-foreground">โทร <a href={`tel:${lead.phone.replace(/\D/g, '')}`} className="underline">{lead.phone}</a>{lead.lineId && <> · LINE {lead.lineId}</>}{lead.note && <> · หมายเหตุ: {lead.note}</>}</p>
+            {(lead.email || parseThaiAddress(lead.address)) && (
+              <p className="mt-1 text-xs text-muted-foreground">
+                {lead.email && <>อีเมลเข้าสู่ระบบ {lead.email}{lead.passwordHash ? ' (ตั้งรหัสผ่านแล้ว อนุมัติแล้วร้านเข้าระบบได้ทันที)' : ''}</>}
+                {lead.email && parseThaiAddress(lead.address) && ' · '}
+                {parseThaiAddress(lead.address) && <>ที่อยู่ {formatThaiAddress(parseThaiAddress(lead.address)!)}</>}
+              </p>
+            )}
             {lead.dealer && <p className="mt-1 text-xs"><Link href={`/admin/dealers?open=${lead.dealer.id}`} className="text-primary underline">เปิดร้าน {lead.dealer.name}</Link></p>}
             {lead.status !== 'APPROVED' && (
               <div className="mt-3 flex flex-wrap items-center gap-2">

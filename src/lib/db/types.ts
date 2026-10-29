@@ -138,6 +138,12 @@ export type DealerLead = {
   dealerId: string | null;
   createdAt: Date;
   handledAt: Date | null;
+  /** Owner login chosen at sign-up; becomes the DEALER_OWNER account on approval. */
+  email: string | null;
+  /** scrypt hash of the chosen password; cleared once the lead is approved or rejected. */
+  passwordHash: string | null;
+  /** Structured shop address (ThaiAddress) from the sign-up form. */
+  address: unknown;
 };
 
 export type PasswordResetRequest = {

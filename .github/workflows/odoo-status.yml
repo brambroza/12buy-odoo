@@ -1,0 +1,20 @@
+# Pulls delivery/invoice/payment status from Odoo into web orders every 10 minutes during Thai business days.
+# Vercel Hobby cron runs only once a day, so this scheduler does the frequent calls.
+# Needs repository secrets: CRON_SECRET (same value as on Vercel) and SITE_URL (e.g. https://12buy.vercel.app).
+name: odoo-status-sync
+on:
+  schedule:
+    - cron: '*/10 1-12 * * 1-6' # 08:00–19:59 ICT, Mon–Sat
+  workflow_dispatch:
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Call status sync
+        env:
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+          SITE_URL: ${{ secrets.SITE_URL }}
+        run: |
+          if [ -z "$CRON_SECRET" ] || [ -z "$SITE_URL" ]; then echo "CRON_SECRET / SITE_URL not set"; exit 0; fi
+          curl --fail-with-body -sS -X POST -H "Authorization: Bearer $CRON_SECRET" "$SITE_URL/api/cron/odoo-status"

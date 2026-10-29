@@ -3,7 +3,8 @@ import { db } from '@/lib/db/client';
 
 const BUCKET = 'slips';
 const ALLOWED: Record<string, string> = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp' };
-export const MAX_UPLOAD_BYTES = 5 * 1024 * 1024;
+/** Vercel caps a request body at 4.5 MB, so stay under it. */
+export const MAX_UPLOAD_BYTES = 4 * 1024 * 1024;
 const NAME_PATTERN = /^[a-z0-9]+-[a-z0-9]+\.(jpg|png|webp)$/i;
 
 /** Detects the real image type from the first bytes, so a renamed file cannot pass as an image. */
@@ -17,7 +18,7 @@ export function sniffImageType(bytes: Uint8Array): string | null {
 /** Validates and stores an uploaded image. Returns the stored file name or a Thai error message. */
 export async function saveSlip(orderId: string, file: File): Promise<{ ok: true; name: string } | { ok: false; reason: string }> {
   if (file.size === 0) return { ok: false, reason: 'ไฟล์ว่าง' };
-  if (file.size > MAX_UPLOAD_BYTES) return { ok: false, reason: 'ไฟล์ใหญ่เกิน 5 MB' };
+  if (file.size > MAX_UPLOAD_BYTES) return { ok: false, reason: 'ไฟล์ใหญ่เกิน 4 MB' };
   const bytes = new Uint8Array(await file.arrayBuffer());
   const type = sniffImageType(bytes);
   const ext = type ? ALLOWED[type] : undefined;

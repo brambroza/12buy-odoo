@@ -10,9 +10,10 @@ import { generateTempPassword } from '@/lib/auth/password';
 import { findResetRequest, resolveResetRequests } from '@/lib/auth/reset-requests';
 import { canManageRole, type Role } from '@/lib/auth/roles';
 import { requireAdmin, requireBackoffice, revokeAllSessions } from '@/lib/auth/session';
-import { createUser, findUserById, isUniqueViolation, setPassword, updateUser } from '@/lib/auth/users';
+import { createUser, createUserWithHash, findUserByEmail, findUserById, isUniqueViolation, setPassword, updateUser } from '@/lib/auth/users';
 import { createDealer, getDealer, updateDealer } from '@/lib/dealers/repo';
-import { findLead, setLeadStatus } from '@/lib/leads/repo';
+import { clearLeadPassword, findLead, setLeadStatus } from '@/lib/leads/repo';
+import { formatThaiAddress, parseThaiAddress } from '@/lib/thai-address';
 import { ensureDealerPartner } from '@/lib/odoo/dealer-partner';
 import * as admin from '@/lib/admin/store';
 import { PROVINCES } from '@/lib/provinces';
@@ -180,17 +181,34 @@ export async function openAsDealerAction(formData: FormData) {
   redirect('/shop');
 }
 
-/** Approve a lead: create an ACTIVE dealer from it, link them, and create/link its Odoo customer. */
+/**
+ * Approve a lead: create an ACTIVE dealer from it (with the sign-up address), link them, create the
+ * DEALER_OWNER login from the email + password the shop chose, and create/link its Odoo customer.
+ */
 export async function approveLeadAction(formData: FormData) {
   const actor = await requireAdmin();
   const leadId = String(formData.get('leadId') ?? '');
   const lead = await findLead(leadId);
   if (!lead || lead.status === 'APPROVED') redirect('/admin/leads');
   const tier = tierSchema.safeParse(formData.get('tier')).data ?? 'M';
-  const dealer = await createDealer({ name: lead.shopName, province: lead.province, types: lead.types, tier, status: 'ACTIVE', phone: lead.phone, lineId: lead.lineId });
+  const shipping = parseThaiAddress(lead.address);
+  const dealer = await createDealer({
+    name: lead.shopName, province: lead.province, types: lead.types, tier, status: 'ACTIVE', phone: lead.phone, lineId: lead.lineId,
+    ...(shipping ? { address: formatThaiAddress(shipping), shippingAddress: shipping } : {}),
+  });
   await updateDealer(dealer.id, { approvedAt: new Date(), approvedById: actor.id });
   await setLeadStatus(leadId, 'APPROVED', { dealerId: dealer.id });
   await audit(actor.id, 'lead.approve', 'DealerLead', leadId, { dealerId: dealer.id, tier });
+  let accountNote = '';
+  if (lead.email && lead.passwordHash) {
+    if (await findUserByEmail(lead.email)) {
+      accountNote = `อีเมล ${lead.email} มีบัญชีอยู่แล้ว ยังไม่ได้สร้างบัญชีให้ร้าน กรุณาสร้างเองด้านล่าง`;
+    } else {
+      const owner = await createUserWithHash({ email: lead.email, name: lead.shopName, passwordHash: lead.passwordHash, role: 'DEALER_OWNER', dealerId: dealer.id });
+      await audit(actor.id, 'user.create', 'User', owner.id, { role: 'DEALER_OWNER', dealerId: dealer.id, via: 'lead' });
+    }
+    await clearLeadPassword(leadId);
+  }
   let odooError = '';
   try {
     const partnerId = await ensureDealerPartner(dealer, (await profileFromDealer(dealer)).pricelistId);
@@ -200,7 +218,8 @@ export async function approveLeadAction(formData: FormData) {
     odooError = error instanceof Error ? error.message : String(error);
   }
   revalidate();
-  const odooParam = odooError ? `&error=${encodeURIComponent(`อนุมัติแล้ว แต่ยังผูกลูกค้า Odoo ไม่ได้: ${odooError}`)}` : '';
+  const problems = [odooError && `อนุมัติแล้ว แต่ยังผูกลูกค้า Odoo ไม่ได้: ${odooError}`, accountNote].filter(Boolean).join(' · ');
+  const odooParam = problems ? `&error=${encodeURIComponent(problems)}` : '';
   redirect(`/admin/dealers?open=${dealer.id}&fromLead=1${odooParam}`);
 }
 
@@ -211,6 +230,7 @@ export async function setLeadStatusAction(formData: FormData) {
     .safeParse({ leadId: formData.get('leadId'), status: formData.get('status'), note: formData.get('note') ?? '' });
   if (!parsed.success) redirect('/admin/leads');
   await setLeadStatus(parsed.data.leadId, parsed.data.status, { note: parsed.data.note || undefined });
+  if (parsed.data.status === 'REJECTED') await clearLeadPassword(parsed.data.leadId);
   await audit(actor.id, `lead.${parsed.data.status.toLowerCase()}`, 'DealerLead', parsed.data.leadId);
   revalidate();
   redirect('/admin/leads');

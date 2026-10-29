@@ -1,7 +1,13 @@
 import type { DealerLeadInput } from './schema';
 
-/** Minimal lead shape passed to the notifier (DB row or in-memory). */
-export type LeadNotification = DealerLeadInput & { id: string; createdAt: string | Date; source: string };
+/** Lead shape passed to the notifier. Never contains the password (see `toNotification`). */
+export type LeadNotification = Omit<DealerLeadInput, 'password' | 'confirmPassword' | 'website'> & { province: string; id: string; createdAt: string | Date; source: string };
+
+/** Builds the webhook payload from a validated lead, dropping the password fields. */
+export function toNotification(input: DealerLeadInput, meta: { id: string; createdAt: string | Date; source: string }): LeadNotification {
+  const { password: _p, confirmPassword: _c, website: _w, ...safe } = input;
+  return { ...safe, province: input.address.province, ...meta };
+}
 
 const attempts = new Map<string, number[]>();
 

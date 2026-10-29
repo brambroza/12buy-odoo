@@ -33,6 +33,15 @@ export async function createUser(input: { email: string; name: string; password:
   return reviveDates<User>(row);
 }
 
+/** Creates a user from a password hash collected earlier (dealer sign-up). Throws 23505 when the email exists. */
+export async function createUserWithHash(input: { email: string; name: string; passwordHash: string; role: Role; dealerId: string }): Promise<User> {
+  const row = unwrap(await db().from('User').insert({
+    id: newId(), email: normalizeEmail(input.email), name: input.name.trim(), passwordHash: input.passwordHash, role: input.role,
+    dealerId: input.dealerId, mustChangePassword: false, updatedAt: new Date().toISOString(),
+  }).select('*').single());
+  return reviveDates<User>(row);
+}
+
 /** Patches a user row and bumps `updatedAt`. */
 export async function updateUser(id: string, patch: Partial<Pick<User, 'passwordHash' | 'mustChangePassword' | 'isActive' | 'lastLoginAt' | 'name'>>): Promise<void> {
   const data: Record<string, unknown> = { ...patch, updatedAt: new Date().toISOString() };

@@ -8,3 +8,13 @@ node_modules
 
 .proto-data
 
+
+# Vercel CLI link
+.vercel
+
+# Client documents and UAT evidence (screenshots show bank accounts, customers, prices) — keep out of the public repo
+docs/uat-*/
+docs/screenshots/payment/
+docs/*.docx
+docs/*.pdf
+docs/~$*

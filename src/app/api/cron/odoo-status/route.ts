@@ -13,8 +13,13 @@ function authorized(request: Request): boolean {
 
 /**
  * Scheduled pull of delivery/invoice/payment status from Odoo into web orders (read-only on Odoo).
- * Call every 5–10 minutes from the scheduler (DigitalOcean job / GitHub Actions) with the secret.
+ * Call every 5–10 minutes with the secret: Vercel Cron sends GET with `Authorization: Bearer $CRON_SECRET`,
+ * other schedulers (GitHub Actions) may POST.
  */
+export async function GET(request: Request) {
+  return POST(request);
+}
+
 export async function POST(request: Request) {
   if (!authorized(request)) return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
   try {
