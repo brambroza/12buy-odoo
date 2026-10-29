@@ -7,12 +7,13 @@ import * as admin from '@/lib/admin/store';
 import { dryRunPublish } from '@/lib/admin/dry-run';
 import { clearCatalogCache, getCatalog, getReferenceData, priceFor, searchProducts } from '@/lib/shop/catalog';
 import { publishBookToOdoo } from '@/lib/odoo/pricelist-publish';
-import type { PriceBook } from '@/lib/admin/types';
+import type { OdooPublishResult, PriceBook } from '@/lib/admin/types';
+import { flash } from '@/lib/flash';
 import { requireAdmin, requireBackoffice } from '@/lib/auth/session';
 import { canSyncOrder, syncOrderToOdoo } from '@/lib/shop/odoo-sync';
 import * as shopStore from '@/lib/shop/store';
 import { refreshOrderStatuses } from '@/lib/shop/status-sync';
-import type { DealerType, ProtoOrder } from '@/lib/shop/types';
+import { ORDER_STATUS_LABELS, type DealerType, type ProtoOrder } from '@/lib/shop/types';
 
 const tierSchema = z.enum(['S', 'M', 'L']);
 const typeSchema = z.enum(['CAR', 'TRUCK', 'MOTORCYCLE', 'BATTERY', 'WHEEL']);
@@ -31,8 +32,10 @@ export async function saveZoneAction(formData: FormData) {
   if (!parsed.success) redirect('/admin/zones?error=' + encodeURIComponent(parsed.error.issues[0]?.message ?? 'ข้อมูลไม่ถูกต้อง'));
   const { provinces } = await getReferenceData();
   const valid = new Set(provinces.map((p) => p.name));
-  await admin.upsertZone({ ...parsed.data, provinces: parsed.data.provinces.filter((p) => valid.has(p)) });
+  const kept = parsed.data.provinces.filter((p) => valid.has(p));
+  await admin.upsertZone({ ...parsed.data, provinces: kept });
   revalidateAdmin();
+  await flash(parsed.data.id ? 'บันทึกโซนราคาแล้ว' : 'สร้างโซนราคาแล้ว', { icon: 'map', description: `${parsed.data.name} · ${kept.length} จังหวัด` });
   redirect('/admin/zones');
 }
 
@@ -40,6 +43,7 @@ export async function deleteZoneAction(formData: FormData) {
   await requireAdmin();
   await admin.deleteZone(String(formData.get('id') ?? ''));
   revalidateAdmin();
+  await flash('ลบโซนราคาแล้ว', { icon: 'delete', description: 'จังหวัดในโซนนี้กลับไปใช้โซนเริ่มต้น' });
   redirect('/admin/zones');
 }
 
@@ -92,6 +96,10 @@ export async function saveGroupAction(formData: FormData) {
   });
   revalidateAdmin();
   const unknown = [...include.unknown, ...exclude.unknown];
+  await flash(parsed.data.id ? 'บันทึกกลุ่มลูกค้าแล้ว' : 'สร้างกลุ่มลูกค้าแล้ว', {
+    type: unknown.length ? 'warning' : 'success', icon: 'group',
+    description: unknown.length ? `${group.name} · ไม่พบรหัสสินค้า ${unknown.length} รายการ` : group.name,
+  });
   redirect(`/admin/groups?group=${group.id}&saved=1${unknown.length ? `&unknown=${encodeURIComponent(unknown.slice(0, 20).join(', '))}` : ''}`);
 }
 
@@ -99,6 +107,7 @@ export async function deleteGroupAction(formData: FormData) {
   await requireAdmin();
   await admin.deleteGroup(String(formData.get('id') ?? ''));
   revalidateAdmin();
+  await flash('ลบกลุ่มลูกค้าแล้ว', { icon: 'delete', description: 'ร้านในกลุ่มนี้กลับไปเห็นสินค้าทุกตัวในประเภทของร้าน' });
   redirect('/admin/groups');
 }
 
@@ -113,6 +122,7 @@ export async function openBookAction(formData: FormData) {
   const catalog = await getCatalog();
   const fallback = catalog.pricelists[0]?.id ?? 1;
   const book = await admin.ensureBook(parsed.data.zoneId, parsed.data.tier, parsed.data.basePricelistId ?? fallback);
+  await flash('เปิดตารางราคาแล้ว', { icon: 'price', description: `ระดับ ${parsed.data.tier}` });
   redirect(`/admin/prices?book=${book.id}`);
 }
 
@@ -133,6 +143,7 @@ export async function saveGridAction(formData: FormData) {
   }
   await admin.updateBook(bookId, { entries });
   revalidateAdmin();
+  await flash('บันทึกราคาแล้ว', { icon: 'save', description: `${Object.keys(entries).length} รายการในตาราง · ยังไม่เผยแพร่จนกว่าจะอนุมัติ` });
   redirect(`/admin/prices?book=${bookId}&saved=1`);
 }
 
@@ -148,6 +159,7 @@ export async function saveBookSettingsAction(formData: FormData) {
   }
   await admin.updateBook(bookId, { basePricelistId: parsed.data.basePricelistId, typePercent });
   revalidateAdmin();
+  await flash('บันทึกการตั้งค่าตารางราคาแล้ว', { icon: 'save' });
   redirect(`/admin/prices?book=${bookId}&saved=1`);
 }
 
@@ -169,6 +181,7 @@ export async function importPricesAction(formData: FormData) {
   }
   await admin.updateBook(bookId, { entries });
   revalidateAdmin();
+  await flash(`ดึงราคา ${products.length} รายการแล้ว`, { icon: 'import', description: 'คำนวณจาก pricelist ฐาน + % ตามประเภท' });
   redirect(`/admin/prices?book=${bookId}&saved=1${type ? `&type=${type}` : ''}${query ? `&q=${encodeURIComponent(query)}` : ''}`);
 }
 
@@ -177,6 +190,7 @@ export async function clearEntriesAction(formData: FormData) {
   const bookId = String(formData.get('bookId') ?? '');
   if (await admin.getBook(bookId)) await admin.updateBook(bookId, { entries: {} });
   revalidateAdmin();
+  await flash('ล้างราคาในตารางแล้ว', { icon: 'delete' });
   redirect(`/admin/prices?book=${bookId}`);
 }
 
@@ -198,6 +212,7 @@ export async function dryRunAction(formData: FormData) {
   const result = dryRunPublish(book, zone, { pricelistId: target, items: target ? catalog.priceCtx.itemsByPricelist.get(target) ?? [] : [] }, names);
   await admin.updateBook(bookId, { lastDryRun: result });
   revalidateAdmin();
+  await flash('ตรวจความต่างกับ Odoo แล้ว', { type: 'info', icon: 'eye', description: `เพิ่ม ${result.create.length} · แก้ ${result.update.length} · ลบ ${result.unlink.length} (ยังไม่เขียน Odoo)` });
   redirect(`/admin/prices?book=${bookId}&dryrun=1`);
 }
 
@@ -211,6 +226,7 @@ export async function submitBookAction(formData: FormData) {
   if (!person.success) redirect(`/admin/prices?book=${bookId}&error=${encodeURIComponent(person.error.issues[0].message)}`);
   const result = await admin.submitBook(bookId, person.data);
   revalidateAdmin();
+  if (result.ok) await flash('ส่งขออนุมัติแล้ว', { icon: 'send', description: `ผู้ส่ง ${person.data} · ผู้อนุมัติต้องเป็นคนละคน` });
   redirect(`/admin/prices?book=${bookId}&${result.ok ? 'submitted=1' : `error=${encodeURIComponent(result.reason)}`}`);
 }
 
@@ -218,13 +234,21 @@ export async function submitBookAction(formData: FormData) {
  * Writes a published book into its own Odoo pricelist and records the outcome on the book.
  * Skipped (not failed) while Odoo writes are off.
  */
-async function pushBookToOdoo(book: PriceBook) {
+async function pushBookToOdoo(book: PriceBook): Promise<OdooPublishResult | null> {
   const zone = await admin.getZone(book.zoneId);
-  if (!zone) return;
+  if (!zone) return null;
   const catalog = await getCatalog();
   const outcome = await publishBookToOdoo(book, zone, catalog.products);
   await admin.updateBook(book.id, { odooPublish: outcome, odooPricelistId: outcome.pricelistId ?? book.odooPricelistId ?? null });
   if (outcome.status === 'DONE') clearCatalogCache();
+  return outcome;
+}
+
+/** Toast after a book went (or did not go) to Odoo. */
+async function flashOdooPublish(title: string, outcome: OdooPublishResult | null) {
+  if (outcome?.status === 'FAILED') await flash(`${title} แต่ส่งเข้า Odoo ไม่สำเร็จ`, { type: 'error', icon: 'publish', description: outcome.error ?? 'ลองกดส่งเข้า Odoo อีกครั้ง' });
+  else if (outcome?.status === 'SKIPPED') await flash(title, { type: 'info', icon: 'publish', description: 'ยังไม่เขียน Odoo (ปิดการเขียนอยู่) ร้านเห็นราคาใหม่บนเว็บแล้ว' });
+  else await flash(title, { icon: 'publish', description: 'ร้านเห็นราคาใหม่บนเว็บ และอัปเดต pricelist ใน Odoo แล้ว' });
 }
 
 /** Approver (must differ from submitter) publishes the book for the web shop, then writes it into Odoo. */
@@ -234,7 +258,7 @@ export async function approveBookAction(formData: FormData) {
   const person = personSchema.safeParse(formData.get('person'));
   if (!person.success) redirect(`/admin/prices?book=${bookId}&error=${encodeURIComponent(person.error.issues[0].message)}`);
   const result = await admin.approveBook(bookId, person.data);
-  if (result.ok) await pushBookToOdoo(result.book);
+  if (result.ok) await flashOdooPublish('อนุมัติและเผยแพร่ราคาแล้ว', await pushBookToOdoo(result.book));
   revalidateAdmin();
   redirect(`/admin/prices?book=${bookId}&${result.ok ? 'published=1' : `error=${encodeURIComponent(result.reason)}`}`);
 }
@@ -245,7 +269,7 @@ export async function republishBookAction(formData: FormData) {
   const bookId = String(formData.get('bookId') ?? '');
   const book = await admin.getBook(bookId);
   if (!book || book.status !== 'PUBLISHED') redirect(`/admin/prices?book=${bookId}`);
-  await pushBookToOdoo(book);
+  await flashOdooPublish('ส่งตารางราคาเข้า Odoo อีกครั้งแล้ว', await pushBookToOdoo(book));
   revalidateAdmin();
   redirect(`/admin/prices?book=${bookId}`);
 }
@@ -255,6 +279,7 @@ export async function rejectBookAction(formData: FormData) {
   const bookId = String(formData.get('bookId') ?? '');
   await admin.rejectBook(bookId);
   revalidateAdmin();
+  await flash('ตีกลับตารางราคาแล้ว', { type: 'info', icon: 'reject', description: 'กลับเป็นฉบับร่าง แก้ไขแล้วส่งขออนุมัติใหม่' });
   redirect(`/admin/prices?book=${bookId}&rejected=1`);
 }
 
@@ -281,6 +306,7 @@ export async function importByTypeAction(formData: FormData) {
   }
   await admin.updateBook(bookId, { entries });
   revalidateAdmin();
+  await flash(`นำเข้าราคา ${count} รายการแล้ว`, { icon: 'import', description: 'จาก pricelist ใน Odoo ตามประเภทสินค้า' });
   redirect(`/admin/prices?book=${bookId}&imported=${count}`);
 }
 
@@ -299,6 +325,7 @@ export async function saveCashPairsAction(formData: FormData) {
   }
   await admin.saveCashPairs(pairs);
   revalidateAdmin();
+  await flash('บันทึกคู่ราคาเครดิต–เงินสดแล้ว', { icon: 'price', description: `${pairs.length} คู่ · ใช้คำนวณส่วนลดเงินสดท้ายบิล` });
   redirect('/admin/prices?pairs=1');
 }
 
@@ -323,6 +350,12 @@ export async function adminAdvanceOrderAction(formData: FormData) {
   const failure = order.status === 'PENDING' && advanced?.status === 'PREPARING' && canSyncOrder(advanced) ? await pushOrReport(advanced) : null;
   revalidateAdmin();
   if (failure) redirect(`/admin/orders?error=${encodeURIComponent(failure)}`);
+  if (advanced && advanced.status !== order.status) {
+    await flash(order.status === 'PENDING' ? 'ยืนยันออเดอร์แล้ว' : `เปลี่ยนสถานะเป็น “${ORDER_STATUS_LABELS[advanced.status]}” แล้ว`, {
+      icon: advanced.status === 'SHIPPED' ? 'truck' : 'order',
+      description: `${order.ref} · ${order.dealerName}${order.status === 'PENDING' && advanced.odoo?.saleOrderName ? ` · Odoo ${advanced.odoo.saleOrderName}` : ''}`,
+    });
+  }
 }
 
 /** Pushes an order to Odoo; returns an error message for the admin, or null on success. */
@@ -341,12 +374,14 @@ export async function adminSyncOrderAction(formData: FormData) {
   const failure = await pushOrReport(order);
   revalidateAdmin();
   if (failure) redirect(`/admin/orders?error=${encodeURIComponent(failure)}`);
+  await flash('ส่งออเดอร์เข้า Odoo สำเร็จ', { icon: 'sync', description: order.ref });
 }
 
 export async function verifySlipAction(formData: FormData) {
   await requireBackoffice();
-  await shopStore.verifySlip(String(formData.get('orderId') ?? ''));
+  const order = await shopStore.verifySlip(String(formData.get('orderId') ?? ''));
   revalidateAdmin();
+  if (order?.payment.verifiedAt) await flash('ตรวจสลิปแล้ว', { icon: 'check', description: `${order.ref} · กดยืนยันออเดอร์ได้แล้ว` });
 }
 
 /** Pulls delivery/invoice/payment status for every order linked to Odoo. */
@@ -356,8 +391,10 @@ export async function adminRefreshStatusesAction() {
   try {
     const { checked, changed } = await refreshOrderStatuses();
     message = `ตรวจ ${checked} ออเดอร์จาก Odoo · เปลี่ยนสถานะ ${changed} ออเดอร์`;
+    await flash('อัปเดตสถานะจาก Odoo แล้ว', { icon: 'sync', description: message });
   } catch (error) {
     message = `อ่านสถานะจาก Odoo ไม่สำเร็จ: ${error instanceof Error ? error.message : String(error)}`;
+    await flash('อ่านสถานะจาก Odoo ไม่สำเร็จ', { type: 'error', icon: 'sync', description: error instanceof Error ? error.message : String(error) });
   }
   revalidateAdmin();
   redirect(`/admin/orders?info=${encodeURIComponent(message)}`);
@@ -366,12 +403,16 @@ export async function adminRefreshStatusesAction() {
 /** Saves the parcel tracking number the warehouse got from the carrier. */
 export async function adminSetTrackingAction(formData: FormData) {
   await requireBackoffice();
-  await shopStore.setTrackingRef(String(formData.get('orderId') ?? ''), String(formData.get('trackingRef') ?? ''));
+  const trackingRef = String(formData.get('trackingRef') ?? '');
+  const order = await shopStore.setTrackingRef(String(formData.get('orderId') ?? ''), trackingRef);
   revalidateAdmin();
+  if (order) await flash(trackingRef.trim() ? 'บันทึกเลขพัสดุแล้ว' : 'ลบเลขพัสดุแล้ว', { icon: 'truck', description: `${order.ref}${trackingRef.trim() ? ` · ${trackingRef.trim()}` : ''}` });
 }
 
 export async function adminCancelOrderAction(formData: FormData) {
   await requireBackoffice();
-  await shopStore.cancelOrder(null, String(formData.get('orderId') ?? ''));
+  const order = await shopStore.cancelOrder(null, String(formData.get('orderId') ?? ''));
   revalidateAdmin();
+  if (order?.status === 'CANCELLED') await flash('ยกเลิกออเดอร์แล้ว', { icon: 'cancel', description: `${order.ref} · ${order.dealerName}` });
+  else if (order) await flash('ยกเลิกไม่ได้', { type: 'error', icon: 'cancel', description: `${order.ref} อยู่ในสถานะ “${ORDER_STATUS_LABELS[order.status]}” แล้ว` });
 }

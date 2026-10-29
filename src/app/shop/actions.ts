@@ -3,7 +3,8 @@
 import { revalidatePath } from 'next/cache';
 import { redirect } from 'next/navigation';
 import { z } from 'zod';
-import { defaultQty, findProduct, getCatalog, searchProducts } from '@/lib/shop/catalog';
+import { baht, defaultQty, findProduct, getCatalog, searchProducts } from '@/lib/shop/catalog';
+import { flash } from '@/lib/flash';
 import { billTotals, cashDiscountPerUnit, orderPricelistId, resolvePrice, withCoupon } from '@/lib/shop/pricing';
 import { checkCartCoupon } from '@/lib/shop/cart-coupon';
 import { normalizeCode } from '@/lib/shop/coupon';
@@ -23,7 +24,7 @@ import { addressFromForm, shippingSchema, thaiAddressSchema } from '@/lib/shop/s
 import { formatThaiAddress } from '@/lib/thai-address';
 import { updateDealer } from '@/lib/dealers/repo';
 import { isBackofficeRole, type Role } from '@/lib/auth/roles';
-import type { OrderCoupon, OrderLine } from '@/lib/shop/types';
+import { ORDER_STATUS_LABELS, type OrderCoupon, type OrderLine } from '@/lib/shop/types';
 
 const qtySchema = z.coerce.number().int().min(1).max(999);
 const idSchema = z.coerce.number().int().positive();
@@ -44,7 +45,9 @@ export async function addToCartAction(_prev: ActionResult | null, formData: Form
   const sid = await ensureSessionId();
   await store.addToCart(sid, product.id, baseQty, unit, parsed.data.qty);
   revalidatePath('/shop', 'layout');
-  return { ok: true, message: unit.factor > 1 ? `ใส่ตะกร้าแล้ว ${parsed.data.qty} ${unit.name} (${baseQty} ${product.baseUnit})` : `ใส่ตะกร้าแล้ว ${baseQty} ${product.baseUnit}` };
+  const message = unit.factor > 1 ? `ใส่ตะกร้าแล้ว ${parsed.data.qty} ${unit.name} (${baseQty} ${product.baseUnit})` : `ใส่ตะกร้าแล้ว ${baseQty} ${product.baseUnit}`;
+  await flash(message, { icon: 'cart', description: product.name });
+  return { ok: true, message };
 }
 
 /** Sets the quantity of a cart line (0 removes it). `qty` is in the line's unit (pack or base). */
@@ -78,6 +81,7 @@ export async function changeCartUnitAction(formData: FormData) {
   const sid = await ensureSessionId();
   await store.changeCartUnit(sid, product.id, parsed.data.fromUnitId ?? null, to);
   revalidatePath('/shop', 'layout');
+  await flash(`เปลี่ยนหน่วยเป็น ${to.name} แล้ว`, { icon: 'cart', description: product.name });
 }
 
 /** Undo for a removed cart line: puts it back with the same unit and quantity. */
@@ -94,6 +98,7 @@ export async function restoreCartLineAction(formData: FormData) {
     ? { productId: product.id, qty: parsed.data.unitQty * unit.factor, unitId: unit.id, unitQty: parsed.data.unitQty, unitName: unit.name }
     : { productId: product.id, qty: parsed.data.qty }, parsed.data.index);
   revalidatePath('/shop', 'layout');
+  await flash('นำสินค้ากลับเข้าตะกร้าแล้ว', { icon: 'cart', description: product.name });
 }
 
 /** Stores the coupon code typed in the cart; the discount is checked against Odoo when the cart renders and again at checkout. */
@@ -103,6 +108,7 @@ export async function applyCouponAction(formData: FormData) {
   const sid = await ensureSessionId();
   await store.setCartCoupon(sid, code);
   revalidatePath('/shop/cart');
+  await flash(`เพิ่มโค้ด ${code} แล้ว`, { icon: 'coupon', description: 'ส่วนลดคำนวณในตะกร้า และตรวจสิทธิ์อีกครั้งตอนสั่งซื้อ' });
   redirect('/shop/cart');
 }
 
@@ -110,12 +116,14 @@ export async function removeCouponAction() {
   const sid = await ensureSessionId();
   await store.setCartCoupon(sid, null);
   revalidatePath('/shop/cart');
+  await flash('ลบโค้ดส่วนลดแล้ว', { icon: 'coupon' });
 }
 
 export async function clearCartAction() {
   const sid = await ensureSessionId();
   await store.setCart(sid, []);
   revalidatePath('/shop', 'layout');
+  await flash('ล้างตะกร้าแล้ว', { icon: 'cartRemove' });
 }
 
 /**
@@ -215,6 +223,7 @@ async function placeOrder(sid: string, input: CheckoutInput, shipTo: string) {
     throw error;
   }
   revalidatePath('/shop', 'layout');
+  await flash('ส่งคำสั่งซื้อสำเร็จ', { icon: 'order', description: `${order.ref} · ยอด ${baht(order.total)}${paymentMethod === 'CASH' ? ' · โอนแล้วแนบสลิปในหน้านี้' : ''}` });
   redirect(`/shop/orders/${order.id}?placed=1`);
 }
 
@@ -225,13 +234,20 @@ export async function reorderAction(formData: FormData) {
   const order = await store.getOrder(sid, id);
   if (!order) redirect('/shop/orders');
   const [catalog, profile] = await Promise.all([getCatalog(), getDealerProfile()]);
+  let added = 0;
   for (const line of order.lines) {
     const product = findProduct(catalog, line.productId);
     if (!product || !canSeeProduct(profile, product)) continue;
+    added += 1;
     const unit = line.unitId && line.unitQty ? { id: line.unitId, name: line.unitName ?? '', factor: Math.max(1, Math.round(line.qty / line.unitQty)) } : null;
     await store.addToCart(sid, line.productId, line.qty, unit, line.unitQty ?? null);
   }
   revalidatePath('/shop', 'layout');
+  const skipped = order.lines.length - added;
+  await flash(added ? `เพิ่ม ${added} รายการจาก ${order.ref} ลงตะกร้าแล้ว` : 'ไม่มีสินค้าที่สั่งซ้ำได้', {
+    type: added ? (skipped ? 'warning' : 'success') : 'warning', icon: 'cart',
+    description: skipped ? `ข้าม ${skipped} รายการที่ไม่มีขายหรือร้านสั่งไม่ได้แล้ว` : 'ตรวจจำนวนก่อนยืนยันสั่งซื้อ',
+  });
   redirect('/shop/cart');
 }
 
@@ -241,15 +257,18 @@ export async function advanceOrderAction(formData: FormData) {
   const user = await requireDealerAccess();
   if (!shopDemoControlsEnabled() || !isBackofficeRole(user.role as Role)) redirect(`/shop/orders/${id}`);
   const sid = await ensureSessionId();
-  await store.advanceOrder(sid, id);
+  const order = await store.advanceOrder(sid, id);
   revalidatePath(`/shop/orders/${id}`);
+  if (order) await flash(`เปลี่ยนสถานะเป็น “${ORDER_STATUS_LABELS[order.status]}” แล้ว`, { icon: 'truck', description: `${order.ref} · ปุ่มเดโม` });
 }
 
 export async function cancelOrderAction(formData: FormData) {
   const id = String(formData.get('orderId') ?? '');
   const sid = await ensureSessionId();
-  await store.cancelOrder(sid, id);
+  const order = await store.cancelOrder(sid, id);
   revalidatePath(`/shop/orders/${id}`);
+  if (order?.status === 'CANCELLED') await flash('ยกเลิกคำสั่งซื้อแล้ว', { icon: 'cancel', description: order.ref });
+  else if (order) await flash('ยกเลิกไม่ได้', { type: 'error', icon: 'cancel', description: `${order.ref} อยู่ในสถานะ “${ORDER_STATUS_LABELS[order.status]}” แล้ว ติดต่อฝ่ายขาย` });
 }
 
 /** True when the demo status buttons may be shown/used in the shop (never on production). */
@@ -302,6 +321,11 @@ export async function quickOrderAction(_prev: QuickOrderResult | null, formData:
     result.added.push({ line, name: product.name, qty: baseQty, unit: unit.factor > 1 ? `${unitQty} ${unit.name}` : undefined });
   }
   revalidatePath('/shop', 'layout');
+  if (result.added.length) {
+    await flash(`เพิ่ม ${result.added.length} รายการลงตะกร้าแล้ว`, { type: result.unresolved.length ? 'warning' : 'success', icon: 'cart', description: result.unresolved.length ? `อีก ${result.unresolved.length} บรรทัดหาสินค้าไม่เจอ ดูรายละเอียดด้านล่าง` : undefined });
+  } else if (result.unresolved.length) {
+    await flash('ยังไม่ได้เพิ่มสินค้า', { type: 'warning', icon: 'cart', description: 'หาสินค้าไม่เจอทุกบรรทัด ดูเหตุผลด้านล่าง' });
+  }
   return result;
 }
 
@@ -324,6 +348,7 @@ export async function uploadSlipAction(formData: FormData) {
   if (order.payment.slipFile) await deleteSlip(order.payment.slipFile);
   revalidatePath(`/shop/orders/${id}`);
   revalidatePath('/admin/orders');
+  await flash('แนบสลิปเรียบร้อย', { icon: 'upload', description: `${order.ref} · รอแอดมินตรวจสอบการโอน` });
   redirect(`/shop/orders/${id}?slip=1`);
 }
 
@@ -340,6 +365,7 @@ export async function addDealerStaffAction(_prev: StaffResult, formData: FormDat
     const created = await createUser({ email: parsed.data.email, name: parsed.data.name, password: tempPassword, role: 'DEALER_STAFF', dealerId: user.dealer.id, mustChangePassword: true });
     await audit(user.id, 'user.create', 'User', created.id, { role: 'DEALER_STAFF', dealerId: user.dealer.id, by: 'owner' });
     revalidatePath('/shop/account');
+    await flash('สร้างบัญชีพนักงานแล้ว', { icon: 'user', description: `${created.email} · ส่งรหัสชั่วคราวให้พนักงาน` });
     return { ok: true, message: 'สร้างแล้ว', email: created.email, tempPassword };
   } catch (error) {
     if (isUniqueViolation(error)) return { ok: false, message: 'อีเมลนี้มีผู้ใช้อยู่แล้ว' };
@@ -359,6 +385,7 @@ export async function updateShippingAction(_prev: ShippingResult, formData: Form
   await updateDealer(user.dealer.id, { address: formatThaiAddress(address), shippingAddress: address, phone: phone || null });
   await audit(user.id, 'dealer.shipping.update', 'Dealer', user.dealer.id, { before: { address: user.dealer.address, phone: user.dealer.phone }, after: { address, phone } });
   revalidatePath('/shop', 'layout');
+  await flash('บันทึกที่อยู่จัดส่งแล้ว', { icon: 'map', description: 'ใช้เป็นค่าเริ่มต้นในการสั่งซื้อครั้งถัดไป' });
   return { ok: true, message: 'บันทึกที่อยู่จัดส่งแล้ว' };
 }
 
@@ -382,5 +409,6 @@ export async function updateAvatarAction(_prev: AvatarResult, formData: FormData
   await audit(user.id, avatarFile ? 'dealer.avatar.update' : 'dealer.avatar.remove', 'Dealer', user.dealer.id);
   revalidatePath('/shop', 'layout');
   revalidatePath('/admin/dealers');
+  await flash(avatarFile ? 'อัปเดตรูปโปรไฟล์แล้ว' : 'ลบรูปโปรไฟล์แล้ว', { icon: 'image' });
   return { ok: true, message: avatarFile ? 'อัปเดตรูปโปรไฟล์แล้ว' : 'ลบรูปโปรไฟล์แล้ว' };
 }

@@ -4,6 +4,7 @@ import { useActionState } from 'react';
 import { Copy, KeyRound, UserPlus } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { notify } from '@/components/ui/notify';
 
 export type CredentialResult = { ok: true; message: string; email?: string; tempPassword?: string } | { ok: false; message: string } | null;
 type CredentialAction = (prev: CredentialResult, formData: FormData) => Promise<CredentialResult>;
@@ -17,7 +18,10 @@ function TempPassword({ email, password }: { email?: string; password: string })
       <p className="font-semibold">สร้างแล้ว ส่งรหัสนี้ให้ผู้ใช้ทาง LINE (แสดงครั้งเดียว)</p>
       {email && <p className="mt-1">อีเมล: <span className="font-mono">{email}</span></p>}
       <p>รหัสผ่านชั่วคราว: <span className="font-mono text-base font-bold">{password}</span></p>
-      <Button type="button" size="sm" variant="outline" className="mt-2" onClick={() => navigator.clipboard?.writeText(text)}><Copy className="size-3.5" /> คัดลอกข้อความ</Button>
+      <Button type="button" size="sm" variant="outline" className="mt-2" onClick={() => navigator.clipboard?.writeText(text).then(
+        () => notify.success('คัดลอกข้อความแล้ว', { id: 'copy-credential', icon: 'check', description: 'วางส่งให้ผู้ใช้ทาง LINE ได้เลย' }),
+        () => notify.warning('คัดลอกไม่ได้', { id: 'copy-credential', description: 'เลือกข้อความแล้วคัดลอกเอง' }),
+      ) ?? notify.warning('คัดลอกไม่ได้', { id: 'copy-credential', description: 'เบราว์เซอร์ไม่อนุญาต เลือกข้อความแล้วคัดลอกเอง' })}><Copy className="size-3.5" /> คัดลอกข้อความ</Button>
     </div>
   );
 }

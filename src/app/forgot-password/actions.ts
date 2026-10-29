@@ -3,6 +3,7 @@
 import { headers } from 'next/headers';
 import { z } from 'zod';
 import { allowResetRequest, requestPasswordReset } from '@/lib/auth/reset-requests';
+import { flash } from '@/lib/flash';
 
 export type ForgotPasswordResult = { ok: true; message: string } | { ok: false; message: string } | null;
 
@@ -29,5 +30,6 @@ export async function forgotPasswordAction(_prev: ForgotPasswordResult, formData
     console.error('[password-reset] save failed', error instanceof Error ? error.message : error);
     return { ok: false, message: 'ส่งคำขอไม่สำเร็จ กรุณาลองใหม่ หรือทัก LINE ได้เลย' };
   }
+  await flash('ส่งคำขอรีเซ็ตรหัสผ่านแล้ว', { icon: 'mail', description: 'ทีมงานจะติดต่อกลับภายใน 1 วันทำการ' });
   return { ok: true, message: DONE };
 }

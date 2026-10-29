@@ -7,6 +7,7 @@ import { passwordProblem, verifyPassword } from '@/lib/auth/password';
 import { requireUser } from '@/lib/auth/session';
 import { setPassword } from '@/lib/auth/users';
 import { safeNext } from '@/lib/safe-next';
+import { flash } from '@/lib/flash';
 import { homeFor, type Role } from '@/lib/auth/roles';
 
 export type PasswordResult = { ok: false; message: string } | null;
@@ -23,5 +24,6 @@ export async function changePasswordAction(_prev: PasswordResult, formData: Form
   if (parsed.data.password !== parsed.data.confirm) return { ok: false, message: 'รหัสผ่านใหม่ทั้งสองช่องไม่ตรงกัน' };
   await setPassword(user.id, parsed.data.password, false);
   await audit(user.id, 'password.change', 'User', user.id);
+  await flash('เปลี่ยนรหัสผ่านสำเร็จ', { icon: 'key', description: 'ครั้งหน้าเข้าสู่ระบบด้วยรหัสผ่านใหม่' });
   redirect(safeNext(parsed.data.next, homeFor(user.role as Role)));
 }

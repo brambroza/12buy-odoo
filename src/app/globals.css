@@ -150,3 +150,18 @@
 .landing .lp-glow {
   background: radial-gradient(60% 50% at 50% 0%, oklch(0.78 0.14 20 / 30%), transparent 70%);
 }
+
+/* Toast close button: top-right corner of the card (sonner puts it top-left by default). */
+[data-sonner-toaster] [data-sonner-toast] [data-close-button] {
+  left: auto;
+  right: 0.5rem;
+  top: 0.5rem;
+  transform: none;
+  border: 0;
+  background: transparent;
+  color: var(--muted-foreground);
+}
+[data-sonner-toaster] [data-sonner-toast] [data-close-button]:hover {
+  background: var(--muted);
+  color: var(--foreground);
+}

@@ -1,5 +1,6 @@
 'use server';
 
+import { flash } from '@/lib/flash';
 import { redirect } from 'next/navigation';
 import { z } from 'zod';
 import { audit } from '@/lib/auth/audit';
@@ -27,5 +28,6 @@ export async function createFirstAdminAction(_prev: SetupResult, formData: FormD
   const user = await createUser({ email: parsed.data.email, name: parsed.data.name, password: parsed.data.password, role: 'SUPER_ADMIN' });
   await audit(user.id, 'setup.first-admin', 'User', user.id);
   await createSession(user.id);
+  await flash('สร้างผู้ดูแลระบบคนแรกแล้ว', { icon: 'user', description: `${user.email} · เริ่มเพิ่มดีลเลอร์ได้เลย` });
   redirect('/admin/dealers');
 }

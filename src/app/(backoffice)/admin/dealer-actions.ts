@@ -18,6 +18,7 @@ import { ensureDealerPartner } from '@/lib/odoo/dealer-partner';
 import * as admin from '@/lib/admin/store';
 import { PROVINCES } from '@/lib/provinces';
 import { DEALER_COOKIE, encodeProfile, profileFromDealer } from '@/lib/shop/dealer';
+import { flash } from '@/lib/flash';
 
 const typeSchema = z.enum(['CAR', 'TRUCK', 'MOTORCYCLE', 'BATTERY', 'WHEEL']);
 const tierSchema = z.enum(['S', 'M', 'L']);
@@ -91,9 +92,10 @@ export async function createDealerAction(formData: FormData) {
     if (isUniqueViolation(error)) fail('/admin/dealers', 'ลูกค้า Odoo รายนี้ถูกผูกกับดีลเลอร์อื่นแล้ว');
     throw error;
   }
-  const groupId = saveDealerGroup(id, formData);
+  const groupId = await saveDealerGroup(id, formData);
   await audit(actor.id, 'dealer.create', 'Dealer', id, { ...parsed.data, customerGroupId: groupId });
   revalidate();
+  await flash('สร้างดีลเลอร์แล้ว', { icon: 'store', description: `${parsed.data.name} · ขั้นต่อไป: สร้างบัญชีเข้าสู่ระบบให้ร้าน` });
   redirect(`/admin/dealers?open=${id}&saved=1`);
 }
 
@@ -117,6 +119,11 @@ export async function updateDealerAction(formData: FormData) {
   const groupAfter = await saveDealerGroup(id, formData);
   await audit(actor.id, 'dealer.update', 'Dealer', id, { from: { status: before.status, tier: before.tier, types: before.types, creditEnabled: before.creditEnabled, creditLimit: before.creditLimit === null ? null : Number(before.creditLimit), creditOpening: Number(before.creditOpening), customerGroupId: groupBefore }, to: { status: parsed.data.status, tier: parsed.data.tier, types: parsed.data.types, creditEnabled: parsed.data.creditEnabled, creditLimit: parsed.data.creditLimit, creditOpening: parsed.data.creditOpening, customerGroupId: groupAfter } });
   revalidate();
+  await flash('บันทึกข้อมูลดีลเลอร์แล้ว', {
+    icon: 'save',
+    description: parsed.data.status === 'SUSPENDED' && before.status !== 'SUSPENDED' ? `${parsed.data.name} · ระงับร้านและออกจากระบบผู้ใช้ทุกคนแล้ว`
+      : becomingActive ? `${parsed.data.name} · เปิดใช้งานร้านแล้ว` : parsed.data.name,
+  });
   redirect(`/admin/dealers?open=${id}&saved=1`);
 }
 
@@ -132,6 +139,7 @@ export async function createDealerUserAction(_prev: CredentialResult, formData: 
     const user = await createUser({ email: parsed.data.email, name: parsed.data.name, password: tempPassword, role: parsed.data.role, dealerId: parsed.data.dealerId, mustChangePassword: true });
     await audit(actor.id, 'user.create', 'User', user.id, { role: user.role, dealerId: parsed.data.dealerId });
     revalidate();
+    await flash('สร้างบัญชีผู้ใช้ร้านแล้ว', { icon: 'user', description: `${user.email} · คัดลอกรหัสชั่วคราวส่งให้ร้านทาง LINE` });
     return { ok: true, message: 'สร้างผู้ใช้แล้ว', email: user.email, tempPassword };
   } catch (error) {
     if (isUniqueViolation(error)) return { ok: false, message: 'อีเมลนี้มีผู้ใช้อยู่แล้ว' };
@@ -152,6 +160,7 @@ export async function resetPasswordAction(_prev: CredentialResult, formData: For
   await resolveResetRequests(userId, actor.id);
   await audit(actor.id, 'user.reset-password', 'User', userId);
   revalidate();
+  await flash('รีเซ็ตรหัสผ่านแล้ว', { icon: 'key', description: `${target.email} · ออกจากระบบทุกอุปกรณ์แล้ว ส่งรหัสชั่วคราวให้ผู้ใช้` });
   return { ok: true, message: 'รีเซ็ตแล้ว', email: target.email, tempPassword };
 }
 
@@ -164,6 +173,7 @@ export async function dismissResetRequestAction(formData: FormData) {
   await resolveResetRequests(request.userId, actor.id, 'DISMISSED');
   await audit(actor.id, 'password-reset.dismiss', 'PasswordResetRequest', requestId);
   revalidate();
+  await flash('ปิดคำขอรีเซ็ตรหัสผ่านแล้ว', { type: 'info', icon: 'key', description: request.user.email });
   redirect('/admin/users');
 }
 
@@ -178,6 +188,7 @@ export async function toggleUserActiveAction(formData: FormData) {
   if (target.isActive) await revokeAllSessions(userId);
   await audit(actor.id, target.isActive ? 'user.deactivate' : 'user.activate', 'User', userId);
   revalidate();
+  await flash(target.isActive ? 'ปิดใช้งานผู้ใช้แล้ว' : 'เปิดใช้งานผู้ใช้แล้ว', { icon: target.isActive ? 'userOff' : 'user', description: target.isActive ? `${target.email} · ออกจากระบบทุกอุปกรณ์แล้ว` : target.email });
   redirect(back);
 }
 
@@ -191,6 +202,7 @@ export async function openAsDealerAction(formData: FormData) {
   jar.set(DEALER_COOKIE, encodeProfile(profile), { httpOnly: true, sameSite: 'lax', path: '/', maxAge: 60 * 60 * 8 });
   await audit(actor.id, 'dealer.impersonate', 'Dealer', dealer.id);
   revalidatePath('/shop', 'layout');
+  await flash(`กำลังดูร้านในมุมมองของ ${dealer.name}`, { type: 'info', icon: 'eye', description: 'ราคาและสินค้าตามที่ร้านเห็น · ใช้ได้ 8 ชั่วโมง' });
   redirect('/shop');
 }
 
@@ -233,6 +245,10 @@ export async function approveLeadAction(formData: FormData) {
   revalidate();
   const problems = [odooError && `อนุมัติแล้ว แต่ยังผูกลูกค้า Odoo ไม่ได้: ${odooError}`, accountNote].filter(Boolean).join(' · ');
   const odooParam = problems ? `&error=${encodeURIComponent(problems)}` : '';
+  await flash('อนุมัติใบสมัครแล้ว', {
+    type: problems ? 'warning' : 'success', icon: 'store',
+    description: problems ? `${lead.shopName} · มีเรื่องต้องตามต่อ ดูรายละเอียดในหน้า` : `${lead.shopName} · สร้างร้านและบัญชีเจ้าของร้านแล้ว`,
+  });
   redirect(`/admin/dealers?open=${dealer.id}&fromLead=1${odooParam}`);
 }
 
@@ -246,6 +262,9 @@ export async function setLeadStatusAction(formData: FormData) {
   if (parsed.data.status === 'REJECTED') await clearLeadPassword(parsed.data.leadId);
   await audit(actor.id, `lead.${parsed.data.status.toLowerCase()}`, 'DealerLead', parsed.data.leadId);
   revalidate();
+  const leadToast = { CONTACTED: ['บันทึกว่าติดต่อแล้ว', 'send'], REJECTED: ['ปฏิเสธใบสมัครแล้ว', 'reject'], NEW: ['ย้ายกลับเป็นใบสมัครใหม่แล้ว', 'mail'] } as const;
+  const [leadTitle, leadIcon] = leadToast[parsed.data.status];
+  await flash(leadTitle, { type: parsed.data.status === 'REJECTED' ? 'info' : 'success', icon: leadIcon, description: parsed.data.note || undefined });
   redirect('/admin/leads');
 }
 
@@ -261,6 +280,7 @@ export async function createStaffUserAction(_prev: CredentialResult, formData: F
     const user = await createUser({ email: parsed.data.email, name: parsed.data.name, password: tempPassword, role: parsed.data.role, mustChangePassword: true });
     await audit(actor.id, 'user.create', 'User', user.id, { role: user.role });
     revalidate();
+    await flash('สร้างบัญชีพนักงานแล้ว', { icon: 'user', description: `${user.email} · คัดลอกรหัสชั่วคราวส่งให้ผู้ใช้` });
     return { ok: true, message: 'สร้างผู้ใช้แล้ว', email: user.email, tempPassword };
   } catch (error) {
     if (isUniqueViolation(error)) return { ok: false, message: 'อีเมลนี้มีผู้ใช้อยู่แล้ว' };

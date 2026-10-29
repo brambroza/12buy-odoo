@@ -3,7 +3,9 @@ import './globals.css';
 import { Geist, Noto_Sans_Thai } from 'next/font/google';
 import { cn } from '@/lib/utils';
 import { AppShell } from '@/components/app-shell';
+import { Suspense } from 'react';
 import { Toaster } from '@/components/ui/sonner';
+import { FlashListener } from '@/components/flash-listener';
 import { SITE, siteUrl } from '@/lib/seo';
 
 const geist = Geist({ subsets: ['latin'], variable: '--font-geist', display: 'swap' });
@@ -31,6 +33,7 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
       <body>
         <AppShell>{children}</AppShell>
         <Toaster position="top-right" />
+        <Suspense><FlashListener /></Suspense>
       </body>
     </html>
   );

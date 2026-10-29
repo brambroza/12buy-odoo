@@ -1,5 +1,6 @@
 'use server';
 
+import { flash } from '@/lib/flash';
 import { headers } from 'next/headers';
 import { dealerLeadSchema, leadFromFormData } from '@/lib/leads/schema';
 import { createLead, findOpenLeadByEmail } from '@/lib/leads/repo';
@@ -52,5 +53,6 @@ async function register(formData: FormData): Promise<RegisterResult> {
     console.error('[lead] save failed', error instanceof Error ? error.message : error);
     return { ok: false, message: 'บันทึกไม่สำเร็จ กรุณาลองใหม่ หรือทัก LINE ได้เลย' };
   }
+  await flash('ส่งใบสมัครสำเร็จ', { icon: 'send', description: 'ทีมงานจะตรวจสอบและติดต่อกลับภายใน 1 วันทำการ' });
   return { ok: true, message: 'รับใบสมัครแล้ว ทีมงานจะตรวจสอบและติดต่อกลับภายใน 1 วันทำการ เมื่ออนุมัติแล้วเข้าสู่ระบบด้วยอีเมลและรหัสผ่านที่ตั้งไว้ได้ทันที' };
 }

@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { Check, Copy } from 'lucide-react';
+import { notify } from '@/components/ui/notify';
 import type { BankAccount } from '@/lib/shop/bank-accounts';
 
 /** Copies the account number without dashes so it pastes straight into a banking app. */
@@ -12,8 +13,10 @@ function CopyButton({ value }: { value: string }) {
       await navigator.clipboard.writeText(value.replace(/\D/g, ''));
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
+      notify.success('คัดลอกเลขที่บัญชีแล้ว', { id: 'copy-account', icon: 'check', description: 'วางในแอปธนาคารได้เลย' });
     } catch {
       // Clipboard blocked (http / old browser): the number is still selectable.
+      notify.warning('คัดลอกไม่ได้', { id: 'copy-account', description: 'กดค้างที่เลขบัญชีเพื่อคัดลอกเอง' });
     }
   };
   return (

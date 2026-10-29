@@ -11,6 +11,7 @@ import { findUserByEmail, updateUser } from '@/lib/auth/users';
 import { allowOdooLogin, provisionFromOdooLogin } from '@/lib/dealers/from-odoo';
 import { findOpenLeadByEmail } from '@/lib/leads/repo';
 import { safeNext } from '@/lib/safe-next';
+import { flash } from '@/lib/flash';
 
 export type LoginResult = { ok: false; message: string } | null;
 
@@ -49,6 +50,7 @@ export async function loginAction(_prev: LoginResult, formData: FormData): Promi
   await createSession(user.id, { remember: parsed.data.remember });
   await updateUser(user.id, { lastLoginAt: new Date() });
   await audit(user.id, 'login', 'User', user.id);
+  await flash(`ยินดีต้อนรับ ${user.name}`, { icon: 'login', description: user.mustChangePassword ? 'ตั้งรหัสผ่านใหม่ก่อนเริ่มใช้งาน' : 'เข้าสู่ระบบสำเร็จ' });
 
   if (user.mustChangePassword) redirect(`/account/password?next=${encodeURIComponent(safeNext(parsed.data.next, homeFor(user.role as Role)))}`);
   redirect(safeNext(parsed.data.next, homeFor(user.role as Role)));
@@ -78,5 +80,6 @@ async function tryOdooLogin(email: string, password: string): Promise<Awaited<Re
 /** Signs out and returns to the landing page. */
 export async function logoutAction(): Promise<void> {
   await destroySession();
+  await flash('ออกจากระบบแล้ว', { type: 'info', icon: 'logout', description: 'แล้วพบกันใหม่' });
   redirect('/');
 }

@@ -1,5 +1,6 @@
 'use server';
 
+import { flash } from '@/lib/flash';
 import { headers } from 'next/headers';
 import { redirect } from 'next/navigation';
 import { z } from 'zod';
@@ -97,5 +98,6 @@ export async function activateOdooDealerAction(prev: ActivateResult, formData: F
   await audit(user.id, 'dealer.activate_from_odoo', 'Dealer', dealer.id, { odooPartnerId: partner.id, userId: user.id, ip: ip.slice(0, 64) });
 
   await createSession(user.id);
+  await flash('เปิดใช้บัญชีร้านสำเร็จ', { icon: 'store', description: `${partner.name} · เริ่มสั่งสินค้าได้เลย` });
   redirect(homeFor('DEALER_OWNER'));
 }
