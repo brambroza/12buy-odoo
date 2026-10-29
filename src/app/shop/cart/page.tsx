@@ -2,7 +2,8 @@ import Link from 'next/link';
 import { TriangleAlert } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
-import { baht, findProduct, getCatalog, getPartnerCredit, getReferenceData } from '@/lib/shop/catalog';
+import { baht, findProduct, getCatalog, getReferenceData } from '@/lib/shop/catalog';
+import { getCreditLine } from '@/lib/shop/credit-line';
 import { billTotals, cashDiscountPerUnit, resolvePrice, withCoupon } from '@/lib/shop/pricing';
 import { canSeeProduct, getDealerProfile } from '@/lib/shop/dealer';
 import { checkCartCoupon } from '@/lib/shop/cart-coupon';
@@ -37,8 +38,8 @@ export default async function CartPage({ searchParams }: { searchParams: Promise
   const creditBill = withCoupon(billTotals(billLines, 'CREDIT'), couponOff('CREDIT'));
   const cashBill = withCoupon(billTotals(billLines, 'CASH'), couponOff('CASH'));
   const couponResult = coupon[profile.credit ? 'CREDIT' : 'CASH'] ?? coupon.CASH;
-  // Live from Odoo; when Odoo is unreachable the bar is hidden and checkout does not block on the limit.
-  const creditLine = profile.credit && profile.odooPartnerId ? await getPartnerCredit(profile.odooPartnerId).catch(() => null) : null;
+  // Live: the tighter of the web limit and Odoo's credit_limit; Odoo unreachable leaves only the web limit.
+  const creditLine = await getCreditLine(profile);
   const overStock = lines.find((l) => l.item.qty > l.product.qtyAvailable);
   const notAllowed = lines.find((l) => !l.allowed);
 

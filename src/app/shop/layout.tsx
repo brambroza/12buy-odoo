@@ -1,8 +1,9 @@
 import Link from 'next/link';
 import type { Metadata } from 'next';
-import { LogOut, UserCircle } from 'lucide-react';
+import { LogOut } from 'lucide-react';
 import { BottomNav, TopNav } from '@/components/shop/bottom-nav';
 import { BrandLogo } from '@/components/landing/brand-logo';
+import { DealerAvatar } from '@/components/shop/dealer-avatar';
 import { getDealerProfile } from '@/lib/shop/dealer';
 import { getSessionId } from '@/lib/shop/session';
 import { getCart } from '@/lib/shop/store';
@@ -41,7 +42,7 @@ export default async function ShopLayout({ children }: { children: React.ReactNo
                 <span className="block max-w-[140px] truncate font-medium lg:max-w-[220px]">{profile.name}</span>
                 <span className="text-muted-foreground">{DEALER_TIER_LABELS[profile.tier]} · {profile.province.replace(/^จังหวัด/, '')}</span>
               </span>
-              <UserCircle className="size-6 text-muted-foreground" />
+              <DealerAvatar name={profile.name} avatarFile={profile.avatarFile} tier={profile.tier} size={36} />
             </Link>
             <form action={logoutAction}>
               <button type="submit" aria-label="ออกจากระบบ" className="flex size-9 items-center justify-center rounded-full border border-border text-muted-foreground hover:text-foreground"><LogOut className="size-4" /></button>

@@ -3,11 +3,12 @@
 import { revalidatePath } from 'next/cache';
 import { redirect } from 'next/navigation';
 import { z } from 'zod';
-import { defaultQty, findProduct, getCatalog, getPartnerCredit, searchProducts } from '@/lib/shop/catalog';
+import { defaultQty, findProduct, getCatalog, searchProducts } from '@/lib/shop/catalog';
 import { billTotals, cashDiscountPerUnit, orderPricelistId, resolvePrice, withCoupon } from '@/lib/shop/pricing';
 import { checkCartCoupon } from '@/lib/shop/cart-coupon';
 import { normalizeCode } from '@/lib/shop/coupon';
 import { creditAfterOrder } from '@/lib/shop/credit';
+import { getCreditLine } from '@/lib/shop/credit-line';
 import { canSeeProduct, getDealerProfile, visibilityScope } from '@/lib/shop/dealer';
 import { ensureSessionId } from '@/lib/shop/session';
 import * as store from '@/lib/shop/store';
@@ -17,7 +18,7 @@ import { requireDealerAccess } from '@/lib/auth/session';
 import { createUser, isUniqueViolation } from '@/lib/auth/users';
 import { generateTempPassword } from '@/lib/auth/password';
 import { audit } from '@/lib/auth/audit';
-import { deleteSlip, saveSlip } from '@/lib/shop/uploads';
+import { deleteAvatar, deleteSlip, saveAvatar, saveSlip } from '@/lib/shop/uploads';
 import { addressFromForm, shippingSchema, thaiAddressSchema } from '@/lib/shop/shipping';
 import { formatThaiAddress } from '@/lib/thai-address';
 import { updateDealer } from '@/lib/dealers/repo';
@@ -188,9 +189,9 @@ async function placeOrder(sid: string, input: CheckoutInput, shipTo: string) {
     coupon = { code, programId: result.programId, programName: result.programName, label: result.label, discount: result.discount };
   }
   const totals = withCoupon(billTotals(lines, paymentMethod), coupon?.discount ?? 0);
-  if (paymentMethod === 'CREDIT' && profile.odooPartnerId) {
-    // Odoo unreachable: accept the order; the sales team still confirms it before it ships.
-    const credit = await getPartnerCredit(profile.odooPartnerId).catch(() => null);
+  if (paymentMethod === 'CREDIT') {
+    // Web limit and Odoo credit_limit both apply. Odoo unreachable: only the web limit; sales still confirms the order.
+    const credit = await getCreditLine(profile);
     if (creditAfterOrder(credit, totals.total).over) redirect('/shop/cart?error=' + encodeURIComponent('ยอดนี้เกินวงเงินเครดิต เลือกชำระเงินสด หรือลดจำนวน'));
   }
   let order;
@@ -359,4 +360,27 @@ export async function updateShippingAction(_prev: ShippingResult, formData: Form
   await audit(user.id, 'dealer.shipping.update', 'Dealer', user.dealer.id, { before: { address: user.dealer.address, phone: user.dealer.phone }, after: { address, phone } });
   revalidatePath('/shop', 'layout');
   return { ok: true, message: 'บันทึกที่อยู่จัดส่งแล้ว' };
+}
+
+export type AvatarResult = { ok: boolean; message: string } | null;
+
+/** Dealer (owner or staff) sets or removes the shop's profile picture (`remove=1`). */
+export async function updateAvatarAction(_prev: AvatarResult, formData: FormData): Promise<AvatarResult> {
+  const user = await requireDealerAccess();
+  if (!user.dealer || isBackofficeRole(user.role as Role)) return { ok: false, message: 'แก้ไขได้เฉพาะบัญชีร้านดีลเลอร์' };
+  const previous = user.dealer.avatarFile;
+  let avatarFile: string | null = null;
+  if (formData.get('remove') !== '1') {
+    const file = formData.get('avatar');
+    if (!(file instanceof File) || file.size === 0) return { ok: false, message: 'เลือกรูปก่อน' };
+    const saved = await saveAvatar(user.dealer.id, file);
+    if (!saved.ok) return { ok: false, message: saved.reason };
+    avatarFile = saved.name;
+  }
+  await updateDealer(user.dealer.id, { avatarFile });
+  if (previous) await deleteAvatar(previous);
+  await audit(user.id, avatarFile ? 'dealer.avatar.update' : 'dealer.avatar.remove', 'Dealer', user.dealer.id);
+  revalidatePath('/shop', 'layout');
+  revalidatePath('/admin/dealers');
+  return { ok: true, message: avatarFile ? 'อัปเดตรูปโปรไฟล์แล้ว' : 'ลบรูปโปรไฟล์แล้ว' };
 }

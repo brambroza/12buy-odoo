@@ -9,7 +9,7 @@ import type { PricelistItem } from '../price-engine';
 const product: CatalogProduct = { id: 779, tmplId: 777, name: 'ยาง 195/65R15', code: 'YK', listPrice: 2550, categoryId: 11, categoryName: 'YK-PCR', brand: 'YK', dealerType: 'CAR', size: null, qtyAvailable: 5, imageUrl: null, baseUnit: 'เส้น', units: [{ id: 1, name: 'เส้น', factor: 1 }], vatRate: 7, vatIncluded: true };
 const fixed: PricelistItem = { id: 1, pricelistId: 9, appliedOn: '1_product', productTmplId: 777, productId: null, categId: null, minQuantity: 0, computePrice: 'fixed', fixedPrice: 2400, percentPrice: 0, priceDiscount: 0, priceSurcharge: 0, priceRound: 0, priceMinMargin: 0, priceMaxMargin: 0, base: 'list_price', basePricelistId: null, dateStart: null, dateEnd: null };
 const catalog: Catalog = { products: [product], pricelists: [], priceCtx: { itemsByPricelist: new Map([[9, [fixed]]]), categoryParents: new Map() }, loadedAt: new Date() };
-const profile: DealerProfile = { name: 'x', types: ['CAR'], tier: 'M', province: 'กรุงเทพมหานคร', pricelistId: 9, address: '', shipping: null, phone: '', priceBookId: null, odooPartnerId: null, credit: false, cashPricelistId: null, customerGroupId: null };
+const profile: DealerProfile = { dealerId: null, name: 'x', types: ['CAR'], tier: 'M', province: 'กรุงเทพมหานคร', pricelistId: 9, address: '', shipping: null, phone: '', priceBookId: null, odooPartnerId: null, credit: false, cashPricelistId: null, customerGroupId: null, avatarFile: null };
 const book = (patch: Partial<PriceBook>): PriceBook => ({ id: 'b', zoneId: 'z', tier: 'M', basePricelistId: 9, entries: {}, typePercent: {}, status: 'PUBLISHED', submittedBy: null, approvedBy: null, updatedAt: '', publishedAt: null, lastDryRun: null, ...patch });
 
 describe('resolvePrice', () => {

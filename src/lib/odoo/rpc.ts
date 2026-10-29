@@ -101,6 +101,16 @@ async function authenticate(): Promise<number> {
 }
 
 /**
+ * Checks a person's own Odoo login (e.g. a portal user) and returns their uid, or null when the
+ * login or password is wrong. Never cached; runs with their credentials only for this check.
+ */
+export async function odooCheckLogin(login: string, password: string): Promise<number | null> {
+  const { db } = getConfig();
+  const uid = await jsonRpc<number | false>('common', 'authenticate', [db, login, password, {}]);
+  return uid || null;
+}
+
+/**
  * Calls a read-only method on an Odoo model via `execute_kw`.
  * Throws synchronously-equivalent error for any non-read method so the
  * prototype can never modify Odoo data.

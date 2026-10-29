@@ -1,5 +1,6 @@
 'use server';
 
+import { headers } from 'next/headers';
 import { redirect } from 'next/navigation';
 import { z } from 'zod';
 import { audit } from '@/lib/auth/audit';
@@ -7,6 +8,7 @@ import { verifyPassword } from '@/lib/auth/password';
 import { homeFor, type Role } from '@/lib/auth/roles';
 import { createSession, destroySession } from '@/lib/auth/session';
 import { findUserByEmail, updateUser } from '@/lib/auth/users';
+import { allowOdooLogin, provisionFromOdooLogin } from '@/lib/dealers/from-odoo';
 import { findOpenLeadByEmail } from '@/lib/leads/repo';
 import { safeNext } from '@/lib/safe-next';
 
@@ -26,11 +28,14 @@ export async function loginAction(_prev: LoginResult, formData: FormData): Promi
   const parsed = schema.safeParse({ email: formData.get('email'), password: formData.get('password'), next: formData.get('next') ?? undefined, remember: formData.get('remember') === 'on' });
   if (!parsed.success) return { ok: false, message: parsed.error.issues[0]?.message ?? 'ข้อมูลไม่ครบ' };
 
-  const user = await findUserByEmail(parsed.data.email);
+  let user = await findUserByEmail(parsed.data.email);
   if (!user) {
     // A shop that signed up but is not approved yet: say so instead of "wrong password".
     const lead = await findOpenLeadByEmail(parsed.data.email);
     if (lead?.passwordHash && verifyPassword(parsed.data.password, lead.passwordHash)) return { ok: false, message: 'ใบสมัครของร้านอยู่ระหว่างตรวจสอบ ทีมงานจะติดต่อกลับภายใน 1 วันทำการ' };
+    const odoo = await tryOdooLogin(parsed.data.email, parsed.data.password);
+    if (odoo && 'message' in odoo) return odoo;
+    if (odoo) user = odoo;
   }
   if (!user || !verifyPassword(parsed.data.password, user.passwordHash)) {
     await audit(user?.id ?? null, 'login.failed', 'User', user?.id ?? parsed.data.email.toLowerCase());
@@ -47,6 +52,27 @@ export async function loginAction(_prev: LoginResult, formData: FormData): Promi
 
   if (user.mustChangePassword) redirect(`/account/password?next=${encodeURIComponent(safeNext(parsed.data.next, homeFor(user.role as Role)))}`);
   redirect(safeNext(parsed.data.next, homeFor(user.role as Role)));
+}
+
+/**
+ * No web account yet: an Odoo portal user may sign in with their Odoo email + password, which creates
+ * their dealer and web login on the spot. Returns the new user, an error to show, or null to fall
+ * through to the generic "wrong email or password".
+ */
+async function tryOdooLogin(email: string, password: string): Promise<Awaited<ReturnType<typeof findUserByEmail>> | { ok: false; message: string } | null> {
+  const h = await headers();
+  const ip = h.get('cf-connecting-ip') || h.get('x-forwarded-for')?.split(',')[0]?.trim() || h.get('x-real-ip') || 'unknown';
+  if (!allowOdooLogin(ip)) return null;
+  try {
+    const outcome = await provisionFromOdooLogin(email, password);
+    if (outcome.kind === 'invalid') return null;
+    if (outcome.kind === 'not-portal') return { ok: false, message: 'บัญชี Odoo นี้ไม่ใช่บัญชีลูกค้า ติดต่อแอดมิน' };
+    await audit(outcome.user.id, 'login.odoo_provision', 'User', outcome.user.id, { dealerId: outcome.dealer.id, odooUid: outcome.odooUid, newDealer: outcome.newDealer, role: outcome.user.role, ip: ip.slice(0, 64) });
+    return findUserByEmail(email);
+  } catch (error) {
+    console.error('[login] odoo sign-in failed', error instanceof Error ? error.message : error);
+    return null;
+  }
 }
 
 /** Signs out and returns to the landing page. */

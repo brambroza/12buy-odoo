@@ -5,7 +5,8 @@ import { getCurrentUser, requireDealerAccess } from '@/lib/auth/session';
 import { isBackofficeRole, type Role } from '@/lib/auth/roles';
 import type { Dealer } from '@/lib/db/types';
 import { formatThaiAddress, parseThaiAddress } from '@/lib/thai-address';
-import { getPartners } from './catalog';
+import { getPartner } from './catalog';
+import { AVATAR_NAME } from './uploads';
 import type { CatalogProduct, DealerProfile, DealerTier, DealerType } from './types';
 import { isProductVisible, type VisibilityScope } from './visibility';
 
@@ -13,6 +14,7 @@ import { isProductVisible, type VisibilityScope } from './visibility';
 export const DEALER_COOKIE = 'proto_dealer';
 
 export const DEFAULT_PROFILE: DealerProfile = {
+  dealerId: null,
   name: 'ร้านตัวอย่างการยาง (เดโม)',
   types: ['CAR', 'TRUCK'],
   tier: 'M',
@@ -26,6 +28,7 @@ export const DEFAULT_PROFILE: DealerProfile = {
   credit: false,
   cashPricelistId: null,
   customerGroupId: null,
+  avatarFile: null,
 };
 
 const VALID_TYPES: DealerType[] = ['CAR', 'TRUCK', 'MOTORCYCLE', 'BATTERY', 'WHEEL'];
@@ -36,6 +39,7 @@ export function sanitizeProfile(input: Partial<DealerProfile> | null | undefined
   const types = Array.isArray(input?.types) ? input.types.filter((t): t is DealerType => VALID_TYPES.includes(t as DealerType)) : [];
   const pricelistId = Number(input?.pricelistId);
   return {
+    dealerId: typeof input?.dealerId === 'string' && input.dealerId ? input.dealerId.slice(0, 40) : null,
     name: typeof input?.name === 'string' && input.name.trim() ? input.name.trim().slice(0, 80) : DEFAULT_PROFILE.name,
     types: types.length ? types : DEFAULT_PROFILE.types,
     tier: VALID_TIERS.includes(input?.tier as DealerTier) ? (input!.tier as DealerTier) : DEFAULT_PROFILE.tier,
@@ -49,6 +53,7 @@ export function sanitizeProfile(input: Partial<DealerProfile> | null | undefined
     credit: input?.credit === true,
     cashPricelistId: Number.isInteger(input?.cashPricelistId) && (input!.cashPricelistId as number) > 0 ? (input!.cashPricelistId as number) : null,
     customerGroupId: typeof input?.customerGroupId === 'string' && input.customerGroupId ? input.customerGroupId.slice(0, 40) : null,
+    avatarFile: typeof input?.avatarFile === 'string' && AVATAR_NAME.test(input.avatarFile) ? input.avatarFile : null,
   };
 }
 
@@ -104,7 +109,7 @@ export async function profileFromDealer(dealer: Dealer, settings?: admin.AdminSh
   let address = shipping ? formatThaiAddress(shipping) : dealer.address ?? '';
   if (dealer.odooPartnerId) {
     try {
-      const partner = (await getPartners()).find((p) => p.id === dealer.odooPartnerId);
+      const partner = await getPartner(dealer.odooPartnerId);
       if (partner?.property_product_pricelist) pricelistId = partner.property_product_pricelist[0];
       if (!address && partner) address = [partner.street, partner.city, partner.zip].filter(Boolean).join(' ');
     } catch {
@@ -112,6 +117,7 @@ export async function profileFromDealer(dealer: Dealer, settings?: admin.AdminSh
     }
   }
   return withAdminSettings(sanitizeProfile({
+    dealerId: dealer.id,
     name: dealer.name,
     types: dealer.types as DealerType[],
     tier: dealer.tier as DealerTier,
@@ -125,6 +131,7 @@ export async function profileFromDealer(dealer: Dealer, settings?: admin.AdminSh
     credit: dealer.creditEnabled,
     cashPricelistId: dealer.creditEnabled ? admin.cashPricelistFor(pricelistId, data.cashPairs) : null,
     customerGroupId: admin.groupForDealerIn(data, dealer.id)?.id ?? null,
+    avatarFile: dealer.avatarFile ?? null,
   }), data);
 }
 

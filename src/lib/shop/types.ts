@@ -51,6 +51,8 @@ export type CatalogProduct = {
 
 /** Mock dealer profile stored in a cookie for the prototype. */
 export type DealerProfile = {
+  /** Web dealer record id; null for the demo profile. Drives the web credit line. */
+  dealerId: string | null;
   name: string;
   types: DealerType[];
   tier: DealerTier;
@@ -71,6 +73,8 @@ export type DealerProfile = {
   cashPricelistId: number | null;
   /** Customer group that narrows which products this dealer sees; null = all products of `types`. */
   customerGroupId: string | null;
+  /** Profile picture file name in the `avatars` bucket; null = none. */
+  avatarFile: string | null;
   /** Resolved per request from the admin settings (never stored in the impersonation cookie). */
   priceBook?: PriceBook | null;
   /** Resolved per request from the admin settings (never stored in the impersonation cookie). */

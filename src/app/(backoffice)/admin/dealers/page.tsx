@@ -9,8 +9,12 @@ import { requireBackoffice } from '@/lib/auth/session';
 import { ROLE_LABELS, isAdminRole, type Role } from '@/lib/auth/roles';
 import { listDealers } from '@/lib/dealers/repo';
 import { PROVINCES } from '@/lib/provinces';
-import { getPartners } from '@/lib/shop/catalog';
+import { baht, getPartners } from '@/lib/shop/catalog';
+import { webCreditUsed } from '@/lib/shop/credit';
+import { listOpenCreditOrders } from '@/lib/shop/store';
 import { DEALER_TIER_LABELS, DEALER_TYPE_LABELS, type DealerTier, type DealerType } from '@/lib/shop/types';
+import { DealerAvatar } from '@/components/shop/dealer-avatar';
+import { TierShield } from '@/components/shop/tier-shield';
 import { cn } from '@/lib/utils';
 import { createDealerAction, createDealerUserAction, openAsDealerAction, resetPasswordAction, toggleUserActiveAction, updateDealerAction } from '../dealer-actions';
 
@@ -28,13 +32,14 @@ export default async function DealersPage({ searchParams }: { searchParams: Prom
   const [actor, params] = await Promise.all([requireBackoffice(), searchParams]);
   const canEdit = isAdminRole(actor.role as Role);
   const status = (['PENDING', 'ACTIVE', 'SUSPENDED'] as Status[]).includes(params.status as Status) ? (params.status as Status) : undefined;
-  const [dealers, settings, partners] = await Promise.all([listDealers({ status, q: params.q }), admin.getAdminSnapshot(), getPartners().catch(() => [])]);
+  const [dealers, settings, partners, openCredit] = await Promise.all([listDealers({ status, q: params.q }), admin.getAdminSnapshot(), getPartners().catch(() => []), listOpenCreditOrders()]);
   const counts = { PENDING: 0, ACTIVE: 0, SUSPENDED: 0 } as Record<Status, number>;
   for (const d of await listDealers()) counts[d.status as Status] += 1;
   const partnerName = (id: number | null) => partners.find((p) => p.id === id)?.name;
   // Salesperson lives on the Odoo customer (res.partner.user_id); web orders carry it so commission stays with the right person.
   const salesperson = (id: number) => { const p = partners.find((x) => x.id === id); return p?.user_id ? p.user_id[1] : null; };
   const { zones, groups } = settings;
+  const creditUsed = (d: DealerRow) => webCreditUsed({ id: d.id, odooPartnerId: d.odooPartnerId, creditOpening: Number(d.creditOpening) || 0 }, openCredit);
 
   return (
     <div className="space-y-4">
@@ -73,11 +78,14 @@ export default async function DealersPage({ searchParams }: { searchParams: Prom
           return (
             <details key={d.id} open={open} id={`dealer-${d.id}`} className="rounded-xl border border-border bg-card">
               <summary className="flex cursor-pointer flex-wrap items-center gap-3 p-3 text-sm">
+                <DealerAvatar name={d.name} avatarFile={d.avatarFile} size={32} />
                 <span className="font-medium">{d.name}</span>
+                <TierShield tier={d.tier as DealerTier} withLabel />
                 <Badge variant="outline" className={cn('border-transparent', STATUS_CLASS[d.status as Status])}>{STATUS[d.status as Status]}</Badge>
                 {d.creditEnabled && <Badge variant="outline" className="border-transparent bg-sky-500/15 text-sky-700">ลูกค้าเครดิต</Badge>}
+                {d.creditEnabled && <CreditUsage limit={d.creditLimit == null ? null : Number(d.creditLimit)} used={creditUsed(d)} />}
                 {group && <Badge variant="outline">กลุ่ม {group.name}</Badge>}
-                <span className="text-xs text-muted-foreground">{d.province} · โซน {zone.name} · {d.tier} · {d.types.map((t) => DEALER_TYPE_LABELS[t as DealerType]).join(', ')}</span>
+                <span className="text-xs text-muted-foreground">{d.province} · โซน {zone.name} · {d.types.map((t) => DEALER_TYPE_LABELS[t as DealerType]).join(', ')}</span>
                 <span className="text-xs text-muted-foreground">{d.users.length} ผู้ใช้{d.odooPartnerId ? ` · Odoo: ${partnerName(d.odooPartnerId) ?? `#${d.odooPartnerId}`}` : ' · ยังไม่ผูก Odoo'}</span>
                 {d.odooPartnerId && (salesperson(d.odooPartnerId)
                   ? <span className="text-xs text-muted-foreground">เซลล์: {salesperson(d.odooPartnerId)}</span>
@@ -86,7 +94,7 @@ export default async function DealersPage({ searchParams }: { searchParams: Prom
                 <form action={openAsDealerAction} className="ml-auto"><input type="hidden" name="dealerId" value={d.id} /><Button type="submit" size="sm" variant="outline">เปิดมุมมองดีลเลอร์</Button></form>
               </summary>
               <div className="space-y-4 border-t border-border p-3">
-                {canEdit ? <DealerForm action={updateDealerAction} dealer={d} partners={partners} zones={zones} groups={groups} groupId={group?.id} /> : <p className="text-xs text-muted-foreground">เฉพาะแอดมินแก้ไขข้อมูลร้านได้</p>}
+                {canEdit ? <DealerForm action={updateDealerAction} dealer={d} creditUsed={creditUsed(d)} partners={partners} zones={zones} groups={groups} groupId={group?.id} /> : <p className="text-xs text-muted-foreground">เฉพาะแอดมินแก้ไขข้อมูลร้านได้</p>}
                 <p className="text-xs text-muted-foreground">ราคาที่ร้านเห็น: {book?.status === 'PUBLISHED' ? `ตารางราคาเว็บ ${zone.name} / ${d.tier}` : `pricelist ของลูกค้าใน Odoo (ยังไม่มีตารางเว็บเผยแพร่สำหรับโซน ${zone.name} / ${d.tier})`}</p>
 
                 <div className="rounded-lg border border-border">
@@ -117,11 +125,18 @@ export default async function DealersPage({ searchParams }: { searchParams: Prom
   );
 }
 
+/** Web credit used vs. limit in the dealer row header. */
+function CreditUsage({ limit, used }: { limit: number | null; used: number }) {
+  if (limit === null) return <span className="text-xs text-muted-foreground">ค้างเครดิต {baht(used)} · ไม่จำกัดวงเงินเว็บ</span>;
+  const left = Math.round((limit - used) * 100) / 100;
+  return <span className={cn('text-xs', left < 0 ? 'font-medium text-destructive' : 'text-muted-foreground')}>วงเงิน {baht(limit)} · ใช้ {baht(used)} · {left < 0 ? `เกิน ${baht(-left)}` : `เหลือ ${baht(left)}`}</span>;
+}
+
 type Partner = Awaited<ReturnType<typeof getPartners>>[number];
 type DealerRow = Awaited<ReturnType<typeof listDealers>>[number];
 
 /** Shared create/edit form. Province list is static so it works when Odoo is down. */
-function DealerForm({ action, dealer, partners, zones, groups, groupId }: { action: (formData: FormData) => Promise<void>; dealer?: DealerRow; partners: Partner[]; zones: PriceZone[]; groups: CustomerGroup[]; groupId?: string }) {
+function DealerForm({ action, dealer, creditUsed, partners, zones, groups, groupId }: { action: (formData: FormData) => Promise<void>; dealer?: DealerRow; creditUsed?: number; partners: Partner[]; zones: PriceZone[]; groups: CustomerGroup[]; groupId?: string }) {
   const field = 'h-9 w-full rounded-lg border border-border bg-background px-2 text-sm';
   return (
     <form action={action} className="grid gap-3 md:grid-cols-2">
@@ -161,6 +176,14 @@ function DealerForm({ action, dealer, partners, zones, groups, groupId }: { acti
       <label className="flex items-start gap-2 rounded-lg border border-border p-2 text-xs md:col-span-2 has-[:checked]:border-primary has-[:checked]:bg-primary/5">
         <input type="checkbox" name="creditEnabled" defaultChecked={dealer?.creditEnabled ?? false} className="mt-0.5" />
         <span><span className="font-medium">ลูกค้าเครดิต</span><span className="block text-muted-foreground">สั่งแบบเครดิตได้โดยไม่ต้องแนบสลิป · ถ้าเลือกจ่ายเงินสด ได้ส่วนต่างราคาเครดิต−เงินสดเป็นส่วนลดท้ายบิล (ตั้งคู่ราคาที่หน้าตารางราคา)</span></span>
+      </label>
+      <label className="text-xs font-medium">วงเงินเครดิต (บาท)
+        <input name="creditLimit" inputMode="decimal" defaultValue={dealer?.creditLimit ?? ''} placeholder="ว่าง = ไม่จำกัด" className={field} />
+        <span className="font-normal text-muted-foreground">สั่งเครดิตจะตัดวงเงินทันที · คืนเมื่อออเดอร์เป็น “ชำระแล้ว” หรือถูกยกเลิก · ถ้าตั้ง Credit Limit ใน Odoo ด้วย ต้องผ่านทั้งสองที่</span>
+      </label>
+      <label className="text-xs font-medium">ยอดค้างยกมา (บาท)
+        <input name="creditOpening" inputMode="decimal" defaultValue={dealer ? Number(dealer.creditOpening) || '' : ''} placeholder="0" className={field} />
+        <span className="font-normal text-muted-foreground">หนี้ก่อนใช้เว็บ นับเป็นยอดใช้ไปแล้ว · ร้านจ่ายแล้วให้ลดยอดนี้ลง{creditUsed !== undefined ? ` · ใช้อยู่ตอนนี้ ${baht(creditUsed)} (รวมยอดยกมา)` : ''}</span>
       </label>
       <label className="text-xs font-medium">โทร<input name="phone" defaultValue={dealer?.phone ?? ''} maxLength={30} className={field} /></label>
       <label className="text-xs font-medium">LINE ID<input name="lineId" defaultValue={dealer?.lineId ?? ''} maxLength={60} className={field} /></label>

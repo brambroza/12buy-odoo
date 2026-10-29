@@ -42,6 +42,23 @@ export function createFakeDb() {
     update(row: Row) { this.op = 'update'; this.payload = row; return this; }
     eq(col: string, value: unknown) { this.filters.push((r) => r[col] === value); return this; }
     lt(col: string, value: string) { this.filters.push((r) => String(r[col]) < value.replace('Z', '')); return this; }
+    /** Only `not(col, 'in', '("A","B")')`, as the store uses it. */
+    not(col: string, _op: 'in', list: string) {
+      const values = [...list.matchAll(/"((?:[^"\\]|\\.)*)"/g)].map((m) => m[1]);
+      this.filters.push((r) => !values.includes(String(r[col])));
+      return this;
+    }
+    /** `or('a.eq."x",b.like."y%"')` with quoted values (see `quoteFilterValue`); supports eq and like. */
+    or(expr: string) {
+      const terms = [...expr.matchAll(/(\w+)\.(eq|like)\."((?:[^"\\]|\\.)*)"/g)].map(([, col, op, raw]) => {
+        const value = raw.replace(/\\(.)/g, '$1');
+        if (op === 'eq') return (r: Row) => String(r[col]) === value;
+        const re = new RegExp(`^${value.split('%').map((part) => part.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('.*')}$`);
+        return (r: Row) => re.test(String(r[col]));
+      });
+      this.filters.push((r) => terms.some((t) => t(r)));
+      return this;
+    }
     order(col: string, opts?: { ascending?: boolean }) { this.sort = { col, asc: opts?.ascending ?? true }; return this; }
     maybeSingle() { this.mode = 'maybe'; return this; }
     single() { this.mode = 'single'; return this; }

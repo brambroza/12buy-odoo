@@ -117,6 +117,12 @@ export type Dealer = {
   taxId: string | null;
   /** Credit customer: may order on credit terms; paying cash earns the credit→cash price difference as an end-of-bill discount. */
   creditEnabled: boolean;
+  /** Web credit limit in baht; null = no web limit (Odoo's credit_limit may still apply). NUMERIC, may arrive as a string. */
+  creditLimit: number | string | null;
+  /** Debt carried over from before the web, counted as used credit. NUMERIC, may arrive as a string. */
+  creditOpening: number | string;
+  /** Profile picture in the private `avatars` bucket, uploaded by the dealer owner. */
+  avatarFile: string | null;
   status: DealerStatus;
   approvedAt: Date | null;
   approvedById: string | null;

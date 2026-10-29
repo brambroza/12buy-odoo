@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { creditAfterOrder } from '../credit';
+import { creditAfterOrder, isDealerScope, tightestCredit, webCreditLine, webCreditUsed } from '../credit';
 
 describe('creditAfterOrder', () => {
   it('is the limit minus what is owed minus this order', () => {
@@ -14,5 +14,55 @@ describe('creditAfterOrder', () => {
   it('never blocks without a limit or without Odoo data', () => {
     expect(creditAfterOrder({ limit: null, used: 99_999 }, 1_000)).toEqual({ remaining: null, over: false });
     expect(creditAfterOrder(null, 1_000)).toEqual({ remaining: null, over: false });
+  });
+});
+
+describe('tightestCredit', () => {
+  it('picks the line with the least room left', () => {
+    const web = { limit: 100_000, used: 90_000 };
+    const odoo = { limit: 50_000, used: 20_000 };
+    expect(tightestCredit(web, odoo)).toBe(web);
+    expect(tightestCredit(odoo, { limit: 10_000, used: 0 })).toEqual({ limit: 10_000, used: 0 });
+  });
+
+  it('ignores lines without a limit and returns null when none has one', () => {
+    expect(tightestCredit(null, { limit: null, used: 5 }, { limit: 1_000, used: 0 })).toEqual({ limit: 1_000, used: 0 });
+    expect(tightestCredit(null, { limit: null, used: 5 })).toBeNull();
+    expect(tightestCredit()).toBeNull();
+  });
+});
+
+describe('isDealerScope', () => {
+  it('matches the dealer login scope and staff scopes for its Odoo partner only', () => {
+    expect(isDealerScope('dealer:d1', 'd1', 42)).toBe(true);
+    expect(isDealerScope('dealer:d2', 'd1', 42)).toBe(false);
+    expect(isDealerScope('staff:u9:42', 'd1', 42)).toBe(true);
+    expect(isDealerScope('staff:u9:142', 'd1', 42)).toBe(false);
+    expect(isDealerScope('staff:u9:demo', 'd1', null)).toBe(false);
+  });
+});
+
+describe('webCreditUsed', () => {
+  const dealer = { id: 'd1', odooPartnerId: 42, creditOpening: 5_000 };
+  const order = (over: Partial<{ scope: string; paymentMethod: string; status: string; total: number }>) => ({ scope: 'dealer:d1', paymentMethod: 'CREDIT', status: 'PENDING', total: 1_000, ...over });
+
+  it('is the opening balance plus open credit orders of the dealer', () => {
+    expect(webCreditUsed(dealer, [order({}), order({ status: 'INVOICED', total: 2_500.25 }), order({ scope: 'staff:u1:42', status: 'SHIPPED' })])).toBe(9_500.25);
+  });
+
+  it('gives the amount back once an order is paid or cancelled', () => {
+    expect(webCreditUsed(dealer, [order({ status: 'PAID' }), order({ status: 'CANCELLED' })])).toBe(5_000);
+  });
+
+  it('skips cash orders and other dealers', () => {
+    expect(webCreditUsed(dealer, [order({ paymentMethod: 'CASH' }), order({ scope: 'dealer:d2' })])).toBe(5_000);
+  });
+});
+
+describe('webCreditLine', () => {
+  it('is null without a web limit and reads NUMERIC strings', () => {
+    expect(webCreditLine({ id: 'd1', odooPartnerId: null, creditLimit: null, creditOpening: '100' }, [])).toBeNull();
+    expect(webCreditLine({ id: 'd1', odooPartnerId: null, creditLimit: '50000.00', creditOpening: '1200.50' }, [{ scope: 'dealer:d1', paymentMethod: 'CREDIT', status: 'PENDING', total: 800 }]))
+      .toEqual({ limit: 50_000, used: 2_000.5 });
   });
 });

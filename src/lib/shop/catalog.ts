@@ -214,6 +214,15 @@ export async function getPartners(): Promise<Partner[]> {
   return value;
 }
 
+/** One Odoo customer: from the cached list when present, else read directly (the list stops at 500). */
+export async function getPartner(id: number): Promise<Partner | null> {
+  const listed = (await getPartners()).find((p) => p.id === id);
+  if (listed) return listed;
+  const [row] = await odooSearchRead<Partner>('res.partner', [['id', '=', id]],
+    ['id', 'name', 'state_id', 'property_product_pricelist', 'street', 'city', 'zip', 'phone', 'user_id'], { limit: 1 });
+  return row ?? null;
+}
+
 /** Credit position of one Odoo customer; `limit` null means Odoo enforces no limit for this partner. */
 export type PartnerCredit = { limit: number | null; used: number };
 

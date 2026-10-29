@@ -5,7 +5,7 @@
  */
 import { randomUUID } from 'node:crypto';
 import { db } from '@/lib/db/client';
-import { DbError, parseTimestamp, unwrap } from '@/lib/db/rows';
+import { DbError, parseTimestamp, quoteFilterValue, unwrap } from '@/lib/db/rows';
 import type { CartItem, OdooSync, OrderStatus, ProtoOrder } from './types';
 import { ORDER_STATUS_FLOW } from './types';
 
@@ -148,6 +148,23 @@ export async function countStalePending(maxAgeMs: number, now = Date.now()): Pro
   const { count, error } = await db().from('ShopOrder').select('id', { count: 'exact', head: true }).eq('status', 'PENDING').lt('createdAt', before);
   if (error) unwrap({ data: null, error });
   return count ?? 0;
+}
+
+export type OpenCreditOrder = { scope: string; paymentMethod: string; status: string; total: number };
+
+/**
+ * CREDIT orders still holding credit (not PAID, not CANCELLED). With `dealer`, only that dealer's
+ * scopes: its logins (`dealer:<id>`) and staff ordering for its Odoo partner (`staff:<user>:<partner>`).
+ */
+export async function listOpenCreditOrders(dealer?: { id: string; odooPartnerId: number | null }): Promise<OpenCreditOrder[]> {
+  let query = db().from('ShopOrder').select('scope, paymentMethod, status, total').eq('paymentMethod', 'CREDIT').not('status', 'in', '("PAID","CANCELLED")');
+  if (dealer) {
+    const scopes = [`scope.eq.${quoteFilterValue(`dealer:${dealer.id}`)}`];
+    if (dealer.odooPartnerId) scopes.push(`scope.like.${quoteFilterValue(`staff:%:${dealer.odooPartnerId}`)}`);
+    query = query.or(scopes.join(','));
+  }
+  const rows = unwrap(await query) as { scope: string; paymentMethod: string; status: string; total: number | string }[];
+  return rows.map((r) => ({ ...r, total: money(r.total) }));
 }
 
 /** Admin view: every order from every dealer, newest first. */

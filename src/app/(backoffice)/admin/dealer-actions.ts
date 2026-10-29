@@ -24,6 +24,17 @@ const tierSchema = z.enum(['S', 'M', 'L']);
 const statusSchema = z.enum(['PENDING', 'ACTIVE', 'SUSPENDED']);
 const provinceSchema = z.string().trim().refine((p) => (PROVINCES as readonly string[]).includes(p), 'เลือกจังหวัด');
 const optionalText = (max: number) => z.string().trim().max(max).transform((v) => v || null);
+/** Baht amount typed by an admin ("50,000" is fine); blank = null. Two decimals, fits NUMERIC(14,2). */
+const optionalBaht = z.string().trim().transform((value, ctx) => {
+  const text = value.replace(/,/g, '');
+  if (!text) return null;
+  const amount = Number(text);
+  if (!Number.isFinite(amount) || amount < 0 || amount > 999_999_999_999) {
+    ctx.addIssue({ code: 'custom', message: 'จำนวนเงินเครดิตไม่ถูกต้อง (ต้องเป็นตัวเลขไม่ติดลบ)' });
+    return z.NEVER;
+  }
+  return Math.round(amount * 100) / 100;
+});
 
 const dealerSchema = z.object({
   name: z.string().trim().min(2, 'กรอกชื่อร้าน').max(120),
@@ -37,6 +48,8 @@ const dealerSchema = z.object({
   lineId: optionalText(60),
   taxId: optionalText(20),
   creditEnabled: z.boolean(),
+  creditLimit: optionalBaht,
+  creditOpening: optionalBaht.transform((v) => v ?? 0),
   notes: optionalText(500),
 });
 
@@ -44,7 +57,7 @@ function readDealerForm(formData: FormData) {
   const s = (k: string) => String(formData.get(k) ?? '');
   return dealerSchema.safeParse({
     name: s('name'), province: s('province'), types: formData.getAll('types').map(String), tier: s('tier'), status: s('status'),
-    odooPartnerId: s('odooPartnerId').trim(), address: s('address'), phone: s('phone'), lineId: s('lineId'), taxId: s('taxId'), creditEnabled: formData.get('creditEnabled') === 'on', notes: s('notes'),
+    odooPartnerId: s('odooPartnerId').trim(), address: s('address'), phone: s('phone'), lineId: s('lineId'), taxId: s('taxId'), creditEnabled: formData.get('creditEnabled') === 'on', creditLimit: s('creditLimit'), creditOpening: s('creditOpening'), notes: s('notes'),
   });
 }
 
@@ -102,7 +115,7 @@ export async function updateDealerAction(formData: FormData) {
   if (parsed.data.status === 'SUSPENDED') for (const u of before.users) await revokeAllSessions(u.id);
   const groupBefore = (await admin.groupForDealer(id))?.id ?? null;
   const groupAfter = await saveDealerGroup(id, formData);
-  await audit(actor.id, 'dealer.update', 'Dealer', id, { from: { status: before.status, tier: before.tier, types: before.types, creditEnabled: before.creditEnabled, customerGroupId: groupBefore }, to: { status: parsed.data.status, tier: parsed.data.tier, types: parsed.data.types, creditEnabled: parsed.data.creditEnabled, customerGroupId: groupAfter } });
+  await audit(actor.id, 'dealer.update', 'Dealer', id, { from: { status: before.status, tier: before.tier, types: before.types, creditEnabled: before.creditEnabled, creditLimit: before.creditLimit === null ? null : Number(before.creditLimit), creditOpening: Number(before.creditOpening), customerGroupId: groupBefore }, to: { status: parsed.data.status, tier: parsed.data.tier, types: parsed.data.types, creditEnabled: parsed.data.creditEnabled, creditLimit: parsed.data.creditLimit, creditOpening: parsed.data.creditOpening, customerGroupId: groupAfter } });
   revalidate();
   redirect(`/admin/dealers?open=${id}&saved=1`);
 }

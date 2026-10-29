@@ -15,7 +15,10 @@ export type DealerInput = {
   lineId?: string | null;
   taxId?: string | null;
   creditEnabled?: boolean;
+  creditLimit?: number | null;
+  creditOpening?: number;
   notes?: string | null;
+  avatarFile?: string | null;
 };
 
 export type DealerUser = Pick<User, 'id' | 'email' | 'name' | 'role' | 'isActive' | 'lastLoginAt' | 'mustChangePassword' | 'createdAt'>;
@@ -51,4 +54,14 @@ export async function createDealer(input: DealerInput): Promise<Dealer> {
 
 export async function updateDealer(id: string, patch: Partial<DealerInput> & { approvedAt?: Date | null; approvedById?: string | null }): Promise<void> {
   unwrap(await db().from('Dealer').update(toRow({ ...patch, updatedAt: new Date() })).eq('id', id));
+}
+
+/** The web dealer already linked to this Odoo partner, if any. */
+export async function findDealerByPartnerId(odooPartnerId: number): Promise<Dealer | null> {
+  return rowOrNull<Dealer>(await db().from('Dealer').select('*').eq('odooPartnerId', odooPartnerId).maybeSingle());
+}
+
+/** Hard-deletes a dealer that has no users or orders yet (undoing a half-finished self-activation). */
+export async function deleteDealer(id: string): Promise<void> {
+  unwrap(await db().from('Dealer').delete().eq('id', id));
 }

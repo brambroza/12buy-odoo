@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createFakeDb } from '@/lib/db/__tests__/fake-db';
+import type { NewOrder } from '../store';
 
 let fake = createFakeDb();
 vi.mock('@/lib/db/client', () => ({ db: () => fake.client }));
@@ -16,7 +17,7 @@ const orderInput = () => ({
 });
 
 /** Orders can only be placed from a non-empty cart (the DB function refuses an empty one). */
-async function placeOrder(input = orderInput()) {
+async function placeOrder(input: NewOrder = orderInput()) {
   await store.addToCart(input.sessionId, 1, 4);
   return store.createOrder(input);
 }
@@ -163,5 +164,24 @@ describe('orders', () => {
     expect(await store.countStalePending(60_000)).toBe(0);
     const synced = await store.setOdooSync(order.id, { status: 'SYNCED', saleOrderId: 5, saleOrderName: 'S00005', amountTotal: 9600, error: null, at: new Date().toISOString() });
     expect(synced?.odoo?.saleOrderName).toBe('S00005');
+  });
+});
+
+describe('listOpenCreditOrders', () => {
+  it('returns credit orders that are not paid or cancelled, optionally for one dealer', async () => {
+    const credit = (sessionId: string) => ({ ...orderInput(), sessionId, paymentMethod: 'CREDIT' as const });
+    const own = await placeOrder(credit('dealer:d1'));
+    await placeOrder(credit('staff:u1:42'));
+    await placeOrder(credit('staff:u1:420'));
+    await placeOrder(credit('dealer:d2'));
+    await placeOrder({ ...orderInput(), sessionId: 'dealer:d1' });
+    const cancelled = await placeOrder(credit('dealer:d1'));
+    await store.cancelOrder(null, cancelled.id);
+
+    expect(await store.listOpenCreditOrders()).toHaveLength(4);
+    const mine = await store.listOpenCreditOrders({ id: 'd1', odooPartnerId: 42 });
+    expect(mine.map((o) => o.scope).sort()).toEqual(['dealer:d1', 'staff:u1:42']);
+    expect(mine[0].total).toBe(own.total);
+    expect(await store.listOpenCreditOrders({ id: 'd1', odooPartnerId: null })).toHaveLength(1);
   });
 });

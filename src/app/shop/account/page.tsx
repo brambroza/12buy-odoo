@@ -6,7 +6,10 @@ import { ROLE_LABELS, isBackofficeRole, type Role } from '@/lib/auth/roles';
 import { getDealer } from '@/lib/dealers/repo';
 import { getDealerProfile } from '@/lib/shop/dealer';
 import { DEALER_TIER_LABELS, DEALER_TYPE_LABELS, type DealerType } from '@/lib/shop/types';
+import { DealerAvatar } from '@/components/shop/dealer-avatar';
+import { TierShield } from '@/components/shop/tier-shield';
 import { AddStaffForm } from './add-staff-form';
+import { AvatarForm } from './avatar-form';
 import { ShippingForm } from './shipping-form';
 
 /** Dealer account: shop details set by the admin, login users of the shop, password change. */
@@ -18,9 +21,17 @@ export default async function AccountPage() {
     <div className="grid gap-6 md:grid-cols-2 md:items-start">
       <section className="space-y-3">
         <h1 className="flex items-center gap-2 text-lg font-bold"><Store className="size-5" /> ข้อมูลร้าน</h1>
+        <div className="flex items-center gap-4 rounded-xl border border-border bg-card p-4">
+          <DealerAvatar name={profile.name} avatarFile={profile.avatarFile} size={72} />
+          <div className="min-w-0 space-y-2">
+            <p className="truncate font-semibold">{profile.name}</p>
+            <TierShield tier={profile.tier} withLabel />
+            {dealer && <AvatarForm hasAvatar={!!profile.avatarFile} />}
+          </div>
+        </div>
         <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-2 rounded-xl border border-border bg-card p-4 text-sm">
           <dt className="text-muted-foreground">ชื่อร้าน</dt><dd className="font-medium">{profile.name}</dd>
-          <dt className="text-muted-foreground">ระดับ</dt><dd>{DEALER_TIER_LABELS[profile.tier]}</dd>
+          <dt className="text-muted-foreground">ระดับ</dt><dd>{DEALER_TIER_LABELS[profile.tier]} <span className="text-xs text-muted-foreground">(แอดมินเป็นผู้กำหนด)</span></dd>
           <dt className="text-muted-foreground">จังหวัด</dt><dd>{profile.province.replace(/^จังหวัด/, '')}</dd>
           <dt className="text-muted-foreground">สินค้าที่สั่งได้</dt><dd>{profile.types.map((t: DealerType) => DEALER_TYPE_LABELS[t]).join(', ')}</dd>
           {!dealer && <><dt className="text-muted-foreground">ที่อยู่จัดส่ง</dt><dd>{profile.address || <span className="text-muted-foreground">ยังไม่ระบุ</span>}</dd></>}
