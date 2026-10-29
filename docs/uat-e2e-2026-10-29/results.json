@@ -1,0 +1,455 @@
+{
+  "web": "http://localhost:3100",
+  "odoo": "https://tester12buy.odoo.com",
+  "at": "2026-10-29T04:01:17.044Z",
+  "ctx": {
+    "cashRef": "WEB-20261029-029",
+    "creditRef": "WEB-20261029-030",
+    "cashSo": "S00207",
+    "creditSo": "S00208",
+    "poCash": "UAT-E2E-C10290349",
+    "poCredit": "UAT-E2E-K10290349"
+  },
+  "results": [
+    {
+      "journey": "J1 ดีลเลอร์สั่งซื้อ (เว็บ)",
+      "id": "D-01",
+      "title": "เปิดหน้าแรกเว็บไซต์ (ยังไม่ login)",
+      "expected": "เห็นหน้า landing ปุ่มเข้าสู่ระบบ/สมัครดีลเลอร์",
+      "actual": "ตามที่คาด",
+      "status": "PASS",
+      "shots": [
+        "001-landing.png"
+      ]
+    },
+    {
+      "journey": "J1 ดีลเลอร์สั่งซื้อ (เว็บ)",
+      "id": "D-02",
+      "title": "ดูแคตตาล็อกสาธารณะ /tires",
+      "expected": "เห็นสินค้าแต่ไม่เห็นราคา",
+      "actual": "ไม่แสดงราคา",
+      "status": "PASS",
+      "shots": [
+        "002-public-catalog.png"
+      ]
+    },
+    {
+      "journey": "J1 ดีลเลอร์สั่งซื้อ (เว็บ)",
+      "id": "D-03",
+      "title": "เข้าสู่ระบบด้วยบัญชีดีลเลอร์",
+      "expected": "ไปหน้าร้าน /shop",
+      "actual": "ตามที่คาด",
+      "status": "PASS",
+      "shots": [
+        "003-login.png",
+        "004-shop-home.png"
+      ]
+    },
+    {
+      "journey": "J1 ดีลเลอร์สั่งซื้อ (เว็บ)",
+      "id": "D-04",
+      "title": "ค้นหายางตามขนาด 265/65R17",
+      "expected": "เห็นผลค้นหา ราคาร้าน ป้าย VAT และสต็อก ของหมดกดใส่ตะกร้าไม่ได้",
+      "actual": "6 ลิงก์สินค้า · ปุ่มสินค้าหมด 2 ปุ่ม",
+      "status": "PASS",
+      "shots": [
+        "005-search.png"
+      ]
+    },
+    {
+      "journey": "J1 ดีลเลอร์สั่งซื้อ (เว็บ)",
+      "id": "D-05",
+      "title": "ดูรายละเอียดสินค้าและใส่ตะกร้า 4 เส้น",
+      "expected": "ขึ้น \"ใส่แล้ว\" และจำนวนในไอคอนตะกร้าเพิ่ม",
+      "actual": "ตามที่คาด",
+      "status": "PASS",
+      "shots": [
+        "006-product.png",
+        "007-product-added.png"
+      ]
+    },
+    {
+      "journey": "J1 ดีลเลอร์สั่งซื้อ (เว็บ)",
+      "id": "D-06",
+      "title": "สั่งเร็ว: พิมพ์หลายบรรทัด",
+      "expected": "ใส่ตะกร้ารายการที่มีของ และแจ้งบรรทัดที่หมด/หาไม่เจอพร้อมเหตุผล",
+      "actual": "ใส่ตะกร้าแล้ว 1 รายการ · หาไม่เจอ 2 บรรทัด",
+      "status": "PASS",
+      "shots": [
+        "008-quick-input.png",
+        "009-quick-result.png"
+      ]
+    },
+    {
+      "journey": "J1 ดีลเลอร์สั่งซื้อ (เว็บ)",
+      "id": "D-07",
+      "title": "ตะกร้าและหน้าชำระเงิน",
+      "expected": "เห็นรายการ ยอดรวม VAT วิธีชำระ เครดิต/เงินสด ที่อยู่ ขนส่ง",
+      "actual": "2 รายการ",
+      "status": "PASS",
+      "shots": [
+        "010-cart-top.png",
+        "011-cart-full.png"
+      ]
+    },
+    {
+      "journey": "J1 ดีลเลอร์สั่งซื้อ (เว็บ)",
+      "id": "D-08",
+      "title": "ยืนยันสั่งซื้อแบบเงินสด + เลข PO (กดซ้ำ 2 ครั้ง)",
+      "expected": "ได้ออเดอร์เดียว เห็นเลขออเดอร์ ยอดโอนรวม VAT และบัญชีธนาคาร",
+      "actual": "ออเดอร์ WEB-20261029-029",
+      "status": "PASS",
+      "shots": [
+        "012-order-placed-cash.png"
+      ]
+    },
+    {
+      "journey": "J1 ดีลเลอร์สั่งซื้อ (เว็บ)",
+      "id": "D-09",
+      "title": "แนบสลิปโอนเงิน",
+      "expected": "ขึ้น \"ส่งสลิปแล้ว · รอฝ่ายขายตรวจ\" และเห็นรูปสลิป",
+      "actual": "ตามที่คาด",
+      "status": "PASS",
+      "shots": [
+        "013-slip-uploaded.png"
+      ]
+    },
+    {
+      "journey": "J1 ดีลเลอร์สั่งซื้อ (เว็บ)",
+      "id": "D-10",
+      "title": "สั่งออเดอร์ที่ 2 แบบเครดิต (สั่งซ้ำ)",
+      "expected": "ใช้วงเงินเครดิต ไม่ต้องแนบสลิป",
+      "actual": "ออเดอร์ WEB-20261029-030",
+      "status": "PASS",
+      "shots": [
+        "014-checkout-credit.png",
+        "015-order-placed-credit.png"
+      ]
+    },
+    {
+      "journey": "J1 ดีลเลอร์สั่งซื้อ (เว็บ)",
+      "id": "D-11",
+      "title": "รายการออเดอร์ของร้าน",
+      "expected": "เห็น 2 ออเดอร์ใหม่ สถานะ \"รอยืนยัน\"",
+      "actual": "ตามที่คาด",
+      "status": "PASS",
+      "shots": [
+        "016-orders-list.png"
+      ]
+    },
+    {
+      "journey": "J2 แอดมินหลังบ้านเว็บ",
+      "id": "A-01",
+      "title": "แอดมินเข้าสู่ระบบ",
+      "expected": "ไปหน้า \"ออเดอร์จากเว็บ\"",
+      "actual": "ตามที่คาด",
+      "status": "PASS",
+      "shots": [
+        "017-admin-orders-inbox.png"
+      ]
+    },
+    {
+      "journey": "J2 แอดมินหลังบ้านเว็บ",
+      "id": "A-02",
+      "title": "ตรวจสลิปออเดอร์เงินสด",
+      "expected": "เห็นรูปสลิปและยอดที่ต้องได้รับ กด \"ตรวจสลิปแล้ว ยอดถูกต้อง\" แล้วขึ้นป้ายตรวจแล้ว",
+      "actual": "ตามที่คาด",
+      "status": "PASS",
+      "shots": [
+        "018-admin-slip-before.png",
+        "019-admin-slip-verified.png"
+      ]
+    },
+    {
+      "journey": "J2 แอดมินหลังบ้านเว็บ",
+      "id": "A-03",
+      "title": "ยืนยันออเดอร์เงินสด → สร้าง SO ใน Odoo",
+      "expected": "สถานะ \"กำลังจัดสินค้า\" และป้าย Odoo S0xxxx สีเขียว (ยอดตรง)",
+      "actual": "สร้าง S00207",
+      "status": "PASS",
+      "shots": [
+        "020-admin-confirmed-cash.png"
+      ]
+    },
+    {
+      "journey": "J2 แอดมินหลังบ้านเว็บ",
+      "id": "A-04",
+      "title": "ยืนยันออเดอร์เครดิต → สร้าง SO ใน Odoo",
+      "expected": "ยืนยันได้ทันทีโดยไม่ต้องมีสลิป ได้ SO ใน Odoo",
+      "actual": "สร้าง S00208",
+      "status": "PASS",
+      "shots": [
+        "021-admin-confirmed-credit.png"
+      ]
+    },
+    {
+      "journey": "J2 แอดมินหลังบ้านเว็บ",
+      "id": "A-05",
+      "title": "จัดการดีลเลอร์",
+      "expected": "เห็นร้าน ระดับ โซน ผูก Odoo และชื่อเซลล์/คำเตือนยังไม่ตั้งเซลล์",
+      "actual": "ตามที่คาด",
+      "status": "PASS",
+      "shots": [
+        "022-admin-dealers.png"
+      ]
+    },
+    {
+      "journey": "J2 แอดมินหลังบ้านเว็บ",
+      "id": "A-06",
+      "title": "ใบสมัครดีลเลอร์",
+      "expected": "เห็นรายการใบสมัครและปุ่มอนุมัติ",
+      "actual": "ตามที่คาด",
+      "status": "PASS",
+      "shots": [
+        "023-admin-leads.png"
+      ]
+    },
+    {
+      "journey": "J2 แอดมินหลังบ้านเว็บ",
+      "id": "A-07",
+      "title": "กลุ่มลูกค้า (สินค้าที่ร้านเห็น)",
+      "expected": "สร้าง/แก้กลุ่ม กำหนดยี่ห้อ หมวด รวม/ยกเว้นสินค้า",
+      "actual": "ตามที่คาด",
+      "status": "PASS",
+      "shots": [
+        "024-admin-groups.png"
+      ]
+    },
+    {
+      "journey": "J2 แอดมินหลังบ้านเว็บ",
+      "id": "A-08",
+      "title": "โซนราคาตามจังหวัด",
+      "expected": "เห็นโซนและจังหวัด จังหวัดหนึ่งอยู่ได้โซนเดียว",
+      "actual": "ตามที่คาด",
+      "status": "PASS",
+      "shots": [
+        "025-admin-zones.png"
+      ]
+    },
+    {
+      "journey": "J2 แอดมินหลังบ้านเว็บ",
+      "id": "A-09",
+      "title": "ตารางราคา โซน × ระดับ",
+      "expected": "เห็นตาราง สถานะร่าง/รออนุมัติ/เผยแพร่ และคู่ราคาเครดิต-เงินสด",
+      "actual": "ตามที่คาด",
+      "status": "PASS",
+      "shots": [
+        "026-admin-prices.png"
+      ]
+    },
+    {
+      "journey": "J2 แอดมินหลังบ้านเว็บ",
+      "id": "A-10",
+      "title": "คูปอง (จาก Odoo Loyalty)",
+      "expected": "เห็นโปรแกรมคูปองจาก Odoo",
+      "actual": "ตามที่คาด",
+      "status": "PASS",
+      "shots": [
+        "027-admin-coupons.png"
+      ]
+    },
+    {
+      "journey": "J2 แอดมินหลังบ้านเว็บ",
+      "id": "A-11",
+      "title": "ผู้ใช้งานระบบ",
+      "expected": "เห็นผู้ใช้หลังบ้านและ role",
+      "actual": "ตามที่คาด",
+      "status": "PASS",
+      "shots": [
+        "028-admin-users.png"
+      ]
+    },
+    {
+      "journey": "J3 Odoo (staging tester12buy)",
+      "id": "O-01",
+      "title": "เข้าสู่ระบบ Odoo",
+      "expected": "เข้าหน้า Odoo ได้",
+      "actual": "ตามที่คาด",
+      "status": "PASS",
+      "shots": [
+        "029-odoo-home.png"
+      ]
+    },
+    {
+      "journey": "J3 Odoo (staging tester12buy)",
+      "id": "O-02",
+      "title": "ใบเสนอราคา/ใบสั่งขายจากเว็บ (ค้นหา WEB-)",
+      "expected": "เห็น SO ที่ origin = Web และ client_order_ref = WEB-…",
+      "actual": "S00207 state=sale ยอด 12320 (ก่อนภาษี 11514.02 + VAT 805.98) · เซลล์ ไม่ระบุ",
+      "status": "PASS",
+      "shots": [
+        "030-odoo-so-list.png"
+      ]
+    },
+    {
+      "journey": "J3 Odoo (staging tester12buy)",
+      "id": "O-03",
+      "title": "เปิด SO ออเดอร์เงินสด ตรวจรายการ ราคา ภาษี หมายเหตุ",
+      "expected": "ราคา/จำนวนตรงกับเว็บ ภาษี 7% (Inc) ยอดรวมตรงกับยอดที่ดีลเลอร์โอน หมายเหตุมี PO/ขนส่ง/ที่อยู่",
+      "actual": "ตามที่คาด",
+      "status": "PASS",
+      "shots": [
+        "031-odoo-so-form.png",
+        "032-odoo-so-otherinfo.png"
+      ]
+    },
+    {
+      "journey": "J3 Odoo (staging tester12buy)",
+      "id": "O-04",
+      "title": "ข้อมูลลูกค้าใน Odoo: เซลล์ประจำร้าน วงเงินเครดิต pricelist",
+      "expected": "เห็นแท็บขายและจัดซื้อ: Salesperson, Pricelist, วงเงิน",
+      "actual": "ตามที่คาด",
+      "status": "PASS",
+      "shots": [
+        "033-odoo-partner.png",
+        "034-odoo-partner-sales.png"
+      ]
+    },
+    {
+      "journey": "J3 Odoo (staging tester12buy)",
+      "id": "O-05",
+      "title": "ข้อมูลสินค้าใน Odoo: ภาษีขาย หน่วย สต็อก",
+      "expected": "ภาษีขาย 7% (Inc) ราคาขาย หน่วยนับ",
+      "actual": "ตามที่คาด",
+      "status": "PASS",
+      "shots": [
+        "035-odoo-product.png"
+      ]
+    },
+    {
+      "journey": "J3 Odoo (staging tester12buy)",
+      "id": "O-06",
+      "title": "คลัง: ตรวจและยืนยันใบส่งของ (ออเดอร์เงินสด)",
+      "expected": "ใบส่งของสถานะ Done",
+      "actual": "WH/OUT/00159 → done",
+      "status": "PASS",
+      "shots": [
+        "036-odoo-picking-before-cash.png",
+        "037-odoo-picking-done-cash.png"
+      ]
+    },
+    {
+      "journey": "J3 Odoo (staging tester12buy)",
+      "id": "O-07",
+      "title": "บัญชี: สร้างและยืนยันใบแจ้งหนี้ (ออเดอร์เงินสด)",
+      "expected": "ใบแจ้งหนี้ Posted ยอดตรงกับ SO",
+      "actual": "INV/2026/00120 posted ยอด 12320 (not_paid)",
+      "status": "PASS",
+      "shots": [
+        "038-odoo-invoice-cash.png"
+      ]
+    },
+    {
+      "journey": "J3 Odoo (staging tester12buy)",
+      "id": "O-08",
+      "title": "บัญชี: บันทึกรับชำระตามสลิป (ออเดอร์เงินสด)",
+      "expected": "ใบแจ้งหนี้สถานะ Paid / In Payment",
+      "actual": "INV/2026/00120 payment_state=paid",
+      "status": "PASS",
+      "shots": [
+        "039-odoo-invoice-paid.png"
+      ]
+    },
+    {
+      "journey": "J3 Odoo (staging tester12buy)",
+      "id": "O-09",
+      "title": "คลัง: ยืนยันใบส่งของ (ออเดอร์เครดิต)",
+      "expected": "ใบส่งของสถานะ Done",
+      "actual": "WH/OUT/00160 → done",
+      "status": "PASS",
+      "shots": [
+        "040-odoo-picking-before-credit.png",
+        "041-odoo-picking-done-credit.png"
+      ]
+    },
+    {
+      "journey": "J3 Odoo (staging tester12buy)",
+      "id": "O-10",
+      "title": "บัญชี: ออกใบแจ้งหนี้ออเดอร์เครดิต (ยังไม่ชำระ)",
+      "expected": "ใบแจ้งหนี้ Posted ค้างชำระ มีวันครบกำหนด",
+      "actual": "INV/2026/00121 posted ยอด 12320 (not_paid)",
+      "status": "PASS",
+      "shots": [
+        "042-odoo-invoice-credit.png"
+      ]
+    },
+    {
+      "journey": "J4 สถานะจาก Odoo กลับมาที่เว็บ",
+      "id": "S-01",
+      "title": "แอดมินกด \"ดึงสถานะจาก Odoo ตอนนี้\"",
+      "expected": "ออเดอร์เงินสด → ชำระแล้ว, ออเดอร์เครดิต → วางบิลแล้ว",
+      "actual": "ตรวจ 8 ออเดอร์จาก Odoo · เปลี่ยนสถานะ 2 ออเดอร์ · เงินสด: ชำระแล้ว · เครดิต: วางบิลแล้ว",
+      "status": "PASS",
+      "shots": [
+        "043-admin-after-sync.png"
+      ]
+    },
+    {
+      "journey": "J4 สถานะจาก Odoo กลับมาที่เว็บ",
+      "id": "S-02",
+      "title": "ดีลเลอร์เปิดออเดอร์เงินสด",
+      "expected": "timeline ครบ 5 ขั้น \"ชำระแล้ว\" เห็นเลขใบแจ้งหนี้ ชำระครบ",
+      "actual": "สถานะ: ชำระแล้ว",
+      "status": "PASS",
+      "shots": [
+        "044-dealer-order-paid.png"
+      ]
+    },
+    {
+      "journey": "J4 สถานะจาก Odoo กลับมาที่เว็บ",
+      "id": "S-03",
+      "title": "ดีลเลอร์เปิดออเดอร์เครดิต",
+      "expected": "สถานะ \"วางบิลแล้ว\" เห็นยอดค้างและวันครบกำหนด",
+      "actual": "สถานะ: วางบิลแล้ว",
+      "status": "PASS",
+      "shots": [
+        "045-dealer-order-invoiced.png"
+      ]
+    },
+    {
+      "journey": "J5 กรณีผิดปกติและความปลอดภัย",
+      "id": "N-01",
+      "title": "ดีลเลอร์พยายามเปิดหน้าหลังบ้าน",
+      "expected": "ถูกพากลับ /shop",
+      "actual": "→ /shop",
+      "status": "PASS",
+      "shots": []
+    },
+    {
+      "journey": "J5 กรณีผิดปกติและความปลอดภัย",
+      "id": "N-02",
+      "title": "ดีลเลอร์เรียก API หลังบ้าน",
+      "expected": "ได้ 403",
+      "actual": "HTTP 403",
+      "status": "PASS",
+      "shots": []
+    },
+    {
+      "journey": "J5 กรณีผิดปกติและความปลอดภัย",
+      "id": "N-03",
+      "title": "คนนอกเปิดรูปสลิปโดยไม่ login",
+      "expected": "ได้ 401",
+      "actual": "HTTP 401",
+      "status": "PASS",
+      "shots": []
+    },
+    {
+      "journey": "J5 กรณีผิดปกติและความปลอดภัย",
+      "id": "N-04",
+      "title": "เรียก cron ดึงสถานะโดยไม่มีรหัส",
+      "expected": "ได้ 401",
+      "actual": "HTTP 401",
+      "status": "PASS",
+      "shots": []
+    },
+    {
+      "journey": "J5 กรณีผิดปกติและความปลอดภัย",
+      "id": "N-05",
+      "title": "ออกจากระบบแล้วเปิดตะกร้า",
+      "expected": "ถูกพาไปหน้า login",
+      "actual": "→ /login",
+      "status": "PASS",
+      "shots": []
+    }
+  ]
+}
