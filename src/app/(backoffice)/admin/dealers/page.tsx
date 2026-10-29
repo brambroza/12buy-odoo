@@ -286,22 +286,22 @@ export default async function DealersPage({ searchParams }: { searchParams: Prom
 
             <section className="space-y-2">
               <h2 className="text-sm font-semibold">ข้อมูลร้าน</h2>
-              {canEdit ? <DealerForm action={updateDealerAction} dealer={d} creditUsed={creditUsed(d)} partners={partners} zones={zones} groups={groups} groupId={group?.id} pricelists={odoo.data?.pricelists ?? []} /> : <p className="text-xs text-muted-foreground">เฉพาะแอดมินแก้ไขข้อมูลร้านได้</p>}
-              <p className="text-xs text-muted-foreground">ราคาที่ร้านเห็น: {typePricelistSummary(d, odoo.data?.pricelists ?? [])}{book?.status === 'PUBLISHED' ? `ตารางราคาเว็บ ${zone.name} / ${d.tier}` : `pricelist ของลูกค้าใน Odoo (ยังไม่มีตารางเว็บเผยแพร่สำหรับโซน ${zone.name} / ${d.tier})`}</p>
+              {canEdit ? <DealerForm action={updateDealerAction} dealer={d} creditUsed={creditUsed(d)} partners={partners} zones={zones} groups={groups} groupId={group?.id} pricelists={odoo.data?.pricelists ?? []} /> : <p className="text-xs text-muted-foreground">แก้ไขได้เฉพาะแอดมิน</p>}
+              <p className="text-xs text-muted-foreground">ราคา: {typePricelistSummary(d, odoo.data?.pricelists ?? [])}{book?.status === 'PUBLISHED' ? `ตารางราคาเว็บ ${zone.name} / ${d.tier}` : 'pricelist ใน Odoo'}</p>
             </section>
 
             {d.odooPartnerId && (
               <section className="space-y-2 rounded-lg border border-border p-3">
-                <h2 className="text-sm font-semibold">ลูกค้าใน Odoo · กลุ่มราคา / วงเงิน / การจัดส่ง</h2>
+                <h2 className="text-sm font-semibold">Odoo</h2>
                 {customer && odoo.data
                   ? <OdooCustomerPanel customer={customer} odoo={odoo.data} canEdit={canEdit} writable={writable} dealerId={d.id} />
-                  : <p className="text-xs text-muted-foreground">{odoo.data ? <OdooKindNote partnerId={d.odooPartnerId} kind={kindOf(d.odooPartnerId)} /> : 'เชื่อมต่อ Odoo ไม่ได้ในขณะนี้'}</p>}
+                  : <p className="text-xs text-muted-foreground">{odoo.data ? <OdooKindNote partnerId={d.odooPartnerId} kind={kindOf(d.odooPartnerId)} /> : 'เชื่อมต่อ Odoo ไม่ได้'}</p>}
               </section>
             )}
 
             <section className="rounded-lg border border-border">
-              <h2 className="border-b border-border px-3 py-2 text-sm font-semibold">บัญชีเข้าสู่ระบบของร้าน</h2>
-              {d.users.length === 0 && <p className="px-3 py-2 text-xs text-muted-foreground">ยังไม่มีบัญชี ร้านยังเข้าสู่ระบบไม่ได้</p>}
+              <h2 className="border-b border-border px-3 py-2 text-sm font-semibold">บัญชีผู้ใช้</h2>
+              {d.users.length === 0 && <p className="px-3 py-2 text-xs text-muted-foreground">ยังไม่มีบัญชีผู้ใช้</p>}
               <ul className="divide-y divide-border text-sm">
                 {d.users.map((u) => (
                   <li key={u.id} className="flex flex-wrap items-center gap-2 px-3 py-2">
@@ -331,7 +331,7 @@ export default async function DealersPage({ searchParams }: { searchParams: Prom
             {canEdit && <Button size="sm" variant="outline" className="ml-auto" nativeButton={false} render={<Link href={href({ new: '1', partner: String(openCustomer.id) })} scroll={false} />}><UserPlus /> สร้างเป็นดีลเลอร์บนเว็บ</Button>}
           </div>
           <OdooCustomerPanel customer={openCustomer} odoo={odoo.data} canEdit={canEdit} writable={writable} />
-          <p className="text-xs text-muted-foreground">ลูกค้ารายนี้เข้าเว็บเองได้ด้วยอีเมล/รหัส Odoo portal หรือหน้า /activate (ระบบสร้างดีลเลอร์ให้อัตโนมัติ) · หรือกด “สร้างเป็นดีลเลอร์บนเว็บ” เพื่อตั้งประเภท/ระดับ/บัญชีเข้าสู่ระบบเอง</p>
+          <p className="text-xs text-muted-foreground">เข้าใช้งานเองได้ผ่าน Odoo portal หรือหน้า /activate</p>
         </UrlDrawer>
       )}
     </div>
@@ -357,11 +357,11 @@ function OdooKindBadge({ kind }: { kind: OdooPartnerKind | null }) {
 function OdooKindNote({ partnerId, kind }: { partnerId: number; kind: OdooPartnerKind | null }) {
   if (kind?.kind === 'contact') {
     return kind.parent
-      ? <>Odoo #{partnerId} เป็น Contact ใต้ “{kind.parent.name}” ราคา/วงเงินใช้ของบริษัทนั้น · ผูกร้านกับบริษัทแทนเพื่อตั้งค่าที่นี่</>
-      : <>Odoo #{partnerId} เป็น Contact ที่ยังไม่เป็น Customer (ยังไม่เคยขาย) · จะกลายเป็นลูกค้าเมื่อมีใบสั่งขายแรก แล้วตั้งกลุ่มราคา/วงเงินที่นี่ได้</>;
+      ? <>Odoo #{partnerId} เป็นผู้ติดต่อของ {kind.parent.name} ให้ผูกกับบริษัทแทน</>
+      : <>Odoo #{partnerId} ยังไม่เป็นลูกค้า (ยังไม่มีใบสั่งขาย)</>;
   }
-  if (kind?.kind === 'archived') return <>Odoo #{partnerId} ถูกเก็บถาวร (Archive) ใน Odoo · เปิดใช้งานใน Odoo หรือผูกร้านกับลูกค้ารายอื่น</>;
-  return <>ไม่พบ Odoo #{partnerId} · ตรวจการผูกลูกค้าในฟอร์มด้านบน</>;
+  if (kind?.kind === 'archived') return <>Odoo #{partnerId} ถูกเก็บถาวร</>;
+  return <>ไม่พบ Odoo #{partnerId}</>;
 }
 
 /** Odoo pricelist (price group) of the customer, or a warning badge when none is set. */
@@ -387,33 +387,32 @@ function OdooCustomerPanel({ customer: c, odoo, canEdit, writable, dealerId }: {
   return (
     <div className="space-y-3">
       <p className="text-xs text-muted-foreground">
-        {[c.vat && `เลขภาษี ${c.vat}`, c.phone && `โทร ${c.phone}`, c.email].filter(Boolean).join(' · ') || 'ไม่มีข้อมูลติดต่อใน Odoo'} · Odoo #{c.id}
-        {' · '}ส่ง: {c.carrier?.name ?? `ค่าเริ่มต้น${defaultCarrier ? ` (${defaultCarrier.name})` : ''}`}
+        {[c.vat && `เลขภาษี ${c.vat}`, c.phone && `โทร ${c.phone}`, c.email].filter(Boolean).join(' · ') || 'ไม่มีข้อมูลติดต่อ'} · Odoo #{c.id}
+        {' · '}จัดส่ง: {c.carrier?.name ?? `ค่าเริ่มต้น${defaultCarrier ? ` (${defaultCarrier.name})` : ''}`}
       </p>
       {canEdit ? (
         <form action={updateOdooCustomerAction} className="grid gap-3 sm:grid-cols-3 sm:items-end">
           <input type="hidden" name="partnerId" value={c.id} />
           {dealerId && <input type="hidden" name="dealerId" value={dealerId} />}
-          <label className="text-xs font-medium">กลุ่มราคา (Pricelist)
+          <label className="text-xs font-medium">กลุ่มราคา
             <select name="pricelistId" defaultValue={c.pricelist?.id ?? ''} required disabled={!writable} className={field}>
               <option value="" disabled>เลือกกลุ่มราคา</option>
               {pricelists.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
             </select>
           </label>
-          <label className="text-xs font-medium">วงเงินเครดิต Odoo (บาท)
+          <label className="text-xs font-medium">วงเงินเครดิต (บาท)
             <input name="creditLimit" inputMode="decimal" defaultValue={c.creditLimit ?? ''} placeholder="ว่าง = ไม่จำกัด" disabled={!writable} className={field} />
           </label>
           <label className="text-xs font-medium">การจัดส่ง
             <select name="carrierId" defaultValue={c.carrier?.id ?? ''} disabled={!writable} className={field}>
               <option value="">ค่าเริ่มต้น{defaultCarrier ? ` (${defaultCarrier.name})` : ''}</option>
-              {c.carrier && !carriers.some((k) => k.id === c.carrier!.id) && <option value={c.carrier.id}>{c.carrier.name} (ปิดใช้งานแล้ว · ใช้ค่าเริ่มต้นแทน)</option>}
+              {c.carrier && !carriers.some((k) => k.id === c.carrier!.id) && <option value={c.carrier.id}>{c.carrier.name} (ปิดใช้งาน)</option>}
               {carriers.map((k) => <option key={k.id} value={k.id}>{k.name}</option>)}
             </select>
           </label>
           <div className="sm:col-span-3"><Button type="submit" size="sm" disabled={!writable}>บันทึกลง Odoo</Button></div>
-          <p className="text-xs text-muted-foreground sm:col-span-3">ราคาบนเว็บใช้ pricelist นี้ (ยกเว้นโซน/ระดับที่มีตารางราคาเว็บเผยแพร่แล้ว) · วงเงินนี้คือ Credit Limit ใน Odoo ตอนสั่งเครดิตบนเว็บต้องผ่านทั้งวงเงิน Odoo และวงเงินเว็บ · ดีลเลอร์เลือกการจัดส่งเองไม่ได้ ออเดอร์ใช้การจัดส่งที่ตั้งที่นี่ (Delivery Method ของลูกค้าใน Odoo)</p>
         </form>
-      ) : <p className="text-xs text-muted-foreground">เฉพาะแอดมินแก้กลุ่มราคาและวงเงินได้</p>}
+      ) : <p className="text-xs text-muted-foreground">แก้ไขได้เฉพาะแอดมิน</p>}
     </div>
   );
 }
@@ -423,7 +422,7 @@ function typePricelistSummary(dealer: DealerRow, pricelists: OdooPricelistOption
   const entries = (Object.entries(dealer.typePricelists ?? {}) as [DealerType, number][]).filter(([t]) => dealer.types.includes(t));
   if (!entries.length) return '';
   const name = (id: number) => pricelists.find((p) => p.id === id)?.name ?? `#${id}`;
-  return `${entries.map(([t, id]) => `${DEALER_TYPE_LABELS[t]}: ${name(id)}`).join(' · ')} · ประเภทอื่น: `;
+  return `${entries.map(([t, id]) => `${DEALER_TYPE_LABELS[t]}: ${name(id)}`).join(' · ')} · อื่น ๆ: `;
 }
 
 /** Web credit used vs. limit in the dealer row header. */
@@ -454,7 +453,7 @@ function TypePricelistFields({ saved, pricelists }: { saved: Partial<Record<Deal
           return (
             <label key={t} className="text-xs">{DEALER_TYPE_LABELS[t]}
               <select name={`typePricelist_${t}`} defaultValue={current ?? ''} className={field}>
-                <option value="">ราคาปกติของร้าน</option>
+                <option value="">ราคาปกติ</option>
                 {missing && <option value={current}>Pricelist #{current}</option>}
                 {pricelists.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
               </select>
@@ -462,7 +461,6 @@ function TypePricelistFields({ saved, pricelists }: { saved: Partial<Record<Deal
           );
         })}
       </div>
-      <span className="text-xs text-muted-foreground">ตั้งเฉพาะประเภทที่ต้องการราคาต่างจากปกติ · ใช้ก่อนตารางราคาเว็บและ pricelist ของลูกค้าใน Odoo · ลูกค้าเครดิตที่จ่ายเงินสดได้ส่วนลดตามคู่ราคาเครดิต↔เงินสดของ pricelist ที่เลือก</span>
     </fieldset>
   );
 }
@@ -480,49 +478,46 @@ function DealerForm({ action, dealer, prefill, creditUsed, partners, zones, grou
         </select>
       </label>
       <fieldset className="md:col-span-2">
-        <legend className="text-xs font-medium">ประเภทสินค้าที่สั่งได้</legend>
+        <legend className="text-xs font-medium">ประเภทสินค้า</legend>
         <div className="mt-1 flex flex-wrap gap-2 text-sm">
           {TYPES.map((t) => <label key={t} className="flex items-center gap-1.5 rounded-lg border border-border px-2 py-1 has-[:checked]:border-primary has-[:checked]:bg-primary/10"><input type="checkbox" name="types" value={t} defaultChecked={dealer ? dealer.types.includes(t) : t === 'CAR'} />{DEALER_TYPE_LABELS[t]}</label>)}
         </div>
       </fieldset>
       <TypePricelistFields saved={dealer?.typePricelists ?? {}} pricelists={pricelists} />
-      <label className="text-xs font-medium md:col-span-2">กลุ่มลูกค้า (สินค้าที่ร้านเห็น)
+      <label className="text-xs font-medium md:col-span-2">กลุ่มลูกค้า
         <select name="customerGroupId" defaultValue={groupId ?? ''} className={field}>
-          <option value="">ไม่จัดกลุ่ม · เห็นสินค้าทุกตัวในประเภทที่เลือก</option>
+          <option value="">ไม่จัดกลุ่ม</option>
           {groups.map((g) => <option key={g.id} value={g.id}>{g.name}</option>)}
         </select>
-        <span className="font-normal text-muted-foreground">ตั้งกลุ่มได้ที่เมนู “กลุ่มลูกค้า” · ร้านเห็นเฉพาะสินค้าที่อยู่ทั้งในประเภทที่เลือกและในกลุ่ม</span>
       </label>
-      <label className="text-xs font-medium">ระดับดีลเลอร์
+      <label className="text-xs font-medium">ระดับ
         <select name="tier" defaultValue={dealer?.tier ?? 'M'} className={field}>{TIERS.map((t) => <option key={t} value={t}>{t} · {DEALER_TIER_LABELS[t]}</option>)}</select>
       </label>
       <label className="text-xs font-medium">สถานะ
         <select name="status" defaultValue={dealer?.status ?? 'ACTIVE'} className={field}>{(Object.keys(STATUS) as Status[]).map((s) => <option key={s} value={s}>{STATUS[s]}</option>)}</select>
       </label>
-      <label className="text-xs font-medium md:col-span-2">ลูกค้าใน Odoo (res.partner)
+      <label className="text-xs font-medium md:col-span-2">ลูกค้าใน Odoo
         <select name="odooPartnerId" defaultValue={dealer?.odooPartnerId ?? prefill?.odooPartnerId ?? ''} className={field}>
-          <option value="">ยังไม่ผูก (ใช้ pricelist เริ่มต้น)</option>
+          <option value="">ไม่ผูก</option>
           {partners.map((p) => <option key={p.id} value={p.id}>{p.name}{p.state_id ? ` · ${p.state_id[1].replace(/\s*\(TH\)$/, '').replace(/^จังหวัด/, '')}` : ''}{p.property_product_pricelist ? ` · ${p.property_product_pricelist[1]}` : ''}</option>)}
         </select>
-        {dealer?.odooPartnerId && <span className="font-normal text-muted-foreground">กลุ่มราคา / วงเงินเครดิต / การจัดส่งใน Odoo ตั้งที่กล่อง “ลูกค้าใน Odoo” ด้านล่าง</span>}
       </label>
-      <label className="flex items-start gap-2 rounded-lg border border-border p-2 text-xs md:col-span-2 has-[:checked]:border-primary has-[:checked]:bg-primary/5">
-        <input type="checkbox" name="creditEnabled" defaultChecked={dealer?.creditEnabled ?? false} className="mt-0.5" />
-        <span><span className="font-medium">ลูกค้าเครดิต</span><span className="block text-muted-foreground">สั่งแบบเครดิตได้โดยไม่ต้องแนบสลิป · ถ้าเลือกจ่ายเงินสด ได้ส่วนต่างราคาเครดิต−เงินสดเป็นส่วนลดท้ายบิล (ตั้งคู่ราคาที่หน้าตารางราคา)</span></span>
+      <label className="flex items-center gap-2 rounded-lg border border-border p-2 text-xs md:col-span-2 has-[:checked]:border-primary has-[:checked]:bg-primary/5">
+        <input type="checkbox" name="creditEnabled" defaultChecked={dealer?.creditEnabled ?? false} />
+        <span className="font-medium">ลูกค้าเครดิต</span>
       </label>
-      <label className="text-xs font-medium">วงเงินเครดิตเว็บ (บาท)
+      <label className="text-xs font-medium">วงเงินเครดิต (บาท)
         <input name="creditLimit" inputMode="decimal" defaultValue={dealer?.creditLimit ?? ''} placeholder="ว่าง = ไม่จำกัด" className={field} />
-        <span className="font-normal text-muted-foreground">สั่งเครดิตจะตัดวงเงินทันที · คืนเมื่อออเดอร์เป็น “ชำระแล้ว” หรือถูกยกเลิก · บันทึกแล้วส่งเป็น Credit Limit ของลูกค้าใน Odoo ด้วย (ต้องผูกลูกค้า Odoo และเปิดการเขียน Odoo)</span>
       </label>
       <label className="text-xs font-medium">ยอดค้างยกมา (บาท)
         <input name="creditOpening" inputMode="decimal" defaultValue={dealer ? Number(dealer.creditOpening) || '' : ''} placeholder="0" className={field} />
-        <span className="font-normal text-muted-foreground">หนี้ก่อนใช้เว็บ นับเป็นยอดใช้ไปแล้ว · ร้านจ่ายแล้วให้ลดยอดนี้ลง{creditUsed !== undefined ? ` · ใช้อยู่ตอนนี้ ${baht(creditUsed)} (รวมยอดยกมา)` : ''}</span>
+        {creditUsed !== undefined && <span className="font-normal text-muted-foreground">ใช้ไป {baht(creditUsed)}</span>}
       </label>
       <label className="text-xs font-medium">โทร<input name="phone" defaultValue={dealer?.phone ?? prefill?.phone ?? ''} maxLength={30} className={field} /></label>
       <label className="text-xs font-medium">LINE ID<input name="lineId" defaultValue={dealer?.lineId ?? ''} maxLength={60} className={field} /></label>
       <label className="text-xs font-medium">เลขผู้เสียภาษี<input name="taxId" defaultValue={dealer?.taxId ?? prefill?.taxId ?? ''} maxLength={20} className={field} /></label>
-      <label className="text-xs font-medium">ที่อยู่จัดส่ง<input name="address" defaultValue={dealer?.address ?? ''} maxLength={300} className={field} /></label>
-      <label className="text-xs font-medium md:col-span-2">หมายเหตุภายใน<input name="notes" defaultValue={dealer?.notes ?? ''} maxLength={500} className={field} /></label>
+      <label className="text-xs font-medium">ที่อยู่<input name="address" defaultValue={dealer?.address ?? ''} maxLength={300} className={field} /></label>
+      <label className="text-xs font-medium md:col-span-2">หมายเหตุ<input name="notes" defaultValue={dealer?.notes ?? ''} maxLength={500} className={field} /></label>
       <div className="md:col-span-2"><Button type="submit" size="sm">{dealer ? 'บันทึก' : 'สร้างดีลเลอร์'}</Button></div>
     </form>
   );
