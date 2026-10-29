@@ -71,6 +71,14 @@ export type DealerProfile = {
   credit: boolean;
   /** Odoo cash pricelist paired with `pricelistId`; the price difference is the cash discount. */
   cashPricelistId: number | null;
+  /**
+   * Odoo pricelist per product family set for this dealer (e.g. motorcycle tyres on the big-dealer
+   * pricelist, car tyres on the small-dealer one). Wins over the web price book and `pricelistId`;
+   * families left out keep the normal rules.
+   */
+  typePricelists?: TypePricelists;
+  /** Cash pricelist paired with each `typePricelists` entry (credit dealers only), for the cash discount. */
+  typeCashPricelists?: TypePricelists;
   /** Customer group that narrows which products this dealer sees; null = all products of `types`. */
   customerGroupId: string | null;
   /** Profile picture file name in the `avatars` bucket; null = none. */
@@ -80,6 +88,9 @@ export type DealerProfile = {
   /** Resolved per request from the admin settings (never stored in the impersonation cookie). */
   customerGroup?: CustomerGroup | null;
 };
+
+/** Odoo pricelist id per product family; a missing family means "use the dealer's normal price". */
+export type TypePricelists = Partial<Record<DealerType, number>>;
 
 /** CASH = transfer + slip before confirmation; CREDIT = billed on the dealer's payment term, no slip. */
 export type PaymentMethod = 'CASH' | 'CREDIT';

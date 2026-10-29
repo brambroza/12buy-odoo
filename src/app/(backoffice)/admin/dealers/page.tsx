@@ -259,7 +259,7 @@ export default async function DealersPage({ searchParams }: { searchParams: Prom
       {params.new && canEdit && (
         <UrlDrawer key={`new-${params.partner ?? ''}`} title={prefill ? `สร้างดีลเลอร์จากลูกค้า Odoo` : 'เพิ่มดีลเลอร์ใหม่'} description={prefill?.name} closeHref={closeHref}>
           {notice}
-          <DealerForm action={createDealerAction} prefill={prefill} partners={partners} zones={zones} groups={groups} />
+          <DealerForm action={createDealerAction} prefill={prefill} partners={partners} zones={zones} groups={groups} pricelists={odoo.data?.pricelists ?? []} />
         </UrlDrawer>
       )}
 
@@ -286,8 +286,8 @@ export default async function DealersPage({ searchParams }: { searchParams: Prom
 
             <section className="space-y-2">
               <h2 className="text-sm font-semibold">ข้อมูลร้าน</h2>
-              {canEdit ? <DealerForm action={updateDealerAction} dealer={d} creditUsed={creditUsed(d)} partners={partners} zones={zones} groups={groups} groupId={group?.id} /> : <p className="text-xs text-muted-foreground">เฉพาะแอดมินแก้ไขข้อมูลร้านได้</p>}
-              <p className="text-xs text-muted-foreground">ราคาที่ร้านเห็น: {book?.status === 'PUBLISHED' ? `ตารางราคาเว็บ ${zone.name} / ${d.tier}` : `pricelist ของลูกค้าใน Odoo (ยังไม่มีตารางเว็บเผยแพร่สำหรับโซน ${zone.name} / ${d.tier})`}</p>
+              {canEdit ? <DealerForm action={updateDealerAction} dealer={d} creditUsed={creditUsed(d)} partners={partners} zones={zones} groups={groups} groupId={group?.id} pricelists={odoo.data?.pricelists ?? []} /> : <p className="text-xs text-muted-foreground">เฉพาะแอดมินแก้ไขข้อมูลร้านได้</p>}
+              <p className="text-xs text-muted-foreground">ราคาที่ร้านเห็น: {typePricelistSummary(d, odoo.data?.pricelists ?? [])}{book?.status === 'PUBLISHED' ? `ตารางราคาเว็บ ${zone.name} / ${d.tier}` : `pricelist ของลูกค้าใน Odoo (ยังไม่มีตารางเว็บเผยแพร่สำหรับโซน ${zone.name} / ${d.tier})`}</p>
             </section>
 
             {d.odooPartnerId && (
@@ -418,6 +418,14 @@ function OdooCustomerPanel({ customer: c, odoo, canEdit, writable, dealerId }: {
   );
 }
 
+/** "ยางมอเตอร์ไซค์: Credit TBR · " prefix for families priced by their own pricelist, then "อื่น ๆ: " for the rest. */
+function typePricelistSummary(dealer: DealerRow, pricelists: OdooPricelistOption[]): string {
+  const entries = (Object.entries(dealer.typePricelists ?? {}) as [DealerType, number][]).filter(([t]) => dealer.types.includes(t));
+  if (!entries.length) return '';
+  const name = (id: number) => pricelists.find((p) => p.id === id)?.name ?? `#${id}`;
+  return `${entries.map(([t, id]) => `${DEALER_TYPE_LABELS[t]}: ${name(id)}`).join(' · ')} · ประเภทอื่น: `;
+}
+
 /** Web credit used vs. limit in the dealer row header. */
 function CreditUsage({ limit, used }: { limit: number | null; used: number }) {
   if (limit === null) return <span className="text-xs text-muted-foreground">ค้างเครดิต {baht(used)} · ไม่จำกัดวงเงินเว็บ</span>;
@@ -430,8 +438,37 @@ type DealerRow = Awaited<ReturnType<typeof listDealers>>[number];
 /** Starting values for a new dealer created from an Odoo customer. */
 type DealerPrefill = { name: string; province: string; phone: string | null; taxId: string | null; odooPartnerId: number };
 
+/**
+ * One Odoo pricelist per product family (e.g. motorcycle tyres at the big-dealer price, car tyres at the
+ * small-dealer price). Blank = normal price. Only families ticked above are saved. When Odoo is down the
+ * list is empty, so saved ids are kept as their own option and survive a save.
+ */
+function TypePricelistFields({ saved, pricelists }: { saved: Partial<Record<DealerType, number>>; pricelists: OdooPricelistOption[] }) {
+  return (
+    <fieldset className="md:col-span-2">
+      <legend className="text-xs font-medium">กลุ่มราคาตามประเภทสินค้า</legend>
+      <div className="mt-1 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+        {TYPES.map((t) => {
+          const current = saved[t];
+          const missing = current && !pricelists.some((p) => p.id === current);
+          return (
+            <label key={t} className="text-xs">{DEALER_TYPE_LABELS[t]}
+              <select name={`typePricelist_${t}`} defaultValue={current ?? ''} className={field}>
+                <option value="">ราคาปกติของร้าน</option>
+                {missing && <option value={current}>Pricelist #{current}</option>}
+                {pricelists.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+              </select>
+            </label>
+          );
+        })}
+      </div>
+      <span className="text-xs text-muted-foreground">ตั้งเฉพาะประเภทที่ต้องการราคาต่างจากปกติ · ใช้ก่อนตารางราคาเว็บและ pricelist ของลูกค้าใน Odoo · ลูกค้าเครดิตที่จ่ายเงินสดได้ส่วนลดตามคู่ราคาเครดิต↔เงินสดของ pricelist ที่เลือก</span>
+    </fieldset>
+  );
+}
+
 /** Shared create/edit form. Province list is static so it works when Odoo is down. */
-function DealerForm({ action, dealer, prefill, creditUsed, partners, zones, groups, groupId }: { action: (formData: FormData) => Promise<void>; dealer?: DealerRow; prefill?: DealerPrefill; creditUsed?: number; partners: Partner[]; zones: PriceZone[]; groups: CustomerGroup[]; groupId?: string }) {
+function DealerForm({ action, dealer, prefill, creditUsed, partners, zones, groups, groupId, pricelists }: { action: (formData: FormData) => Promise<void>; dealer?: DealerRow; prefill?: DealerPrefill; creditUsed?: number; partners: Partner[]; zones: PriceZone[]; groups: CustomerGroup[]; groupId?: string; pricelists: OdooPricelistOption[] }) {
   return (
     <form action={action} className="grid gap-3 md:grid-cols-2">
       {dealer && <input type="hidden" name="dealerId" value={dealer.id} />}
@@ -448,6 +485,7 @@ function DealerForm({ action, dealer, prefill, creditUsed, partners, zones, grou
           {TYPES.map((t) => <label key={t} className="flex items-center gap-1.5 rounded-lg border border-border px-2 py-1 has-[:checked]:border-primary has-[:checked]:bg-primary/10"><input type="checkbox" name="types" value={t} defaultChecked={dealer ? dealer.types.includes(t) : t === 'CAR'} />{DEALER_TYPE_LABELS[t]}</label>)}
         </div>
       </fieldset>
+      <TypePricelistFields saved={dealer?.typePricelists ?? {}} pricelists={pricelists} />
       <label className="text-xs font-medium md:col-span-2">กลุ่มลูกค้า (สินค้าที่ร้านเห็น)
         <select name="customerGroupId" defaultValue={groupId ?? ''} className={field}>
           <option value="">ไม่จัดกลุ่ม · เห็นสินค้าทุกตัวในประเภทที่เลือก</option>

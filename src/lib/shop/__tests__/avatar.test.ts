@@ -47,3 +47,11 @@ describe('profile avatar', () => {
     expect(sanitizeProfile({}).avatarFile).toBeNull();
   });
 });
+
+describe('sanitizeProfile typePricelists', () => {
+  it('keeps known families with positive integer ids only', () => {
+    const profile = sanitizeProfile({ typePricelists: { CAR: 9, MOTORCYCLE: 7, BOAT: 3, TRUCK: -1, WHEEL: 1.5 } as never, typeCashPricelists: 'x' as never });
+    expect(profile.typePricelists).toEqual({ CAR: 9, MOTORCYCLE: 7 });
+    expect(profile.typeCashPricelists).toEqual({});
+  });
+});

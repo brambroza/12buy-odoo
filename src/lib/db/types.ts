@@ -121,6 +121,8 @@ export type Dealer = {
   creditLimit: number | string | null;
   /** Debt carried over from before the web, counted as used credit. NUMERIC, may arrive as a string. */
   creditOpening: number | string;
+  /** Odoo pricelist id per product family (`{ "MOTORCYCLE": 7, "CAR": 9 }`); families left out use the normal price. */
+  typePricelists: Partial<Record<DealerType, number>> | null;
   /** Profile picture in the private `avatars` bucket, uploaded by the dealer owner. */
   avatarFile: string | null;
   status: DealerStatus;

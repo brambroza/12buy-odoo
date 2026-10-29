@@ -7,7 +7,7 @@ import type { Dealer } from '@/lib/db/types';
 import { formatThaiAddress, parseThaiAddress } from '@/lib/thai-address';
 import { getPartner } from './catalog';
 import { AVATAR_NAME } from './uploads';
-import type { CatalogProduct, DealerProfile, DealerTier, DealerType } from './types';
+import type { CatalogProduct, DealerProfile, DealerTier, DealerType, TypePricelists } from './types';
 import { isProductVisible, type VisibilityScope } from './visibility';
 
 /** Cookie used by back-office staff to browse the shop as a specific dealer (impersonation). */
@@ -34,6 +34,27 @@ export const DEFAULT_PROFILE: DealerProfile = {
 const VALID_TYPES: DealerType[] = ['CAR', 'TRUCK', 'MOTORCYCLE', 'BATTERY', 'WHEEL'];
 const VALID_TIERS: DealerTier[] = ['S', 'M', 'L'];
 
+/** Keeps only known families mapped to positive integer pricelist ids. */
+export function sanitizeTypePricelists(input: unknown): TypePricelists {
+  const out: TypePricelists = {};
+  if (!input || typeof input !== 'object' || Array.isArray(input)) return out;
+  for (const type of VALID_TYPES) {
+    const id = Number((input as Record<string, unknown>)[type]);
+    if (Number.isInteger(id) && id > 0) out[type] = id;
+  }
+  return out;
+}
+
+/** Cash pricelist paired with each family pricelist; families without a pair are left out. */
+function cashPricelistsFor(typePricelists: TypePricelists, pairs: admin.AdminShape['cashPairs']): TypePricelists {
+  const out: TypePricelists = {};
+  for (const [type, id] of Object.entries(typePricelists) as [DealerType, number][]) {
+    const cash = admin.cashPricelistFor(id, pairs);
+    if (cash) out[type] = cash;
+  }
+  return out;
+}
+
 /** Validates an untrusted object into a DealerProfile, falling back to defaults per field. */
 export function sanitizeProfile(input: Partial<DealerProfile> | null | undefined): DealerProfile {
   const types = Array.isArray(input?.types) ? input.types.filter((t): t is DealerType => VALID_TYPES.includes(t as DealerType)) : [];
@@ -52,6 +73,8 @@ export function sanitizeProfile(input: Partial<DealerProfile> | null | undefined
     odooPartnerId: Number.isInteger(input?.odooPartnerId) && (input!.odooPartnerId as number) > 0 ? (input!.odooPartnerId as number) : null,
     credit: input?.credit === true,
     cashPricelistId: Number.isInteger(input?.cashPricelistId) && (input!.cashPricelistId as number) > 0 ? (input!.cashPricelistId as number) : null,
+    typePricelists: sanitizeTypePricelists(input?.typePricelists),
+    typeCashPricelists: sanitizeTypePricelists(input?.typeCashPricelists),
     customerGroupId: typeof input?.customerGroupId === 'string' && input.customerGroupId ? input.customerGroupId.slice(0, 40) : null,
     avatarFile: typeof input?.avatarFile === 'string' && AVATAR_NAME.test(input.avatarFile) ? input.avatarFile : null,
   };
@@ -97,8 +120,8 @@ async function readImpersonationCookie(): Promise<DealerProfile | null> {
 
 /**
  * Builds the shop profile for a DB dealer: product families, customer group, tier, province and
- * the published web price book for its zone, plus the Odoo pricelist of the linked partner
- * and, for credit dealers, the cash pricelist paired with it.
+ * the published web price book for its zone, plus the Odoo pricelist of the linked partner,
+ * the per-family pricelists set on the dealer and, for credit dealers, the cash pricelists paired with them.
  */
 export async function profileFromDealer(dealer: Dealer, settings?: admin.AdminShape): Promise<DealerProfile> {
   const data = settings ?? await admin.getAdminSnapshot();
@@ -116,6 +139,7 @@ export async function profileFromDealer(dealer: Dealer, settings?: admin.AdminSh
       // Odoo unavailable: keep defaults so the shop still renders.
     }
   }
+  const typePricelists = sanitizeTypePricelists(dealer.typePricelists);
   return withAdminSettings(sanitizeProfile({
     dealerId: dealer.id,
     name: dealer.name,
@@ -130,6 +154,8 @@ export async function profileFromDealer(dealer: Dealer, settings?: admin.AdminSh
     odooPartnerId: dealer.odooPartnerId,
     credit: dealer.creditEnabled,
     cashPricelistId: dealer.creditEnabled ? admin.cashPricelistFor(pricelistId, data.cashPairs) : null,
+    typePricelists,
+    typeCashPricelists: dealer.creditEnabled ? cashPricelistsFor(typePricelists, data.cashPairs) : {},
     customerGroupId: admin.groupForDealerIn(data, dealer.id)?.id ?? null,
     avatarFile: dealer.avatarFile ?? null,
   }), data);

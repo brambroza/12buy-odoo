@@ -15,7 +15,7 @@ import { createDealer, getDealer, updateDealer } from '@/lib/dealers/repo';
 import { clearLeadPassword, findLead, setLeadStatus } from '@/lib/leads/repo';
 import { formatThaiAddress, parseThaiAddress } from '@/lib/thai-address';
 import { ensureDealerPartner } from '@/lib/odoo/dealer-partner';
-import { updateOdooCustomerCreditLimit } from '@/lib/odoo/customer-pricing';
+import { listOdooPricelists, updateOdooCustomerCreditLimit } from '@/lib/odoo/customer-pricing';
 import { odooWritesEnabled } from '@/lib/odoo/rpc';
 import { clearPartnerCache } from '@/lib/shop/catalog';
 import * as admin from '@/lib/admin/store';
@@ -54,14 +54,45 @@ const dealerSchema = z.object({
   creditEnabled: z.boolean(),
   creditLimit: optionalBaht,
   creditOpening: optionalBaht.transform((v) => v ?? 0),
+  typePricelists: z.partialRecord(typeSchema, z.coerce.number().int().positive('เลือกกลุ่มราคาตามประเภทสินค้าไม่ถูกต้อง')),
   notes: optionalText(500),
-});
+}).transform((d) => ({
+  ...d,
+  // A family pricelist only matters for families the dealer may buy; drop the rest.
+  typePricelists: Object.fromEntries(Object.entries(d.typePricelists).filter(([type]) => d.types.includes(type as z.infer<typeof typeSchema>))),
+}));
+
+/** `typePricelist_<TYPE>` selects of the dealer form; blank = use the normal price for that family. */
+function readTypePricelists(formData: FormData): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const type of typeSchema.options) {
+    const value = String(formData.get(`typePricelist_${type}`) ?? '').trim();
+    if (value) out[type] = value;
+  }
+  return out;
+}
+
+/**
+ * Error message when a family pricelist is not an Odoo pricelist. When Odoo cannot be reached the
+ * ids are kept as sent (the form then only carries back the ids that were already saved).
+ */
+async function invalidTypePricelist(typePricelists: Record<string, number>): Promise<string | null> {
+  const ids = Object.values(typePricelists);
+  if (!ids.length) return null;
+  let known: Set<number>;
+  try {
+    known = new Set((await listOdooPricelists()).map((p) => p.id));
+  } catch {
+    return null;
+  }
+  return ids.every((id) => known.has(id)) ? null : 'ไม่พบกลุ่มราคาที่เลือกใน Odoo';
+}
 
 function readDealerForm(formData: FormData) {
   const s = (k: string) => String(formData.get(k) ?? '');
   return dealerSchema.safeParse({
     name: s('name'), province: s('province'), types: formData.getAll('types').map(String), tier: s('tier'), status: s('status'),
-    odooPartnerId: s('odooPartnerId').trim(), address: s('address'), phone: s('phone'), lineId: s('lineId'), taxId: s('taxId'), creditEnabled: formData.get('creditEnabled') === 'on', creditLimit: s('creditLimit'), creditOpening: s('creditOpening'), notes: s('notes'),
+    odooPartnerId: s('odooPartnerId').trim(), address: s('address'), phone: s('phone'), lineId: s('lineId'), taxId: s('taxId'), creditEnabled: formData.get('creditEnabled') === 'on', creditLimit: s('creditLimit'), creditOpening: s('creditOpening'), typePricelists: readTypePricelists(formData), notes: s('notes'),
   });
 }
 
@@ -117,6 +148,8 @@ export async function createDealerAction(formData: FormData) {
   const actor = await requireAdmin();
   const parsed = readDealerForm(formData);
   if (!parsed.success) fail('/admin/dealers', parsed.error.issues[0]?.message ?? 'ข้อมูลไม่ถูกต้อง');
+  const pricelistError = await invalidTypePricelist(parsed.data.typePricelists);
+  if (pricelistError) fail('/admin/dealers', pricelistError);
   let id: string;
   try {
     const dealer = await createDealer(parsed.data);
@@ -141,6 +174,8 @@ export async function updateDealerAction(formData: FormData) {
   if (!before) redirect('/admin/dealers');
   const parsed = readDealerForm(formData);
   if (!parsed.success) fail(`/admin/dealers`, parsed.error.issues[0]?.message ?? 'ข้อมูลไม่ถูกต้อง');
+  const pricelistError = await invalidTypePricelist(parsed.data.typePricelists);
+  if (pricelistError) fail('/admin/dealers', pricelistError);
   const becomingActive = parsed.data.status === 'ACTIVE' && before.status !== 'ACTIVE';
   try {
     await updateDealer(id, { ...parsed.data, ...(becomingActive ? { approvedAt: new Date(), approvedById: actor.id } : {}) });
@@ -151,7 +186,7 @@ export async function updateDealerAction(formData: FormData) {
   if (parsed.data.status === 'SUSPENDED') for (const u of before.users) await revokeAllSessions(u.id);
   const groupBefore = (await admin.groupForDealer(id))?.id ?? null;
   const groupAfter = await saveDealerGroup(id, formData);
-  await audit(actor.id, 'dealer.update', 'Dealer', id, { from: { status: before.status, tier: before.tier, types: before.types, creditEnabled: before.creditEnabled, creditLimit: before.creditLimit === null ? null : Number(before.creditLimit), creditOpening: Number(before.creditOpening), customerGroupId: groupBefore }, to: { status: parsed.data.status, tier: parsed.data.tier, types: parsed.data.types, creditEnabled: parsed.data.creditEnabled, creditLimit: parsed.data.creditLimit, creditOpening: parsed.data.creditOpening, customerGroupId: groupAfter } });
+  await audit(actor.id, 'dealer.update', 'Dealer', id, { from: { status: before.status, tier: before.tier, types: before.types, creditEnabled: before.creditEnabled, creditLimit: before.creditLimit === null ? null : Number(before.creditLimit), creditOpening: Number(before.creditOpening), typePricelists: before.typePricelists ?? {}, customerGroupId: groupBefore }, to: { status: parsed.data.status, tier: parsed.data.tier, types: parsed.data.types, creditEnabled: parsed.data.creditEnabled, creditLimit: parsed.data.creditLimit, creditOpening: parsed.data.creditOpening, typePricelists: parsed.data.typePricelists, customerGroupId: groupAfter } });
   const odooWarning = await syncCreditLimitToOdoo(actor.id, before, parsed.data);
   revalidate();
   await flash(odooWarning ? 'บันทึกข้อมูลดีลเลอร์แล้ว (วงเงินยังไม่เข้า Odoo)' : 'บันทึกข้อมูลดีลเลอร์แล้ว', {

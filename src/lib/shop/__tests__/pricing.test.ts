@@ -52,6 +52,30 @@ describe('cash discount for credit dealers', () => {
   });
 });
 
+describe('pricelist per product family', () => {
+  const big: PricelistItem = { ...fixed, id: 4, pricelistId: 20, fixedPrice: 2100 };
+  const bigCash: PricelistItem = { ...fixed, id: 5, pricelistId: 21, fixedPrice: 2000 };
+  const familyCatalog: Catalog = { ...catalog, priceCtx: { itemsByPricelist: new Map([[9, [fixed]], [20, [big]], [21, [bigCash]]]), categoryParents: new Map() } };
+  const motorcycle: CatalogProduct = { ...product, id: 800, dealerType: 'MOTORCYCLE' };
+
+  it('prices a family from its own pricelist and leaves other families alone', () => {
+    const goalong: DealerProfile = { ...profile, types: ['CAR', 'MOTORCYCLE'], typePricelists: { CAR: 20 } };
+    expect(resolvePrice(familyCatalog, product, goalong)).toBe(2100);
+    expect(resolvePrice(familyCatalog, motorcycle, goalong)).toBe(2400); // dealer pricelist 9
+  });
+  it('wins over a published web price book', () => {
+    const withBook: DealerProfile = { ...profile, typePricelists: { CAR: 20 }, priceBook: book({ entries: { '777': 2300 } }) };
+    expect(resolvePrice(familyCatalog, product, withBook)).toBe(2100);
+    expect(resolvePrice(familyCatalog, product, { ...withBook, typePricelists: {} })).toBe(2300);
+  });
+  it('gives credit dealers the cash discount of the family pricelist pair', () => {
+    const creditDealer: DealerProfile = { ...profile, credit: true, pricelistId: 9, cashPricelistId: null, typePricelists: { CAR: 20 }, typeCashPricelists: { CAR: 21 } };
+    expect(cashDiscountPerUnit(familyCatalog, product, creditDealer)).toBe(100);
+    expect(cashDiscountPerUnit(familyCatalog, product, { ...creditDealer, typeCashPricelists: {} })).toBe(0);
+    expect(cashDiscountPerUnit(familyCatalog, product, { ...creditDealer, cashPricelistId: 21, typeCashPricelists: {} })).toBe(0);
+  });
+});
+
 describe('billTotals', () => {
   const lines = [{ qty: 4, unitPrice: 2500, cashDiscountPerUnit: 120 }, { qty: 2, unitPrice: 999.99, cashDiscountPerUnit: 0.335 }];
   it('applies the discount once at the end of the bill when paying cash', () => {

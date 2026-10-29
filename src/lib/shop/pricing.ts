@@ -2,12 +2,19 @@ import type { PriceBook } from '@/lib/admin/types';
 import { priceFor, type Catalog } from './catalog';
 import type { CatalogProduct, DealerProfile, PaymentMethod } from './types';
 
+/** Odoo pricelist set for this product's family on the dealer, if any (see `DealerProfile.typePricelists`). */
+export function typePricelistFor(profile: Pick<DealerProfile, 'typePricelists'>, product: Pick<CatalogProduct, 'dealerType'>): number | null {
+  return profile.typePricelists?.[product.dealerType] ?? null;
+}
+
 /**
  * Dealer-facing unit price.
- * Published web price book wins (fixed entry → type % over base pricelist → base pricelist);
- * otherwise the dealer's Odoo pricelist is used.
+ * A pricelist set for the product's family on the dealer wins; then the published web price book
+ * (fixed entry → type % over base pricelist → base pricelist); otherwise the dealer's Odoo pricelist.
  */
 export function resolvePrice(catalog: Catalog, product: CatalogProduct, profile: DealerProfile, qty = 1, bookOverride?: PriceBook | null): number {
+  const typePricelistId = typePricelistFor(profile, product);
+  if (typePricelistId) return priceFor(catalog, product, typePricelistId, qty);
   const book = bookOverride === undefined ? profile.priceBook ?? undefined : bookOverride ?? undefined;
   if (!book || book.status !== 'PUBLISHED') return priceFor(catalog, product, profile.pricelistId, qty);
   return priceFromBook(catalog, product, book, qty);
@@ -34,12 +41,16 @@ export function priceFromBook(catalog: Catalog, product: CatalogProduct, book: P
 
 /**
  * Cash discount per base unit for a credit dealer who pays cash:
- * credit pricelist price − paired cash pricelist price, never negative and never above the shown price.
+ * credit pricelist price − paired cash pricelist price (the family's own pricelist and its pair when one is set), never negative and never above the shown price.
  * Returns 0 for non-credit dealers or when no cash pricelist is paired.
  */
 export function cashDiscountPerUnit(catalog: Catalog, product: CatalogProduct, profile: DealerProfile, qty = 1, shownPrice?: number): number {
-  if (!profile.credit || !profile.cashPricelistId) return 0;
-  const diff = priceFor(catalog, product, profile.pricelistId, qty) - priceFor(catalog, product, profile.cashPricelistId, qty);
+  if (!profile.credit) return 0;
+  const typePricelistId = typePricelistFor(profile, product);
+  const creditPricelistId = typePricelistId ?? profile.pricelistId;
+  const cashPricelistId = typePricelistId ? profile.typeCashPricelists?.[product.dealerType] ?? null : profile.cashPricelistId;
+  if (!cashPricelistId) return 0;
+  const diff = priceFor(catalog, product, creditPricelistId, qty) - priceFor(catalog, product, cashPricelistId, qty);
   const cap = shownPrice ?? resolvePrice(catalog, product, profile, qty);
   return round2(Math.min(Math.max(diff, 0), cap));
 }
