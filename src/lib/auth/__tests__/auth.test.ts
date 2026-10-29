@@ -45,7 +45,7 @@ describe('roles', () => {
     expect(isBackofficeRole('DEALER_OWNER')).toBe(false);
     expect(isDealerRole('DEALER_STAFF')).toBe(true);
     expect(isAdminRole('SALES')).toBe(false);
-    expect(homeFor('SUPER_ADMIN')).toBe('/admin/orders');
+    expect(homeFor('SUPER_ADMIN')).toBe('/admin');
     expect(homeFor('DEALER_STAFF')).toBe('/shop');
   });
 

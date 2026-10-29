@@ -1,4 +1,5 @@
 import { odooSearchRead } from '@/lib/odoo/rpc';
+import { getCarrier, pickDealerCarrier, listPublishedCarriers, type DeliveryCarrier } from '@/lib/odoo/delivery-carrier';
 import { computePrice, fromOdooItem, type PriceContext, type PricelistItem } from './price-engine';
 import { normalizeSizeQuery, parseSize, sizeMatches } from './size';
 import { baseUnitLabel, buildUnitIndex, unitsForProduct, type RawUom } from './units';
@@ -23,7 +24,6 @@ type RawTax = { id: number; amount: number; amount_type: string; price_include: 
 
 type RawCategory = { id: number; name: string; parent_id: [number, string] | false };
 type RawPricelist = { id: number; name: string };
-export type Carrier = { id: number; name: string };
 export type Province = { id: number; name: string; code: string };
 
 export type Catalog = {
@@ -38,8 +38,10 @@ const SUFFIX_TO_TYPE: Record<string, DealerType> = { PCR: 'CAR', TBR: 'TRUCK', M
 
 let catalogCache: { value: Catalog; expiresAt: number } | null = null;
 let catalogInFlight: Promise<Catalog> | null = null;
-let referenceCache: { carriers: Carrier[]; provinces: Province[]; expiresAt: number } | null = null;
-let referenceInFlight: Promise<{ carriers: Carrier[]; provinces: Province[] }> | null = null;
+type ReferenceData = { carriers: DeliveryCarrier[]; provinces: Province[] };
+
+let referenceCache: (ReferenceData & { expiresAt: number }) | null = null;
+let referenceInFlight: Promise<ReferenceData> | null = null;
 
 /** Splits an Odoo category name like `YK-PCR` into brand code and dealer type. */
 export function classifyCategory(categoryName: string): { brand: string; dealerType: DealerType } | null {
@@ -131,8 +133,13 @@ export function clearCatalogCache() {
   catalogCache = null;
 }
 
-/** Loads Thai provinces and delivery carriers (read-only, cached 1 hour). */
-export async function getReferenceData(): Promise<{ carriers: Carrier[]; provinces: Province[] }> {
+/** Drops cached provinces and delivery methods, e.g. after the admin edits a delivery method. */
+export function clearReferenceCache() {
+  referenceCache = null;
+}
+
+/** Loads Thai provinces and the delivery methods published for the web (read-only, cached 5 minutes). */
+export async function getReferenceData(): Promise<ReferenceData> {
   if (referenceCache && referenceCache.expiresAt > Date.now()) return referenceCache;
   if (!referenceInFlight) {
     referenceInFlight = loadReferenceData().finally(() => { referenceInFlight = null; });
@@ -140,12 +147,12 @@ export async function getReferenceData(): Promise<{ carriers: Carrier[]; provinc
   return referenceInFlight;
 }
 
-async function loadReferenceData(): Promise<{ carriers: Carrier[]; provinces: Province[] }> {
+async function loadReferenceData(): Promise<ReferenceData> {
   const [carriers, provinces] = await Promise.all([
-    odooSearchRead<Carrier>('delivery.carrier', [], ['id', 'name'], { limit: 300, order: 'id asc' }),
+    listPublishedCarriers(),
     odooSearchRead<Province>('res.country.state', [['country_id.code', '=', 'TH']], ['id', 'name', 'code'], { limit: 100, order: 'code asc' }),
   ]);
-  referenceCache = { carriers, provinces, expiresAt: Date.now() + 60 * 60 * 1000 };
+  referenceCache = { carriers, provinces, expiresAt: Date.now() + 5 * 60 * 1000 };
   return referenceCache;
 }
 
@@ -201,6 +208,8 @@ export type Partner = {
   phone: string | false;
   /** Salesperson (res.users) responsible for this customer; drives commission on its sale orders. */
   user_id: [number, string] | false;
+  /** The customer's usual delivery method; preselected at checkout. */
+  property_delivery_carrier_id: [number, string] | false;
 };
 
 let partnerCache: { value: Partner[]; expiresAt: number } | null = null;
@@ -208,8 +217,9 @@ let partnerCache: { value: Partner[]; expiresAt: number } | null = null;
 /** Odoo customers (read-only, cached 2 minutes) for the admin dealer list. */
 export async function getPartners(): Promise<Partner[]> {
   if (partnerCache && partnerCache.expiresAt > Date.now()) return partnerCache.value;
-  const value = await odooSearchRead<Partner>('res.partner', [['customer_rank', '>', 0]],
-    ['id', 'name', 'state_id', 'property_product_pricelist', 'street', 'city', 'zip', 'phone', 'user_id'], { limit: 500, order: 'name asc' });
+  // Same customers as the admin list: ranked customers plus portal users' contacts without a sale order yet.
+  const value = await odooSearchRead<Partner>('res.partner', ['|', ['customer_rank', '>', 0], ['user_ids.share', '=', true]],
+    ['id', 'name', 'state_id', 'property_product_pricelist', 'street', 'city', 'zip', 'phone', 'user_id', 'property_delivery_carrier_id'], { limit: 500, order: 'name asc' });
   partnerCache = { value, expiresAt: Date.now() + 2 * 60 * 1000 };
   return value;
 }
@@ -219,7 +229,7 @@ export async function getPartner(id: number): Promise<Partner | null> {
   const listed = (await getPartners()).find((p) => p.id === id);
   if (listed) return listed;
   const [row] = await odooSearchRead<Partner>('res.partner', [['id', '=', id]],
-    ['id', 'name', 'state_id', 'property_product_pricelist', 'street', 'city', 'zip', 'phone', 'user_id'], { limit: 1 });
+    ['id', 'name', 'state_id', 'property_product_pricelist', 'street', 'city', 'zip', 'phone', 'user_id', 'property_delivery_carrier_id'], { limit: 1 });
   return row ?? null;
 }
 
@@ -244,4 +254,16 @@ export function clearPartnerCache() {
 /** Full province name as Odoo stores it (`จังหวัดเชียงใหม่`) → short (`เชียงใหม่`). */
 export function shortProvince(name: string): string {
   return name.replace(/^จังหวัด/, '').replace(/\s*\(TH\)$/, '');
+}
+
+/**
+ * Delivery method for a dealer's orders (dealers do not choose): the one the admin set on the
+ * Odoo customer, else the first published method. Null when neither exists.
+ */
+export async function getDealerCarrier(partnerId: number | null): Promise<{ carrier: DeliveryCarrier; assigned: boolean } | null> {
+  const { carriers } = await getReferenceData();
+  let partnerDefault: DeliveryCarrier | null = null;
+  const defaultId = partnerId ? (await getPartner(partnerId))?.property_delivery_carrier_id : false;
+  if (defaultId) partnerDefault = carriers.find((c) => c.id === defaultId[0]) ?? await getCarrier(defaultId[0]);
+  return pickDealerCarrier(partnerDefault, carriers);
 }

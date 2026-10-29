@@ -161,7 +161,10 @@ export type ProtoOrder = {
   odooPricelistId?: number | null;
   paymentMethod: PaymentMethod;
   address: string;
+  /** Delivery method name as shown to the dealer. */
   carrier: string;
+  /** Odoo `delivery.carrier` id, set on the SO as `carrier_id` (null on orders from before it was stored). */
+  carrierId?: number | null;
   note: string;
   /** Dealer's own purchase-order number, optional (older orders have none). */
   poRef?: string;

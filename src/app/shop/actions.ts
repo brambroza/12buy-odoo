@@ -3,7 +3,7 @@
 import { revalidatePath } from 'next/cache';
 import { redirect } from 'next/navigation';
 import { z } from 'zod';
-import { baht, defaultQty, findProduct, getCatalog, searchProducts } from '@/lib/shop/catalog';
+import { baht, defaultQty, findProduct, getCatalog, getDealerCarrier, searchProducts } from '@/lib/shop/catalog';
 import { flash } from '@/lib/flash';
 import { billTotals, cashDiscountPerUnit, orderPricelistId, resolvePrice, withCoupon } from '@/lib/shop/pricing';
 import { checkCartCoupon } from '@/lib/shop/cart-coupon';
@@ -138,11 +138,10 @@ const checkoutsInFlight = new Set<string>();
 export async function checkoutAction(formData: FormData) {
   const parsed = z.object({
     address: thaiAddressSchema,
-    carrier: z.string().trim().min(1).max(120),
     note: z.string().trim().max(500).optional().default(''),
     paymentMethod: z.enum(['CASH', 'CREDIT']).optional(),
     poRef: z.string().trim().max(40, 'เลขที่ใบสั่งซื้อยาวเกิน 40 ตัวอักษร').optional().default(''),
-  }).safeParse({ address: addressFromForm(formData), carrier: formData.get('carrier'), note: formData.get('note'), paymentMethod: formData.get('paymentMethod') || undefined, poRef: formData.get('poRef') ?? undefined });
+  }).safeParse({ address: addressFromForm(formData), note: formData.get('note'), paymentMethod: formData.get('paymentMethod') || undefined, poRef: formData.get('poRef') ?? undefined });
   if (!parsed.success) redirect('/shop/cart?error=' + encodeURIComponent(parsed.error.issues[0]?.message ?? 'ข้อมูลไม่ครบ'));
 
   const shipTo = formatThaiAddress(parsed.data.address);
@@ -164,7 +163,7 @@ export async function checkoutAction(formData: FormData) {
   }
 }
 
-type CheckoutInput = { carrier: string; note: string; paymentMethod?: 'CASH' | 'CREDIT'; poRef: string };
+type CheckoutInput = { note: string; paymentMethod?: 'CASH' | 'CREDIT'; poRef: string };
 
 /** Validates the cart against the live catalog, stock and credit, then creates the web order and redirects to it. */
 async function placeOrder(sid: string, input: CheckoutInput, shipTo: string) {
@@ -188,6 +187,9 @@ async function placeOrder(sid: string, input: CheckoutInput, shipTo: string) {
     priced.push({ product, qty: item.qty, unitPrice, cashDiscountPerUnit: cashOff });
   }
   const paymentMethod = profile.credit ? input.paymentMethod ?? 'CREDIT' : 'CASH';
+  // The admin sets the delivery method per customer; the dealer does not choose.
+  const carrier = (await getDealerCarrier(profile.odooPartnerId))?.carrier;
+  if (!carrier) redirect('/shop/cart?error=' + encodeURIComponent('ยังไม่ได้กำหนดการจัดส่งให้ร้าน ติดต่อฝ่ายขาย'));
   // The coupon is re-checked against Odoo here: the cart preview may be stale.
   const code = await store.getCartCoupon(sid);
   let coupon: OrderCoupon | null = null;
@@ -213,7 +215,8 @@ async function placeOrder(sid: string, input: CheckoutInput, shipTo: string) {
       coupon,
       odooPricelistId: orderPricelistId(profile),
       address: shipTo,
-      carrier: input.carrier,
+      carrier: carrier.name,
+      carrierId: carrier.id,
       note: input.note,
       poRef: input.poRef || undefined,
     });

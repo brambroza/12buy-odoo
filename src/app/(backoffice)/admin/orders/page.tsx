@@ -1,11 +1,18 @@
 import Link from 'next/link';
+import type { ReactNode } from 'react';
+import { Ban, CheckCircle2, Eye, FileText, RefreshCw, Truck, UploadCloud, Wallet } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { EmptyRow, FilterChip, IconLink, ListPagination, ListSearch, TableCard } from '@/components/admin/list-kit';
+import { IconSubmit } from '@/components/admin/icon-submit';
+import { UrlDrawer } from '@/components/admin/url-drawer';
+import { listHref, matchesSearch, paginate, searchText } from '@/lib/admin/list';
 import { baht } from '@/lib/shop/catalog';
 import { canSyncOrder } from '@/lib/shop/odoo-sync';
 import { countStalePending, isPaymentReady, listAllOrders } from '@/lib/shop/store';
-import { ORDER_STATUS_FLOW, ORDER_STATUS_LABELS, type OdooSync, type OrderStatus } from '@/lib/shop/types';
+import { ORDER_STATUS_FLOW, ORDER_STATUS_LABELS, type OdooSync, type OrderStatus, type ProtoOrder } from '@/lib/shop/types';
 import { cn } from '@/lib/utils';
 import { adminAdvanceOrderAction, adminCancelOrderAction, adminRefreshStatusesAction, adminSetTrackingAction, adminSyncOrderAction, verifySlipAction } from '../actions';
 
@@ -14,6 +21,13 @@ const STYLE: Record<OrderStatus, string> = {
   INVOICED: 'bg-sky-500/15 text-sky-700', PAID: 'bg-emerald-500/15 text-emerald-700', CANCELLED: 'bg-destructive/15 text-destructive',
 };
 const NEXT_LABEL: Partial<Record<OrderStatus, string>> = { PENDING: 'ยืนยันออเดอร์', PREPARING: 'ส่งของแล้ว', SHIPPED: 'วางบิลแล้ว', INVOICED: 'รับชำระแล้ว' };
+/** Row icon for the next manual status step. */
+const NEXT_ICON: Partial<Record<OrderStatus, ReactNode>> = { PENDING: <CheckCircle2 />, PREPARING: <Truck />, SHIPPED: <FileText />, INVOICED: <Wallet /> };
+const STATUSES = ['PENDING', ...ORDER_STATUS_FLOW.slice(1), 'CANCELLED'] as OrderStatus[];
+const CANCEL_CONFIRM = 'ยืนยันยกเลิกออเดอร์นี้? ยกเลิกแล้วย้อนกลับไม่ได้';
+const dateTime = (iso: string) => new Date(iso).toLocaleString('th-TH', { dateStyle: 'short', timeStyle: 'short' });
+
+type Search = { q?: string; status?: string; page?: string; open?: string; error?: string; info?: string };
 
 /** Odoo push status: SO number linking to Odoo, or what went wrong. */
 function OdooStatus({ sync }: { sync: OdooSync }) {
@@ -26,111 +40,276 @@ function OdooStatus({ sync }: { sync: OdooSync }) {
   return <span className="text-xs text-destructive">ส่ง Odoo ไม่สำเร็จ: {sync.error}</span>;
 }
 
-/** Admin inbox for web orders with one-click status moves. */
-export default async function AdminOrdersPage({ searchParams }: { searchParams: Promise<{ status?: string; error?: string; info?: string }> }) {
-  const { status, error, info } = await searchParams;
-  const all = await listAllOrders();
-  const orders = status ? all.filter((o) => o.status === status) : all;
-  const counts = Object.fromEntries((['PENDING', ...ORDER_STATUS_FLOW.slice(1), 'CANCELLED'] as OrderStatus[]).map((s) => [s, all.filter((o) => o.status === s).length])) as Record<OrderStatus, number>;
-  const pendingOld = await countStalePending(2 * 60 * 60 * 1000);
+/** Workflow facts for one order: whether Odoo now drives it and the next manual step (if any). */
+function orderFlow(o: ProtoOrder) {
+  // Once the SO exists in Odoo, delivery/invoice/payment come from Odoo; manual steps are only a fallback.
+  const linked = Boolean(o.odoo?.saleOrderId) && o.status !== 'PENDING';
+  const next = linked ? undefined : NEXT_LABEL[o.status];
+  return { linked, next, cancellable: o.status === 'PENDING' || o.status === 'PREPARING', blocked: o.status === 'PENDING' && !isPaymentReady(o) };
+}
+
+/** Slip state of a pending cash order as a short badge, or null when not relevant. */
+function SlipBadge({ order: o }: { order: ProtoOrder }) {
+  if (o.status !== 'PENDING' || o.paymentMethod !== 'CASH') return null;
+  if (!o.payment.slipFile) return <Badge variant="outline" className="border-transparent bg-muted text-muted-foreground">รอสลิป</Badge>;
+  if (!o.payment.verifiedAt) return <Badge variant="outline" className="border-transparent bg-amber-500/15 text-amber-700">รอตรวจสลิป</Badge>;
+  return <Badge variant="outline" className="border-transparent bg-emerald-500/15 text-emerald-700">ตรวจสลิปแล้ว</Badge>;
+}
+
+/** Total with the end-of-bill cash discount and coupon lines underneath. */
+function OrderTotal({ order: o }: { order: ProtoOrder }) {
+  return (
+    <span className="font-bold tabular-nums">
+      {baht(o.total)}
+      {o.cashDiscount > 0 && <span className="block text-xs font-normal text-emerald-700">ลดเงินสดท้ายบิล −{baht(o.cashDiscount)} จาก {baht(o.subtotal)}</span>}
+      {o.coupon && o.couponDiscount > 0 && <span className="block text-xs font-normal text-emerald-700">คูปอง {o.coupon.code} −{baht(o.couponDiscount)}</span>}
+    </span>
+  );
+}
+
+/** Admin inbox for web orders: searchable, paged table with quick status moves; details and forms in a drawer. */
+export default async function AdminOrdersPage({ searchParams }: { searchParams: Promise<Search> }) {
+  const params = await searchParams;
+  const status = STATUSES.includes(params.status as OrderStatus) ? (params.status as OrderStatus) : undefined;
+  const [all, pendingOld] = await Promise.all([listAllOrders(), countStalePending(2 * 60 * 60 * 1000)]);
+  const counts = Object.fromEntries(STATUSES.map((s) => [s, all.filter((o) => o.status === s).length])) as Record<OrderStatus, number>;
+  const q = searchText(params.q);
+  const orders = all.filter((o) => (!status || o.status === status)
+    && matchesSearch(q, o.ref, o.dealerName, o.poRef, o.carrier, o.trackingRef, o.odoo?.saleOrderName, ...o.lines.flatMap((l) => [l.code, l.size, l.name])));
+  const pageRows = paginate(orders, params.page);
+
+  /** List URL with the current filters; `changes` overrides params such as `status`, `open` or `page`. */
+  const href = (changes: Record<string, string | undefined> = {}) =>
+    listHref('/admin/orders', { q: params.q, status, page: params.page }, changes);
+  const filterHref = (next: OrderStatus | undefined) => href({ status: next, page: undefined });
+  const closeHref = href();
+  const openOrder = params.open ? all.find((o) => o.id === params.open) : undefined;
+
+  const notice = (
+    <>
+      {params.info && <p className="rounded-lg bg-emerald-500/10 p-3 text-sm text-emerald-800">{params.info}</p>}
+      {params.error && <p className="rounded-lg bg-destructive/10 p-3 text-sm text-destructive">{params.error}</p>}
+    </>
+  );
 
   return (
     <div className="space-y-4">
-      <div>
-        <h1 className="text-2xl font-bold">ออเดอร์จากเว็บ</h1>
-        <p className="text-sm text-muted-foreground">ยืนยันออเดอร์ = สร้างและยืนยันใบสั่งขาย (SO) ใน Odoo อัตโนมัติ · หลังจากนั้นสถานะจัดส่ง/วางบิล/ชำระเงินตามที่คลังและบัญชีทำใน Odoo (ดึงอัตโนมัติทุกไม่กี่นาที)</p>
-      </div>
-      <form action={adminRefreshStatusesAction}><Button type="submit" size="sm" variant="outline">ดึงสถานะจาก Odoo ตอนนี้</Button></form>
-      {info && <p className="rounded-lg bg-emerald-500/10 p-3 text-sm text-emerald-800">{info}</p>}
-      {pendingOld > 0 && <p className="rounded-lg bg-amber-500/10 p-3 text-sm text-amber-800">มี {pendingOld} ออเดอร์รอยืนยันเกิน 2 ชั่วโมง</p>}
-      {error && <p className="rounded-lg bg-destructive/10 p-3 text-sm text-destructive">{error}</p>}
-
-      <div className="flex flex-wrap gap-1">
-        <Link href="/admin/orders" className={cn('rounded-full border px-3 py-1 text-xs', !status ? 'border-primary bg-primary text-primary-foreground' : 'border-border')}>ทั้งหมด {all.length}</Link>
-        {(Object.keys(counts) as OrderStatus[]).map((s) => <Link key={s} href={`/admin/orders?status=${s}`} className={cn('rounded-full border px-3 py-1 text-xs', status === s ? 'border-primary bg-primary text-primary-foreground' : 'border-border')}>{ORDER_STATUS_LABELS[s]} {counts[s]}</Link>)}
-      </div>
-
-      {orders.length === 0 ? (
-        <p className="rounded-xl border border-dashed border-border p-6 text-center text-sm text-muted-foreground">ยังไม่มีออเดอร์ — ลองสั่งจาก <Link href="/shop" className="text-primary">หน้าดีลเลอร์</Link></p>
-      ) : (
-        <div className="space-y-2">
-          {orders.map((o) => {
-            // Once the SO exists in Odoo, delivery/invoice/payment come from Odoo; manual steps are only a fallback.
-            const linked = Boolean(o.odoo?.saleOrderId) && o.status !== 'PENDING';
-            const next = linked ? undefined : NEXT_LABEL[o.status];
-            const progress = o.odoo?.progress;
-            return (
-              <div key={o.id} className="rounded-xl border border-border bg-card p-3">
-                <div className="flex flex-wrap items-center gap-2 text-sm">
-                  <span className="font-semibold">{o.ref}</span>
-                  <Badge variant="outline" className={cn('border-transparent', STYLE[o.status])}>{ORDER_STATUS_LABELS[o.status]}</Badge>
-                  <span>{o.dealerName}</span>
-                  <span className="text-xs text-muted-foreground">{new Date(o.createdAt).toLocaleString('th-TH', { dateStyle: 'short', timeStyle: 'short' })} · {o.carrier}</span>
-                  <Badge variant="outline" className={cn('border-transparent', o.paymentMethod === 'CREDIT' ? 'bg-sky-500/15 text-sky-700' : 'bg-muted text-foreground')}>{o.paymentMethod === 'CREDIT' ? 'เครดิต' : 'เงินสด'}</Badge>
-                  {o.poRef && <span className="text-xs text-muted-foreground">PO ร้าน: {o.poRef}</span>}
-                  <span className="ml-auto text-right font-bold">{baht(o.total)}{o.cashDiscount > 0 && <span className="block text-xs font-normal text-emerald-700">ลดเงินสดท้ายบิล −{baht(o.cashDiscount)} จาก {baht(o.subtotal)}</span>}{o.coupon && o.couponDiscount > 0 && <span className="block text-xs font-normal text-emerald-700">คูปอง {o.coupon.code} −{baht(o.couponDiscount)}</span>}</span>
-                </div>
-                <ul className="mt-1 flex flex-wrap gap-x-3 text-xs text-muted-foreground">
-                  {o.lines.map((l) => <li key={l.productId}>{l.size ?? l.code} × {l.qty} @ {baht(l.unitPrice)}</li>)}
-                </ul>
-                {o.note && <p className="mt-1 text-xs">หมายเหตุ: {o.note}</p>}
-                {o.status === 'PENDING' && o.paymentMethod === 'CASH' && (
-                  <div className="mt-2 flex flex-wrap items-center gap-3 rounded-lg bg-muted/40 p-2 text-xs">
-                    {o.payment.slipFile ? (
-                      <>
-                        <a href={`/api/proto/uploads/${o.payment.slipFile}`} target="_blank" rel="noreferrer" className="shrink-0">
-                          {/* eslint-disable-next-line @next/next/no-img-element */}
-                          <img src={`/api/proto/uploads/${o.payment.slipFile}`} alt="สลิป" className="h-16 rounded border border-border object-cover" />
-                        </a>
-                        <span>สลิปส่งเมื่อ {new Date(o.payment.slipUploadedAt!).toLocaleString('th-TH', { dateStyle: 'short', timeStyle: 'short' })} · ยอดที่ต้องได้รับ <b>{baht(o.total)}</b></span>
-                        {o.payment.verifiedAt ? (
-                          <Badge variant="outline" className="border-transparent bg-emerald-500/15 text-emerald-700">ตรวจสลิปแล้ว</Badge>
-                        ) : (
-                          <form action={verifySlipAction}><input type="hidden" name="orderId" value={o.id} /><Button type="submit" size="sm" variant="outline">ตรวจสลิปแล้ว ยอดถูกต้อง</Button></form>
-                        )}
-                      </>
-                    ) : (
-                      <span className="text-amber-700">รอดีลเลอร์แนบสลิป · ยืนยันออเดอร์ได้หลังตรวจสลิป</span>
-                    )}
-                  </div>
-                )}
-                <div className="mt-2 flex flex-wrap items-center gap-2">
-                  {next && (
-                    <form action={adminAdvanceOrderAction} className="flex items-center gap-2">
-                      <input type="hidden" name="orderId" value={o.id} />
-                      <input type="hidden" name="expectedStatus" value={o.status} />
-                      {o.status === 'PREPARING' && <Input name="trackingRef" placeholder="เลขพัสดุ (ถ้ามี)" className="h-8 w-40" />}
-                      <Button type="submit" size="sm" disabled={o.status === 'PENDING' && !isPaymentReady(o)}>{next}</Button>
-                    </form>
-                  )}
-                  {(o.status === 'PENDING' || o.status === 'PREPARING') && (
-                    <form action={adminCancelOrderAction}><input type="hidden" name="orderId" value={o.id} /><Button type="submit" size="sm" variant="ghost" className="text-destructive">ยกเลิก</Button></form>
-                  )}
-                  {linked && ['PREPARING', 'SHIPPED'].includes(o.status) && (
-                    <form action={adminSetTrackingAction} className="flex items-center gap-2">
-                      <input type="hidden" name="orderId" value={o.id} />
-                      <Input name="trackingRef" defaultValue={o.trackingRef ?? ''} placeholder="เลขพัสดุ (ถ้ามี)" className="h-8 w-40" />
-                      <Button type="submit" size="sm" variant="outline">บันทึกเลขพัสดุ</Button>
-                    </form>
-                  )}
-                  {!linked && o.trackingRef && <span className="text-xs text-muted-foreground">เลขพัสดุ {o.trackingRef}</span>}
-                  {progress && (
-                    <span className="text-xs text-muted-foreground">
-                      Odoo: จัดส่ง {progress.deliveryStatus === 'full' ? 'ครบ' : progress.deliveryStatus === 'partial' ? 'บางส่วน' : 'ยังไม่ส่ง'}
-                      {progress.invoices.length ? ` · ใบแจ้งหนี้ ${progress.invoices.map((i) => i.name).join(', ')}` : ''}
-                      {' · '}ตรวจ {new Date(progress.checkedAt).toLocaleString('th-TH', { timeStyle: 'short', dateStyle: 'short' })}
-                    </span>
-                  )}
-                  {o.odoo && <OdooStatus sync={o.odoo} />}
-                  {canSyncOrder(o) && (
-                    <form action={adminSyncOrderAction}><input type="hidden" name="orderId" value={o.id} /><Button type="submit" size="sm" variant="outline">{o.odoo ? 'ส่งเข้า Odoo อีกครั้ง' : 'ส่งเข้า Odoo'}</Button></form>
-                  )}
-                </div>
-              </div>
-            );
-          })}
+      <div className="flex flex-wrap items-end justify-between gap-3">
+        <div>
+          <h1 className="text-2xl font-bold">ออเดอร์จากเว็บ</h1>
+          <p className="text-sm text-muted-foreground">ยืนยันออเดอร์ = สร้างและยืนยันใบสั่งขาย (SO) ใน Odoo อัตโนมัติ · หลังจากนั้นสถานะจัดส่ง/วางบิล/ชำระเงินตามที่คลังและบัญชีทำใน Odoo (ดึงอัตโนมัติทุกไม่กี่นาที)</p>
         </div>
-      )}
+        <form action={adminRefreshStatusesAction}><Button type="submit" size="sm" variant="outline"><RefreshCw /> ดึงสถานะจาก Odoo ตอนนี้</Button></form>
+      </div>
+      {!openOrder && notice}
+      {pendingOld > 0 && <p className="rounded-lg bg-amber-500/10 p-3 text-sm text-amber-800">มี {pendingOld} ออเดอร์รอยืนยันเกิน 2 ชั่วโมง</p>}
+
+      <div className="flex flex-wrap items-center gap-2">
+        <FilterChip href={filterHref(undefined)} active={!status}>ทั้งหมด {all.length}</FilterChip>
+        {STATUSES.map((s) => <FilterChip key={s} href={filterHref(status === s ? undefined : s)} active={status === s}>{ORDER_STATUS_LABELS[s]} {counts[s]}</FilterChip>)}
+        <div className="w-full sm:ml-auto sm:w-auto">
+          <ListSearch action="/admin/orders" q={params.q} placeholder="ค้นเลขออเดอร์ / ร้าน / PO / ขนาดยาง / SO" keep={{ status }}
+            clearHref={params.q ? listHref('/admin/orders', { status }) : undefined} />
+        </div>
+      </div>
+
+      <TableCard>
+        <Table>
+          <TableHeader className="bg-muted/50">
+            <TableRow>
+              <TableHead>ออเดอร์</TableHead>
+              <TableHead>ร้าน</TableHead>
+              <TableHead>สถานะ</TableHead>
+              <TableHead>การจัดส่ง</TableHead>
+              <TableHead>Odoo</TableHead>
+              <TableHead className="text-right">ยอด</TableHead>
+              <TableHead><span className="sr-only">จัดการ</span></TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {all.length === 0 && <EmptyRow colSpan={7}>ยังไม่มีออเดอร์ — ลองสั่งจาก <Link href="/shop" className="text-primary">หน้าดีลเลอร์</Link></EmptyRow>}
+            {all.length > 0 && orders.length === 0 && <EmptyRow colSpan={7}>ไม่พบออเดอร์ตามเงื่อนไข</EmptyRow>}
+            {pageRows.items.map((o) => {
+              const { next, cancellable, blocked } = orderFlow(o);
+              const openHref = href({ open: o.id });
+              return (
+                <TableRow key={o.id} data-state={params.open === o.id ? 'selected' : undefined}>
+                  <TableCell data-label="ออเดอร์">
+                    <Link href={openHref} scroll={false} className="block hover:underline">
+                      <span className="block font-medium">{o.ref}</span>
+                      <span className="block text-xs text-muted-foreground">{dateTime(o.createdAt)} · {o.lines.length} รายการ</span>
+                    </Link>
+                  </TableCell>
+                  <TableCell data-label="ร้าน">
+                    <span className="block">{o.dealerName}</span>
+                    {o.poRef && <span className="block text-xs text-muted-foreground">PO ร้าน: {o.poRef}</span>}
+                  </TableCell>
+                  <TableCell data-label="สถานะ">
+                    <span className="flex flex-wrap gap-1">
+                      <Badge variant="outline" className={cn('border-transparent', STYLE[o.status])}>{ORDER_STATUS_LABELS[o.status]}</Badge>
+                      <Badge variant="outline" className={cn('border-transparent', o.paymentMethod === 'CREDIT' ? 'bg-sky-500/15 text-sky-700' : 'bg-muted text-foreground')}>{o.paymentMethod === 'CREDIT' ? 'เครดิต' : 'เงินสด'}</Badge>
+                      <SlipBadge order={o} />
+                    </span>
+                  </TableCell>
+                  <TableCell data-label="การจัดส่ง">
+                    <span className="block text-xs">{o.carrier}</span>
+                    {o.trackingRef && <span className="block text-xs text-muted-foreground">เลขพัสดุ {o.trackingRef}</span>}
+                  </TableCell>
+                  <TableCell data-label="Odoo">{o.odoo ? <OdooStatus sync={o.odoo} /> : <span className="text-xs text-muted-foreground">—</span>}</TableCell>
+                  <TableCell data-label="ยอด" className="text-right"><OrderTotal order={o} /></TableCell>
+                  <TableCell data-label="">
+                    <span className="flex justify-end gap-1">
+                      <IconLink href={openHref} label="ดูรายละเอียด"><Eye /></IconLink>
+                      {next && (
+                        <form action={adminAdvanceOrderAction}>
+                          <input type="hidden" name="orderId" value={o.id} />
+                          <input type="hidden" name="expectedStatus" value={o.status} />
+                          <IconSubmit label={blocked ? `${next} (ต้องตรวจสลิปก่อน)` : next} tone="primary" disabled={blocked}>{NEXT_ICON[o.status]}</IconSubmit>
+                        </form>
+                      )}
+                      {canSyncOrder(o) && (
+                        <form action={adminSyncOrderAction}><input type="hidden" name="orderId" value={o.id} /><IconSubmit label={o.odoo ? 'ส่งเข้า Odoo อีกครั้ง' : 'ส่งเข้า Odoo'}><UploadCloud /></IconSubmit></form>
+                      )}
+                      {cancellable && (
+                        <form action={adminCancelOrderAction}><input type="hidden" name="orderId" value={o.id} /><IconSubmit label="ยกเลิก" tone="danger" confirm={`${o.ref}: ${CANCEL_CONFIRM}`}><Ban /></IconSubmit></form>
+                      )}
+                    </span>
+                  </TableCell>
+                </TableRow>
+              );
+            })}
+          </TableBody>
+        </Table>
+      </TableCard>
+      <ListPagination page={pageRows} href={(n) => href({ page: String(n) })} unit="ออเดอร์" />
+
+      {openOrder && <OrderDrawer key={openOrder.id} order={openOrder} closeHref={closeHref} notice={notice} />}
     </div>
+  );
+}
+
+/** Drawer with the full order: lines, address, slip check, status / tracking / Odoo forms and history. */
+function OrderDrawer({ order: o, closeHref, notice }: { order: ProtoOrder; closeHref: string; notice: ReactNode }) {
+  const { linked, next, cancellable, blocked } = orderFlow(o);
+  const progress = o.odoo?.progress;
+  return (
+    <UrlDrawer
+      title={<span className="flex flex-wrap items-center gap-2">{o.ref}<Badge variant="outline" className={cn('border-transparent', STYLE[o.status])}>{ORDER_STATUS_LABELS[o.status]}</Badge></span>}
+      description={`${o.dealerName} · ${dateTime(o.createdAt)} · ${o.carrier}`}
+      closeHref={closeHref}
+      size="lg"
+    >
+      {notice}
+      <div className="flex flex-wrap items-center gap-2 text-sm">
+        <Badge variant="outline" className={cn('border-transparent', o.paymentMethod === 'CREDIT' ? 'bg-sky-500/15 text-sky-700' : 'bg-muted text-foreground')}>{o.paymentMethod === 'CREDIT' ? 'เครดิต' : 'เงินสด'}</Badge>
+        {o.poRef && <span className="text-xs text-muted-foreground">PO ร้าน: {o.poRef}</span>}
+        {o.odoo && <OdooStatus sync={o.odoo} />}
+        <span className="ml-auto text-right"><OrderTotal order={o} /></span>
+      </div>
+
+      <section className="rounded-lg border border-border">
+        <h2 className="border-b border-border px-3 py-2 text-sm font-semibold">รายการสินค้า</h2>
+        <div className="rt"><Table>
+          <TableHeader className="bg-muted/50">
+            <TableRow>
+              <TableHead>สินค้า</TableHead>
+              <TableHead className="text-right">จำนวน</TableHead>
+              <TableHead className="text-right">ราคา/หน่วย</TableHead>
+              <TableHead className="text-right">รวม</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {o.lines.map((l) => (
+              <TableRow key={l.productId}>
+                <TableCell data-label="สินค้า">
+                  <span className="block font-medium">{l.size ?? l.code}</span>
+                  <span className="block text-xs text-muted-foreground">{l.code}{l.name && l.name !== l.code ? ` · ${l.name}` : ''}</span>
+                </TableCell>
+                <TableCell data-label="จำนวน" className="text-right tabular-nums">{l.qty}{l.unitName && l.unitQty ? <span className="block text-xs text-muted-foreground">{l.qty / l.unitQty} {l.unitName}</span> : null}</TableCell>
+                <TableCell data-label="ราคา/หน่วย" className="text-right tabular-nums">{baht(l.unitPrice)}</TableCell>
+                <TableCell data-label="รวม" className="text-right tabular-nums">{baht(l.unitPrice * l.qty)}</TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table></div>
+      </section>
+
+      <section className="space-y-1 text-sm">
+        <p><span className="text-muted-foreground">ที่อยู่จัดส่ง:</span> {o.address || '—'}</p>
+        <p><span className="text-muted-foreground">การจัดส่ง:</span> {o.carrier}{!linked && o.trackingRef ? ` · เลขพัสดุ ${o.trackingRef}` : ''}</p>
+        {o.note && <p className="text-xs">หมายเหตุ: {o.note}</p>}
+      </section>
+
+      {o.status === 'PENDING' && o.paymentMethod === 'CASH' && (
+        <section className="flex flex-wrap items-center gap-3 rounded-lg bg-muted/40 p-3 text-xs">
+          {o.payment.slipFile ? (
+            <>
+              <a href={`/api/proto/uploads/${o.payment.slipFile}`} target="_blank" rel="noreferrer" className="shrink-0">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src={`/api/proto/uploads/${o.payment.slipFile}`} alt="สลิป" className="h-40 rounded border border-border object-contain" />
+              </a>
+              <div className="space-y-2">
+                <p>สลิปส่งเมื่อ {dateTime(o.payment.slipUploadedAt!)} · ยอดที่ต้องได้รับ <b>{baht(o.total)}</b></p>
+                {o.payment.verifiedAt ? (
+                  <Badge variant="outline" className="border-transparent bg-emerald-500/15 text-emerald-700">ตรวจสลิปแล้ว</Badge>
+                ) : (
+                  <form action={verifySlipAction}><input type="hidden" name="orderId" value={o.id} /><Button type="submit" size="sm" variant="outline">ตรวจสลิปแล้ว ยอดถูกต้อง</Button></form>
+                )}
+              </div>
+            </>
+          ) : (
+            <span className="text-amber-700">รอดีลเลอร์แนบสลิป · ยืนยันออเดอร์ได้หลังตรวจสลิป</span>
+          )}
+        </section>
+      )}
+
+      <section className="flex flex-wrap items-center gap-2">
+        {next && (
+          <form action={adminAdvanceOrderAction} className="flex items-center gap-2">
+            <input type="hidden" name="orderId" value={o.id} />
+            <input type="hidden" name="expectedStatus" value={o.status} />
+            {o.status === 'PREPARING' && <Input name="trackingRef" placeholder="เลขพัสดุ (ถ้ามี)" className="h-8 w-40" />}
+            <Button type="submit" size="sm" disabled={blocked}>{next}</Button>
+          </form>
+        )}
+        {cancellable && (
+          <form action={adminCancelOrderAction}>
+            <input type="hidden" name="orderId" value={o.id} />
+            <IconSubmit label="ยกเลิก" tone="danger" confirm={`${o.ref}: ${CANCEL_CONFIRM}`} className="w-auto gap-1.5 px-2.5"><Ban /> ยกเลิก</IconSubmit>
+          </form>
+        )}
+        {linked && ['PREPARING', 'SHIPPED'].includes(o.status) && (
+          <form action={adminSetTrackingAction} className="flex items-center gap-2">
+            <input type="hidden" name="orderId" value={o.id} />
+            <Input name="trackingRef" defaultValue={o.trackingRef ?? ''} placeholder="เลขพัสดุ (ถ้ามี)" className="h-8 w-40" />
+            <Button type="submit" size="sm" variant="outline">บันทึกเลขพัสดุ</Button>
+          </form>
+        )}
+        {canSyncOrder(o) && (
+          <form action={adminSyncOrderAction}><input type="hidden" name="orderId" value={o.id} /><Button type="submit" size="sm" variant="outline">{o.odoo ? 'ส่งเข้า Odoo อีกครั้ง' : 'ส่งเข้า Odoo'}</Button></form>
+        )}
+      </section>
+      {progress && (
+        <p className="text-xs text-muted-foreground">
+          Odoo: จัดส่ง {progress.deliveryStatus === 'full' ? 'ครบ' : progress.deliveryStatus === 'partial' ? 'บางส่วน' : 'ยังไม่ส่ง'}
+          {progress.invoices.length ? ` · ใบแจ้งหนี้ ${progress.invoices.map((i) => i.name).join(', ')}` : ''}
+          {' · '}ตรวจ {dateTime(progress.checkedAt)}
+        </p>
+      )}
+
+      {o.events.length > 0 && (
+        <section className="rounded-lg border border-border">
+          <h2 className="border-b border-border px-3 py-2 text-sm font-semibold">ประวัติสถานะ</h2>
+          <ul className="divide-y divide-border text-xs">
+            {o.events.map((e, i) => (
+              <li key={`${e.status}-${i}`} className="flex items-center justify-between gap-2 px-3 py-2">
+                <span>{ORDER_STATUS_LABELS[e.status]}</span>
+                <span className="text-muted-foreground">{dateTime(e.at)}</span>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+    </UrlDrawer>
   );
 }

@@ -1,7 +1,8 @@
 /**
  * Odoo Loyalty (coupons / promo codes): read a code for the cart preview, and apply it
  * to a draft sale order through Odoo's own coupon wizard so Odoo books the discount line
- * and counts the usage.
+ * and counts the usage. Admins can also create discount-only programs from the web;
+ * Odoo stays the source of truth.
  */
 import type { CouponDefinition, CouponReward, CouponRule } from '@/lib/shop/coupon';
 import { odooSearchRead, odooRead, odooWrite } from './rpc';
@@ -150,4 +151,103 @@ export async function applyCouponToOrder(saleOrderId: number, code: string): Pro
   if (result && typeof result === 'object' && 'res_model' in result) {
     throw new Error(`โค้ด ${code} มีรางวัลให้เลือกหลายแบบ ต้องเลือกในใบสั่งขายของ Odoo`);
   }
+}
+
+/** A discount-only program the admin creates on the web: one code rule (or coupon cards) and one discount reward. */
+export type NewCodeProgram = {
+  name: string;
+  kind: 'promo_code' | 'coupons';
+  /** Promo-code programs only; coupons get generated card codes. */
+  code: string | null;
+  discount: number;
+  mode: 'percent' | 'per_order';
+  applicability: 'order' | 'cheapest' | 'specific';
+  /** Product category the discount applies to when `applicability` is `specific`. */
+  categoryId: number | null;
+  /** Cap for a percent discount in baht; 0 = no cap. */
+  maxAmount: number;
+  /** Promo-code programs only (coupon programs keep Odoo's default of no rule). */
+  minimumAmount: number;
+  minimumQty: number;
+  dateFrom: string | null;
+  dateTo: string | null;
+  /** Orders the program may be used on in total; 0 = unlimited. */
+  maxUsage: number;
+};
+
+/**
+ * `loyalty.program` create values with the rule and reward as one2many commands.
+ * Every field Odoo would otherwise fill from the program type is set explicitly.
+ */
+export function buildProgramValues(input: NewCodeProgram): Record<string, unknown> {
+  const reward = {
+    reward_type: 'discount',
+    discount: input.discount,
+    discount_mode: input.mode,
+    discount_applicability: input.applicability,
+    discount_max_amount: input.mode === 'percent' ? input.maxAmount : 0,
+    required_points: 1,
+    ...(input.applicability === 'specific' && input.categoryId ? { discount_product_category_id: input.categoryId } : {}),
+  };
+  const rules = input.kind === 'promo_code'
+    ? [[0, 0, { mode: 'with_code', code: input.code, minimum_amount: input.minimumAmount, minimum_qty: input.minimumQty, reward_point_amount: 1, reward_point_mode: 'order' }]]
+    : [];
+  return {
+    name: input.name,
+    program_type: input.kind,
+    trigger: 'with_code',
+    applies_on: 'current',
+    date_from: input.dateFrom || false,
+    date_to: input.dateTo || false,
+    limit_usage: input.maxUsage > 0,
+    max_usage: input.maxUsage,
+    rule_ids: [[5, 0, 0], ...rules],
+    reward_ids: [[5, 0, 0], [0, 0, reward]],
+  };
+}
+
+/** True when Odoo already has this code as a promo-code rule or a card of any program. */
+export async function codeTaken(code: string): Promise<boolean> {
+  const context = { active_test: false };
+  const [rules, cards] = await Promise.all([
+    odooRead<number>('loyalty.rule', 'search_count', [[['code', '=', code]]], { context }),
+    odooRead<number>('loyalty.card', 'search_count', [[['code', '=', code]]], { context }),
+  ]);
+  return rules + cards > 0;
+}
+
+/** Creates the program in Odoo and returns its id. The code must be checked with `codeTaken` first. */
+export async function createCodeProgram(input: NewCodeProgram): Promise<number> {
+  const created = await odooWrite<number | number[]>('loyalty.program', 'create', [[buildProgramValues(input)]]);
+  if (input.code) cache.delete(input.code);
+  return Array.isArray(created) ? created[0] : created;
+}
+
+/**
+ * Creates single-use coupon cards (1 point each, enough for the 1-point reward) and returns
+ * their codes. Odoo generates the codes. `partnerId` limits every card to that customer.
+ */
+export async function generateCoupons(programId: number, options: { count: number; partnerId: number | null; expirationDate: string | null }): Promise<string[]> {
+  const values = Array.from({ length: options.count }, () => ({
+    program_id: programId,
+    points: 1,
+    ...(options.partnerId ? { partner_id: options.partnerId } : {}),
+    ...(options.expirationDate ? { expiration_date: options.expirationDate } : {}),
+  }));
+  const created = await odooWrite<number | number[]>('loyalty.card', 'create', [values]);
+  const ids = Array.isArray(created) ? created : [created];
+  const cards = await odooSearchRead<{ code: string }>('loyalty.card', [['id', 'in', ids]], ['code']);
+  return cards.map((c) => c.code);
+}
+
+/** Coupon cards of one program, newest first (for the admin to copy and hand out). */
+export async function listProgramCards(programId: number, limit = 200) {
+  return odooSearchRead<{ id: number; code: string; points: number; expiration_date: string | false; partner_id: Rel; use_count: number }>(
+    'loyalty.card', [['program_id', '=', programId]], ['code', 'points', 'expiration_date', 'partner_id', 'use_count'], { limit, order: 'id desc' });
+}
+
+/** Archives or restores a program; an archived program's codes stop working in the cart and in Odoo. */
+export async function setProgramActive(programId: number, active: boolean): Promise<void> {
+  await odooWrite<boolean>('loyalty.program', 'write', [[programId], { active }]);
+  cache.clear();
 }

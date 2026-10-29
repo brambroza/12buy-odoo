@@ -15,6 +15,9 @@ import { createDealer, getDealer, updateDealer } from '@/lib/dealers/repo';
 import { clearLeadPassword, findLead, setLeadStatus } from '@/lib/leads/repo';
 import { formatThaiAddress, parseThaiAddress } from '@/lib/thai-address';
 import { ensureDealerPartner } from '@/lib/odoo/dealer-partner';
+import { updateOdooCustomerCreditLimit } from '@/lib/odoo/customer-pricing';
+import { odooWritesEnabled } from '@/lib/odoo/rpc';
+import { clearPartnerCache } from '@/lib/shop/catalog';
 import * as admin from '@/lib/admin/store';
 import { PROVINCES } from '@/lib/provinces';
 import { DEALER_COOKIE, encodeProfile, profileFromDealer } from '@/lib/shop/dealer';
@@ -74,6 +77,37 @@ function revalidate() {
   revalidatePath('/shop', 'layout');
 }
 
+/**
+ * Where to return after a list action: the form's `back` field when it is a back-office path
+ * (keeps the list's search, filter and page), otherwise `fallback`. Blocks open redirects.
+ */
+function backTo(formData: FormData, fallback: string): string {
+  const back = String(formData.get('back') ?? '');
+  return /^\/admin(\/|\?|$)/.test(back) && !/[\r\n\\]/.test(back) && !back.startsWith('//') ? back : fallback;
+}
+
+/**
+ * Copies the dealer's web credit limit to its Odoo partner (`credit_limit`), so accounting sees the same
+ * limit. Runs only when the limit changed or the dealer was just linked with a limit, so saving other
+ * fields never wipes a limit someone set in Odoo. Returns a warning when Odoo was not updated.
+ */
+async function syncCreditLimitToOdoo(actorId: string, before: { odooPartnerId: number | null; creditLimit: unknown }, after: { odooPartnerId: number | null; creditLimit: number | null }): Promise<string | null> {
+  const previous = before.creditLimit === null ? null : Number(before.creditLimit);
+  if (!after.odooPartnerId) return after.creditLimit !== null ? 'ยังไม่ได้ผูกลูกค้า Odoo จึงยังไม่ส่งวงเงินไป Odoo' : null;
+  const relinked = before.odooPartnerId !== after.odooPartnerId;
+  if (previous === after.creditLimit && !(relinked && after.creditLimit !== null)) return null;
+  if (!odooWritesEnabled()) return 'Odoo อยู่ในโหมดอ่านอย่างเดียว (ODOO_READ_ONLY) วงเงินบันทึกเฉพาะบนเว็บ ยังไม่ส่งไป Odoo';
+  try {
+    await updateOdooCustomerCreditLimit(after.odooPartnerId, after.creditLimit);
+  } catch (error) {
+    console.error('[admin/dealers] Odoo credit limit write failed', after.odooPartnerId, error instanceof Error ? error.message : error);
+    return `ส่งวงเงินไป Odoo ไม่สำเร็จ: ${error instanceof Error ? error.message : 'ไม่ทราบสาเหตุ'}`;
+  }
+  clearPartnerCache();
+  await audit(actorId, 'odoo.customer_credit_limit', 'res.partner', String(after.odooPartnerId), { from: relinked ? null : previous, to: after.creditLimit });
+  return null;
+}
+
 function fail(path: string, message: string): never {
   redirect(`${path}?error=${encodeURIComponent(message)}`);
 }
@@ -118,10 +152,13 @@ export async function updateDealerAction(formData: FormData) {
   const groupBefore = (await admin.groupForDealer(id))?.id ?? null;
   const groupAfter = await saveDealerGroup(id, formData);
   await audit(actor.id, 'dealer.update', 'Dealer', id, { from: { status: before.status, tier: before.tier, types: before.types, creditEnabled: before.creditEnabled, creditLimit: before.creditLimit === null ? null : Number(before.creditLimit), creditOpening: Number(before.creditOpening), customerGroupId: groupBefore }, to: { status: parsed.data.status, tier: parsed.data.tier, types: parsed.data.types, creditEnabled: parsed.data.creditEnabled, creditLimit: parsed.data.creditLimit, creditOpening: parsed.data.creditOpening, customerGroupId: groupAfter } });
+  const odooWarning = await syncCreditLimitToOdoo(actor.id, before, parsed.data);
   revalidate();
-  await flash('บันทึกข้อมูลดีลเลอร์แล้ว', {
+  await flash(odooWarning ? 'บันทึกข้อมูลดีลเลอร์แล้ว (วงเงินยังไม่เข้า Odoo)' : 'บันทึกข้อมูลดีลเลอร์แล้ว', {
+    type: odooWarning ? 'warning' : 'success',
     icon: 'save',
-    description: parsed.data.status === 'SUSPENDED' && before.status !== 'SUSPENDED' ? `${parsed.data.name} · ระงับร้านและออกจากระบบผู้ใช้ทุกคนแล้ว`
+    description: odooWarning ? `${parsed.data.name} · ${odooWarning}`
+      : parsed.data.status === 'SUSPENDED' && before.status !== 'SUSPENDED' ? `${parsed.data.name} · ระงับร้านและออกจากระบบผู้ใช้ทุกคนแล้ว`
       : becomingActive ? `${parsed.data.name} · เปิดใช้งานร้านแล้ว` : parsed.data.name,
   });
   redirect(`/admin/dealers?open=${id}&saved=1`);
@@ -168,20 +205,21 @@ export async function resetPasswordAction(_prev: CredentialResult, formData: For
 export async function dismissResetRequestAction(formData: FormData) {
   const actor = await requireAdmin();
   const requestId = String(formData.get('requestId') ?? '');
+  const back = backTo(formData, '/admin/users');
   const request = await findResetRequest(requestId);
-  if (!request || !canManageRole(actor.role as Role, request.user.role as Role)) redirect('/admin/users');
+  if (!request || !canManageRole(actor.role as Role, request.user.role as Role)) redirect(back);
   await resolveResetRequests(request.userId, actor.id, 'DISMISSED');
   await audit(actor.id, 'password-reset.dismiss', 'PasswordResetRequest', requestId);
   revalidate();
   await flash('ปิดคำขอรีเซ็ตรหัสผ่านแล้ว', { type: 'info', icon: 'key', description: request.user.email });
-  redirect('/admin/users');
+  redirect(back);
 }
 
 /** Enables/disables a login. Disabling also revokes sessions. You cannot disable yourself. */
 export async function toggleUserActiveAction(formData: FormData) {
   const actor = await requireAdmin();
   const userId = String(formData.get('userId') ?? '');
-  const back = String(formData.get('back') ?? '/admin/users');
+  const back = backTo(formData, '/admin/users');
   const target = await findUserById(userId);
   if (!target || target.id === actor.id || !canManageRole(actor.role as Role, target.role as Role)) redirect(back);
   await updateUser(userId, { isActive: !target.isActive });
@@ -255,9 +293,10 @@ export async function approveLeadAction(formData: FormData) {
 /** Mark a lead contacted / rejected (or back to new). */
 export async function setLeadStatusAction(formData: FormData) {
   const actor = await requireBackoffice();
+  const back = backTo(formData, '/admin/leads');
   const parsed = z.object({ leadId: z.string().min(1), status: z.enum(['NEW', 'CONTACTED', 'REJECTED']), note: z.string().trim().max(300) })
     .safeParse({ leadId: formData.get('leadId'), status: formData.get('status'), note: formData.get('note') ?? '' });
-  if (!parsed.success) redirect('/admin/leads');
+  if (!parsed.success) redirect(back);
   await setLeadStatus(parsed.data.leadId, parsed.data.status, { note: parsed.data.note || undefined });
   if (parsed.data.status === 'REJECTED') await clearLeadPassword(parsed.data.leadId);
   await audit(actor.id, `lead.${parsed.data.status.toLowerCase()}`, 'DealerLead', parsed.data.leadId);
@@ -265,7 +304,7 @@ export async function setLeadStatusAction(formData: FormData) {
   const leadToast = { CONTACTED: ['บันทึกว่าติดต่อแล้ว', 'send'], REJECTED: ['ปฏิเสธใบสมัครแล้ว', 'reject'], NEW: ['ย้ายกลับเป็นใบสมัครใหม่แล้ว', 'mail'] } as const;
   const [leadTitle, leadIcon] = leadToast[parsed.data.status];
   await flash(leadTitle, { type: parsed.data.status === 'REJECTED' ? 'info' : 'success', icon: leadIcon, description: parsed.data.note || undefined });
-  redirect('/admin/leads');
+  redirect(back);
 }
 
 /** Staff accounts (admin / sales / warehouse). Only SUPER_ADMIN may create another SUPER_ADMIN. */

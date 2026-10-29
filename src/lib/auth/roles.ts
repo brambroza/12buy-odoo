@@ -29,7 +29,7 @@ export function isDealerRole(role: Role): boolean {
 
 /** Where a user lands after login when no `next` is given. */
 export function homeFor(role: Role): string {
-  return isBackofficeRole(role) ? '/admin/orders' : '/shop';
+  return isBackofficeRole(role) ? '/admin' : '/shop';
 }
 
 /** Whether `actor` may create or edit a user with `target` role. */

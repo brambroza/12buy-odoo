@@ -18,16 +18,26 @@ const READ_METHODS = new Set([
 ]);
 
 /**
- * The only writes the web may send: link dealers as partners, push confirmed orders
- * (with a coupon code through Odoo's coupon wizard), and publish approved price books
- * as pricelists.
+ * The only writes the web may send: link dealers as partners, set a customer's pricelist,
+ * credit limit and delivery method, push confirmed orders (with a coupon code through Odoo's coupon wizard), publish
+ * approved price books as pricelists, create / archive discount-code and coupon programs, and
+ * add / rename / publish / archive delivery methods.
  */
 const WRITE_METHODS: Record<string, ReadonlySet<string>> = {
-  'res.partner': new Set(['create']),
+  'res.partner': new Set(['create', 'write']),
   'sale.order': new Set(['create', 'action_confirm']),
   'sale.loyalty.coupon.wizard': new Set(['create', 'action_apply']),
   'product.pricelist': new Set(['create']),
   'product.pricelist.item': new Set(['create', 'write', 'unlink']),
+  'loyalty.program': new Set(['create', 'write']),
+  'loyalty.card': new Set(['create']),
+  'delivery.carrier': new Set(['create', 'write']),
+};
+
+/** Writes limited to these fields (`model.method` → fields allowed in the values dict, `args[1]`). */
+const WRITE_FIELDS: Record<string, ReadonlySet<string>> = {
+  'res.partner.write': new Set(['property_product_pricelist', 'credit_limit', 'use_partner_credit_limit', 'property_delivery_carrier_id']),
+  'delivery.carrier.write': new Set(['name', 'sequence', 'is_published', 'active']),
 };
 
 type RpcConfig = { url: string; db: string; username: string; apiKey: string };
@@ -140,6 +150,13 @@ export function odooWritesEnabled(): boolean {
  */
 export async function odooWrite<T>(model: string, method: string, args: unknown[] = [], kwargs: Record<string, unknown> = {}): Promise<T> {
   if (!WRITE_METHODS[model]?.has(method)) throw new Error(`Blocked: '${model}.${method}' is not an allowed write`);
+  const allowedFields = WRITE_FIELDS[`${model}.${method}`];
+  if (allowedFields) {
+    const values = args[1];
+    const fields = values && typeof values === 'object' ? Object.keys(values) : [];
+    const blocked = fields.filter((f) => !allowedFields.has(f));
+    if (!fields.length || blocked.length) throw new Error(`Blocked: '${model}.${method}' may not write ${blocked.join(', ') || 'these values'}`);
+  }
   if (!odooWritesEnabled()) throw new Error('Odoo อยู่ในโหมดอ่านอย่างเดียว (ตั้ง ODOO_READ_ONLY=false เพื่อเปิดการส่งข้อมูล)');
   const { db, apiKey } = getConfig();
   const uid = await authenticate();

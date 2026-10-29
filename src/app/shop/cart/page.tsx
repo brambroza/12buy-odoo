@@ -2,7 +2,7 @@ import Link from 'next/link';
 import { TriangleAlert } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
-import { baht, findProduct, getCatalog, getReferenceData } from '@/lib/shop/catalog';
+import { baht, findProduct, getCatalog, getDealerCarrier } from '@/lib/shop/catalog';
 import { getCreditLine } from '@/lib/shop/credit-line';
 import { billTotals, cashDiscountPerUnit, resolvePrice, withCoupon } from '@/lib/shop/pricing';
 import { canSeeProduct, getDealerProfile } from '@/lib/shop/dealer';
@@ -22,7 +22,8 @@ import { applyCouponAction, changeCartUnitAction, checkoutAction, clearCartActio
 /** Cart and one-page checkout. */
 export default async function CartPage({ searchParams }: { searchParams: Promise<{ error?: string }> }) {
   const { error } = await searchParams;
-  const [profile, sid, catalog, reference, user] = await Promise.all([getDealerProfile(), getSessionId(), getCatalog(), getReferenceData(), requireDealerAccess()]);
+  const [profile, sid, catalog, user] = await Promise.all([getDealerProfile(), getSessionId(), getCatalog(), requireDealerAccess()]);
+  const delivery = await getDealerCarrier(profile.odooPartnerId);
   const canSaveAddress = Boolean(user.dealer) && !isBackofficeRole(user.role as Role);
   const lines = (await getCart(sid))
     .map((item) => ({ item, product: findProduct(catalog, item.productId) }))
@@ -148,18 +149,20 @@ export default async function CartPage({ searchParams }: { searchParams: Promise
             <input type="checkbox" name="saveAddress" className="size-4" /> บันทึกเป็นที่อยู่จัดส่งหลักของร้าน
           </label>
         )}
-        <label className="block text-sm">
-          <span className="text-xs text-muted-foreground">ขนส่งที่ใช้ประจำ</span>
-          <select name="carrier" className="mt-1 h-10 w-full rounded-lg border border-border bg-background px-2 text-sm" defaultValue={reference.carriers[0]?.name}>
-            {reference.carriers.map((c) => <option key={c.id} value={c.name}>{c.name}</option>)}
-          </select>
-        </label>
+        <div className="text-sm">
+          <span className="text-xs text-muted-foreground">การจัดส่ง</span>
+          {delivery ? (
+            <p className="mt-1 rounded-lg bg-muted/60 px-3 py-2">{delivery.carrier.name}<span className="block text-xs text-muted-foreground">{delivery.assigned ? 'ตามที่ฝ่ายขายกำหนดให้ร้าน' : 'ค่าเริ่มต้น'} · ต้องการเปลี่ยน ติดต่อฝ่ายขาย</span></p>
+          ) : (
+            <p className="mt-1 rounded-lg bg-amber-500/10 px-3 py-2 text-amber-800 dark:text-amber-300">ยังไม่ได้กำหนดการจัดส่งให้ร้าน ติดต่อฝ่ายขาย</p>
+          )}
+        </div>
         <Textarea name="note" placeholder="หมายเหตุถึงฝ่ายขาย (ถ้ามี)" rows={2} className="text-sm" />
         <label className="block text-sm">
           <span className="text-xs text-muted-foreground">เลขที่ใบสั่งซื้อของร้าน (ไม่บังคับ)</span>
           <input name="poRef" maxLength={40} placeholder="เช่น PO-6811-023" className="mt-1 h-10 w-full rounded-lg border border-border bg-background px-3 text-sm" />
         </label>
-        <CheckoutSummary credit={profile.credit} creditBill={creditBill} cashBill={cashBill} creditLine={creditLine} lineCount={lines.length} blocked={notAllowed ? 'ลบสินค้าที่สั่งไม่ได้ก่อน' : overStock ? 'แก้จำนวนก่อน' : couponCode && !couponResult?.ok ? 'ลบโค้ดที่ใช้ไม่ได้ก่อน' : null} />
+        <CheckoutSummary credit={profile.credit} creditBill={creditBill} cashBill={cashBill} creditLine={creditLine} lineCount={lines.length} blocked={!delivery ? 'ยังไม่มีการจัดส่ง' : notAllowed ? 'ลบสินค้าที่สั่งไม่ได้ก่อน' : overStock ? 'แก้จำนวนก่อน' : couponCode && !couponResult?.ok ? 'ลบโค้ดที่ใช้ไม่ได้ก่อน' : null} />
        {/*  <p className="text-[11px] text-muted-foreground">ออเดอร์เข้า Odoo เมื่อฝ่ายขายยืนยัน</p> */}
       </form>
       </div>

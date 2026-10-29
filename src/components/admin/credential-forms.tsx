@@ -44,14 +44,16 @@ export function CreateUserForm({ action, hidden, roles }: { action: CredentialAc
   );
 }
 
-/** One-click temporary password reset; reveals the new password once. */
-export function ResetPasswordButton({ action, userId }: { action: CredentialAction; userId: string }) {
+/** One-click temporary password reset; reveals the new password once. `compact` renders an icon-only button for table rows. */
+export function ResetPasswordButton({ action, userId, compact = false }: { action: CredentialAction; userId: string; compact?: boolean }) {
   const [state, formAction, pending] = useActionState<CredentialResult, FormData>(action, null);
   if (state?.ok && state.tempPassword) return <TempPassword email={state.email} password={state.tempPassword} />;
   return (
     <form action={formAction} className="inline">
       <input type="hidden" name="userId" value={userId} />
-      <Button type="submit" size="xs" variant="outline" disabled={pending}><KeyRound className="size-3" /> รีเซ็ตรหัส</Button>
+      {compact
+        ? <Button type="submit" size="icon-sm" variant="ghost" disabled={pending} title="รีเซ็ตรหัสผ่าน" aria-label="รีเซ็ตรหัสผ่าน"><KeyRound /></Button>
+        : <Button type="submit" size="xs" variant="outline" disabled={pending}><KeyRound className="size-3" /> รีเซ็ตรหัส</Button>}
       {state?.ok === false && <span className="ml-2 text-xs text-destructive">{state.message}</span>}
     </form>
   );

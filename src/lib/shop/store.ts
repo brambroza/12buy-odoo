@@ -12,7 +12,7 @@ import { ORDER_STATUS_FLOW } from './types';
 type OrderRow = {
   id: string; ref: string; scope: string; dealerName: string; status: OrderStatus; paymentMethod: ProtoOrder['paymentMethod'];
   subtotal: number | string; cashDiscount: number | string; couponDiscount: number | string; total: number | string;
-  lines: ProtoOrder['lines']; coupon: ProtoOrder['coupon']; odooPricelistId: number | null; address: string; carrier: string; note: string;
+  lines: ProtoOrder['lines']; coupon: ProtoOrder['coupon']; odooPricelistId: number | null; address: string; carrier: string; carrierId?: number | null; note: string;
   poRef: string | null; trackingRef: string | null; payment: ProtoOrder['payment']; events: ProtoOrder['events']; odoo: OdooSync | null; createdAt: string;
 };
 
@@ -44,6 +44,7 @@ function toOrder(row: OrderRow): ProtoOrder {
     paymentMethod: row.paymentMethod,
     address: row.address,
     carrier: row.carrier,
+    carrierId: row.carrierId ?? null,
     note: row.note,
     poRef: row.poRef ?? undefined,
     trackingRef: row.trackingRef,

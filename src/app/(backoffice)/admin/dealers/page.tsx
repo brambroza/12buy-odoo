@@ -1,21 +1,30 @@
 import Link from 'next/link';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { Input } from '@/components/ui/input';
 import { CreateUserForm, ResetPasswordButton } from '@/components/admin/credential-forms';
 import * as admin from '@/lib/admin/store';
 import type { CustomerGroup, PriceZone } from '@/lib/admin/types';
 import { requireBackoffice } from '@/lib/auth/session';
 import { ROLE_LABELS, isAdminRole, type Role } from '@/lib/auth/roles';
 import { listDealers } from '@/lib/dealers/repo';
+import { getOdooPartnerKinds, listOdooCustomers, listOdooPricelists, type OdooCustomer, type OdooPartnerKind, type OdooPricelistOption } from '@/lib/odoo/customer-pricing';
+import { listAllCarriers, type DeliveryCarrier } from '@/lib/odoo/delivery-carrier';
+import { odooWritesEnabled } from '@/lib/odoo/rpc';
 import { PROVINCES } from '@/lib/provinces';
 import { baht, getPartners } from '@/lib/shop/catalog';
 import { webCreditUsed } from '@/lib/shop/credit';
 import { listOpenCreditOrders } from '@/lib/shop/store';
 import { DEALER_TIER_LABELS, DEALER_TYPE_LABELS, type DealerTier, type DealerType } from '@/lib/shop/types';
 import { DealerAvatar } from '@/components/shop/dealer-avatar';
+import { UrlDrawer } from '@/components/admin/url-drawer';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { EmptyRow, FilterChip, IconLink, ListPagination, ListSearch, TableCard } from '@/components/admin/list-kit';
+import { IconSubmit } from '@/components/admin/icon-submit';
+import { Eye, Pencil, Plus, Store, UserPlus } from 'lucide-react';
+import { listHref, matchesSearch, paginate, searchText } from '@/lib/admin/list';
 import { TierShield } from '@/components/shop/tier-shield';
 import { cn } from '@/lib/utils';
+import { updateOdooCustomerAction } from '../customer-actions';
 import { createDealerAction, createDealerUserAction, openAsDealerAction, resetPasswordAction, toggleUserActiveAction, updateDealerAction } from '../dealer-actions';
 
 const TYPES = Object.keys(DEALER_TYPE_LABELS) as DealerType[];
@@ -24,103 +33,387 @@ const STATUS = { PENDING: 'รออนุมัติ', ACTIVE: 'ใช้ง�
 type Status = keyof typeof STATUS;
 const STATUS_CLASS: Record<Status, string> = { ACTIVE: 'bg-emerald-500/15 text-emerald-700', SUSPENDED: 'bg-destructive/15 text-destructive', PENDING: 'bg-amber-500/15 text-amber-700' };
 const DEALER_ROLES = [{ value: 'DEALER_OWNER', label: 'เจ้าของร้าน' }, { value: 'DEALER_STAFF', label: 'พนักงานร้าน' }];
+/** Status filter value for Odoo customers that have no web dealer yet. */
+const ODOO_ONLY = 'ODOO';
+const field = 'h-9 w-full rounded-lg border border-border bg-background px-2 text-sm';
 
-type Search = { q?: string; status?: string; open?: string; saved?: string; error?: string; fromLead?: string; new?: string };
+type Search = { q?: string; status?: string; pricelist?: string; page?: string; open?: string; saved?: string; error?: string; fromLead?: string; new?: string; partner?: string };
+type Row = { kind: 'dealer'; d: DealerRow } | { kind: 'odoo'; c: OdooCustomer };
+type OdooData = { customers: OdooCustomer[]; pricelists: OdooPricelistOption[]; carriers: DeliveryCarrier[]; defaultCarrier?: DeliveryCarrier };
 
-/** Dealer management: approve, set type/tier/zone, link Odoo partner, create logins, impersonate. */
+/** Loads the Odoo side (customers, pricelists, delivery methods) live; null with the reason when Odoo is unreachable. */
+async function loadOdoo(): Promise<{ data: OdooData; error?: undefined } | { data: null; error: string }> {
+  try {
+    const [customers, pricelists, allCarriers] = await Promise.all([listOdooCustomers(), listOdooPricelists(), listAllCarriers()]);
+    const carriers = allCarriers.filter((c) => c.active);
+    return { data: { customers, pricelists, carriers, defaultCarrier: carriers.find((c) => c.published) } };
+  } catch (error) {
+    return { data: null, error: error instanceof Error ? error.message : 'ไม่ทราบสาเหตุ' };
+  }
+}
+
+/**
+ * Dealers and Odoo customers in one list: web dealers (approve, type/tier/zone, logins, impersonate) carry their
+ * Odoo pricelist / credit limit / delivery method inline; Odoo customers without a web account are listed too and
+ * can be priced the same way or turned into a web dealer.
+ */
 export default async function DealersPage({ searchParams }: { searchParams: Promise<Search> }) {
   const [actor, params] = await Promise.all([requireBackoffice(), searchParams]);
   const canEdit = isAdminRole(actor.role as Role);
+  const writable = odooWritesEnabled();
+  const odooOnlyView = params.status === ODOO_ONLY;
   const status = (['PENDING', 'ACTIVE', 'SUSPENDED'] as Status[]).includes(params.status as Status) ? (params.status as Status) : undefined;
-  const [dealers, settings, partners, openCredit] = await Promise.all([listDealers({ status, q: params.q }), admin.getAdminSnapshot(), getPartners().catch(() => []), listOpenCreditOrders()]);
+  const [allDealers, settings, partners, openCredit, odoo] = await Promise.all([
+    listDealers(), admin.getAdminSnapshot(), getPartners().catch(() => []), listOpenCreditOrders(), loadOdoo(),
+  ]);
   const counts = { PENDING: 0, ACTIVE: 0, SUSPENDED: 0 } as Record<Status, number>;
-  for (const d of await listDealers()) counts[d.status as Status] += 1;
+  for (const d of allDealers) counts[d.status as Status] += 1;
   const partnerName = (id: number | null) => partners.find((p) => p.id === id)?.name;
   // Salesperson lives on the Odoo customer (res.partner.user_id); web orders carry it so commission stays with the right person.
   const salesperson = (id: number) => { const p = partners.find((x) => x.id === id); return p?.user_id ? p.user_id[1] : null; };
   const { zones, groups } = settings;
   const creditUsed = (d: DealerRow) => webCreditUsed({ id: d.id, odooPartnerId: d.odooPartnerId, creditOpening: Number(d.creditOpening) || 0 }, openCredit);
 
+  const customerById = new Map((odoo.data?.customers ?? []).map((c) => [c.id, c]));
+  const linked = new Set(allDealers.map((d) => d.odooPartnerId).filter((id): id is number => id !== null));
+  // Linked partners that are not company customers: find out whether they are contacts, archived or gone.
+  const otherKinds = odoo.data
+    ? await getOdooPartnerKinds([...linked].filter((id) => !customerById.has(id))).catch(() => new Map<number, OdooPartnerKind>())
+    : new Map<number, OdooPartnerKind>();
+  const kindOf = (partnerId: number | null): OdooPartnerKind | null =>
+    partnerId === null || !odoo.data ? null : customerById.has(partnerId) ? { kind: 'customer' } : otherKinds.get(partnerId) ?? null;
+  const unlinked = (odoo.data?.customers ?? []).filter((c) => !linked.has(c.id));
+  const matchesPricelist = (pricelist: OdooCustomer['pricelist'] | undefined) =>
+    !params.pricelist || (params.pricelist === 'none' ? !pricelist : String(pricelist?.id) === params.pricelist);
+  const q = searchText(params.q);
+  const dealers = odooOnlyView ? [] : allDealers.filter((d) => (!status || d.status === status)
+    && matchesSearch(q, d.name, d.province, d.phone, d.taxId, d.lineId, d.odooPartnerId ? customerById.get(d.odooPartnerId)?.name : null)
+    && matchesPricelist(d.odooPartnerId ? customerById.get(d.odooPartnerId)?.pricelist : null));
+  const odooRows = status ? [] : unlinked.filter((c) => matchesPricelist(c.pricelist) && matchesSearch(q, c.name, c.vat, c.phone, c.email, c.province));
+  // Web dealers first, then Odoo customers without a web account, paged together.
+  const rows: Row[] = [...dealers.map((d) => ({ kind: 'dealer' as const, d })), ...odooRows.map((c) => ({ kind: 'odoo' as const, c }))];
+  const pageRows = paginate(rows, params.page);
+  const pricelistCounts = new Map<number, number>();
+  for (const c of odoo.data?.customers ?? []) if (c.pricelist) pricelistCounts.set(c.pricelist.id, (pricelistCounts.get(c.pricelist.id) ?? 0) + 1);
+
+  const prefillCustomer = params.partner ? customerById.get(Number(params.partner)) : undefined;
+  const prefill = prefillCustomer && !linked.has(prefillCustomer.id) ? {
+    name: prefillCustomer.name,
+    province: (PROVINCES as readonly string[]).includes(prefillCustomer.province ?? '') ? prefillCustomer.province! : '',
+    phone: prefillCustomer.phone,
+    taxId: prefillCustomer.vat,
+    odooPartnerId: prefillCustomer.id,
+  } : undefined;
+  /** List URL with the current filters; `changes` overrides params such as `status`, `open` or `page`. */
+  const href = (changes: Record<string, string | undefined> = {}) =>
+    listHref('/admin/dealers', { q: params.q, status: params.status, pricelist: params.pricelist, page: params.page }, changes);
+  const filterHref = (next: string | undefined) => href({ status: next, page: undefined });
+  const closeHref = href();
+  const openDealer = params.open ? allDealers.find((d) => d.id === params.open) : undefined;
+  const openCustomer = odoo.data && params.open?.startsWith('odoo-') ? customerById.get(Number(params.open.slice(5))) : undefined;
+  /** Table row for an Odoo customer that has no web dealer yet. */
+  const odooRow = (c: OdooCustomer) => {
+    const editHref = href({ open: `odoo-${c.id}` });
+    return (
+      <TableRow key={`odoo-${c.id}`} data-state={params.open === `odoo-${c.id}` ? 'selected' : undefined} className="bg-muted/20">
+        <TableCell data-label="ร้าน / ลูกค้า" className="min-w-56 whitespace-normal">
+          <Link href={editHref} scroll={false} className="flex items-center gap-2 hover:underline">
+            <DealerAvatar name={c.name} avatarFile={null} size={28} />
+            <span className="min-w-0">
+              <span className="block font-medium">{c.name}</span>
+              <span className="block text-xs text-muted-foreground">{c.province ?? 'ไม่ระบุจังหวัด'} · Odoo #{c.id}</span>
+            </span>
+          </Link>
+        </TableCell>
+        <TableCell data-label="สถานะ">
+          <span className="flex flex-wrap gap-1">
+            <OdooKindBadge kind={{ kind: 'customer' }} />
+            <Badge variant="outline" className="border-transparent bg-muted text-muted-foreground">ยังไม่มีบัญชีเว็บ</Badge>
+          </span>
+        </TableCell>
+        <TableCell data-label="ระดับ"><span className="text-xs text-muted-foreground">—</span></TableCell>
+        <TableCell data-label="กลุ่มราคา Odoo"><PricelistBadge customer={c} /></TableCell>
+        <TableCell data-label="เครดิตเว็บ"><span className="text-xs text-muted-foreground">—</span></TableCell>
+        <TableCell data-label="เครดิต Odoo"><OdooCredit customer={c} /></TableCell>
+        <TableCell data-label="เซลล์">{c.salesperson ? <span className="text-xs">{c.salesperson}</span> : <span className="text-xs text-muted-foreground">—</span>}</TableCell>
+        <TableCell data-label="ผู้ใช้" className="text-right">0</TableCell>
+        <TableCell data-label="">
+          <span className="flex justify-end gap-1">
+            <IconLink href={editHref} label={canEdit ? 'แก้ไขราคา/เครดิต Odoo' : 'ดูรายละเอียด'}>{canEdit ? <Pencil /> : <Eye />}</IconLink>
+            {canEdit && <IconLink href={href({ new: '1', partner: String(c.id) })} label="สร้างเป็นดีลเลอร์บนเว็บ"><UserPlus /></IconLink>}
+          </span>
+        </TableCell>
+      </TableRow>
+    );
+  };
+
+  const notice = (
+    <>
+      {params.error && <p className="rounded-lg bg-destructive/10 px-3 py-2 text-sm text-destructive">{params.error}</p>}
+      {params.saved && <p className="rounded-lg bg-emerald-500/10 px-3 py-2 text-sm text-emerald-700">บันทึกแล้ว</p>}
+    </>
+  );
+
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-bold">ดีลเลอร์</h1>
-          <p className="text-sm text-muted-foreground">อนุมัติร้าน กำหนดประเภท/ระดับ ผูกลูกค้า Odoo และสร้างบัญชีเข้าสู่ระบบให้ร้าน · โซนราคาคำนวณจากจังหวัด</p>
+          <h1 className="text-2xl font-bold">ดีลเลอร์ / ลูกค้า Odoo</h1>
+          <p className="text-sm text-muted-foreground">อนุมัติร้าน กำหนดประเภท/ระดับ สร้างบัญชีเข้าสู่ระบบ และตั้งกลุ่มราคา (pricelist) วงเงินเครดิต การจัดส่งของลูกค้าใน Odoo ในที่เดียว · กดแถวเพื่อแก้ไข · โซนราคาคำนวณจากจังหวัด</p>
         </div>
-        {canEdit && <Button nativeButton={false} render={<Link href="/admin/dealers?new=1" />} size="sm">+ เพิ่มดีลเลอร์</Button>}
+        {canEdit && <Button nativeButton={false} render={<Link href={href({ new: '1' })} scroll={false} />} size="sm"><Plus /> เพิ่มดีลเลอร์</Button>}
       </div>
 
       <div className="flex flex-wrap items-center gap-2">
         {(['PENDING', 'ACTIVE', 'SUSPENDED'] as Status[]).map((s) => (
-          <Link key={s} href={`/admin/dealers${status === s ? '' : `?status=${s}`}`} className={cn('rounded-full border px-3 py-1 text-xs font-medium', status === s ? 'border-primary bg-primary text-primary-foreground' : 'border-border bg-card')}>{STATUS[s]} {counts[s]}</Link>
+          <FilterChip key={s} href={filterHref(status === s ? undefined : s)} active={status === s}>{STATUS[s]} {counts[s]}</FilterChip>
         ))}
-        <form className="ml-auto flex gap-2"><Input name="q" defaultValue={params.q} placeholder="ค้นชื่อร้าน / จังหวัด / โทร" className="w-56" /><Button type="submit" variant="outline" size="sm">ค้นหา</Button></form>
+        {odoo.data && <FilterChip href={filterHref(odooOnlyView ? undefined : ODOO_ONLY)} active={odooOnlyView}>ลูกค้า Odoo ยังไม่มีบัญชีเว็บ {unlinked.length}</FilterChip>}
+        <div className="w-full sm:ml-auto sm:w-auto">
+          <ListSearch action="/admin/dealers" q={params.q} placeholder="ค้นชื่อร้าน / จังหวัด / โทร / เลขภาษี" keep={{ status: params.status }}
+            clearHref={params.q || params.pricelist ? listHref('/admin/dealers', { status: params.status }) : undefined}>
+            {odoo.data && (
+              <select name="pricelist" defaultValue={params.pricelist ?? ''} aria-label="กลุ่มราคา" className={cn(field, 'w-auto')}>
+                <option value="">ทุกกลุ่มราคา</option>
+                {odoo.data.pricelists.map((p) => <option key={p.id} value={p.id}>{p.name} ({pricelistCounts.get(p.id) ?? 0})</option>)}
+                <option value="none">ยังไม่ตั้งกลุ่มราคา</option>
+              </select>
+            )}
+          </ListSearch>
+        </div>
       </div>
-      {params.error && <p className="rounded-lg bg-destructive/10 px-3 py-2 text-sm text-destructive">{params.error}</p>}
-      {params.fromLead && <p className="rounded-lg bg-emerald-500/10 px-3 py-2 text-sm text-emerald-700">อนุมัติใบสมัครแล้ว ขั้นต่อไป: สร้างบัญชีเข้าสู่ระบบให้ร้านด้านล่าง แล้วส่งรหัสทาง LINE</p>}
+      {odoo.error && <p className="rounded-lg bg-destructive/10 px-3 py-2 text-sm text-destructive">เชื่อมต่อ Odoo ไม่ได้ จึงแสดงเฉพาะดีลเลอร์บนเว็บ (ตั้งกลุ่มราคา/วงเงิน Odoo ไม่ได้ชั่วคราว): {odoo.error}</p>}
+      {odoo.data && !writable && (
+        <p className="rounded-lg bg-amber-500/10 px-3 py-2 text-sm text-amber-800">Odoo ตั้งเป็นอ่านอย่างเดียว (<code>ODOO_READ_ONLY</code>) ดูกลุ่มราคา/วงเงิน Odoo ได้แต่ยังบันทึกไม่ได้ · ตั้ง <code>ODOO_READ_ONLY=false</code> เพื่อเปิดการบันทึก</p>
+      )}
+      {params.error && !params.open && !params.new && <p className="rounded-lg bg-destructive/10 px-3 py-2 text-sm text-destructive">{params.error}</p>}
+      {params.fromLead && <p className="rounded-lg bg-emerald-500/10 px-3 py-2 text-sm text-emerald-700">อนุมัติใบสมัครแล้ว ขั้นต่อไป: สร้างบัญชีเข้าสู่ระบบให้ร้าน (ในหน้าต่างแก้ไข) แล้วส่งรหัสทาง LINE</p>}
+
+      <TableCard>
+        <Table>
+          <TableHeader className="bg-muted/50">
+            <TableRow>
+              <TableHead>ร้าน / ลูกค้า</TableHead>
+              <TableHead>สถานะ</TableHead>
+              <TableHead>ระดับ</TableHead>
+              <TableHead>กลุ่มราคา Odoo</TableHead>
+              <TableHead>เครดิตเว็บ</TableHead>
+              <TableHead>เครดิต Odoo</TableHead>
+              <TableHead>เซลล์</TableHead>
+              <TableHead className="text-right">ผู้ใช้</TableHead>
+              <TableHead><span className="sr-only">จัดการ</span></TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {rows.length === 0 && <EmptyRow colSpan={9}>ไม่พบดีลเลอร์หรือลูกค้าตามเงื่อนไข · ใบสมัครใหม่อยู่ที่เมนู “ใบสมัครดีลเลอร์”</EmptyRow>}
+            {pageRows.items.map((row) => {
+              if (row.kind === 'odoo') return odooRow(row.c);
+              const d = row.d;
+              const zone = admin.zoneForProvince(d.province, zones);
+              const group = admin.groupForDealerIn(settings, d.id);
+              const customer = d.odooPartnerId ? customerById.get(d.odooPartnerId) : undefined;
+              const seller = d.odooPartnerId ? salesperson(d.odooPartnerId) : null;
+              const editHref = href({ open: d.id });
+              return (
+                <TableRow key={d.id} data-state={params.open === d.id ? 'selected' : undefined}>
+                  <TableCell data-label="ร้าน / ลูกค้า" className="min-w-56 whitespace-normal">
+                    <Link href={editHref} scroll={false} className="flex items-center gap-2 hover:underline">
+                      <DealerAvatar name={d.name} avatarFile={d.avatarFile} size={28} />
+                      <span className="min-w-0">
+                        <span className="block font-medium">{d.name}</span>
+                        <span className="block text-xs text-muted-foreground">{d.province} · โซน {zone.name}{group ? ` · กลุ่ม ${group.name}` : ''}</span>
+                      </span>
+                    </Link>
+                  </TableCell>
+                  <TableCell data-label="สถานะ">
+                    <span className="flex flex-wrap gap-1">
+                      <Badge variant="outline" className={cn('border-transparent', STATUS_CLASS[d.status as Status])}>{STATUS[d.status as Status]}</Badge>
+                      {d.creditEnabled && <Badge variant="outline" className="border-transparent bg-sky-500/15 text-sky-700">เครดิต</Badge>}
+                      {d.odooPartnerId ? <OdooKindBadge kind={kindOf(d.odooPartnerId)} /> : <Badge variant="outline" className="border-dashed text-muted-foreground">ยังไม่ผูก Odoo</Badge>}
+                    </span>
+                  </TableCell>
+                  <TableCell data-label="ระดับ"><TierShield tier={d.tier as DealerTier} withLabel /></TableCell>
+                  <TableCell data-label="กลุ่มราคา Odoo">{customer ? <PricelistBadge customer={customer} /> : <span className="text-xs text-muted-foreground">{d.odooPartnerId ? `Odoo #${d.odooPartnerId}` : 'ยังไม่ผูก Odoo'}</span>}</TableCell>
+                  <TableCell data-label="เครดิตเว็บ">{d.creditEnabled ? <CreditUsage limit={d.creditLimit == null ? null : Number(d.creditLimit)} used={creditUsed(d)} /> : <span className="text-xs text-muted-foreground">—</span>}</TableCell>
+                  <TableCell data-label="เครดิต Odoo">{customer ? <OdooCredit customer={customer} /> : <span className="text-xs text-muted-foreground">—</span>}</TableCell>
+                  <TableCell data-label="เซลล์">
+                    {seller ? <span className="text-xs">{seller}</span>
+                      : d.odooPartnerId ? <Badge variant="outline" className="border-transparent bg-amber-500/15 text-amber-700">ยังไม่ตั้งเซลล์</Badge>
+                      : <span className="text-xs text-muted-foreground">—</span>}
+                  </TableCell>
+                  <TableCell data-label="ผู้ใช้" className="text-right">{d.users.length}</TableCell>
+                  <TableCell data-label="">
+                    <span className="flex justify-end gap-1">
+                      <IconLink href={editHref} label={canEdit ? 'แก้ไข' : 'ดูรายละเอียด'}>{canEdit ? <Pencil /> : <Eye />}</IconLink>
+                      <form action={openAsDealerAction}><input type="hidden" name="dealerId" value={d.id} /><IconSubmit label="เปิดมุมมองดีลเลอร์"><Store /></IconSubmit></form>
+                    </span>
+                  </TableCell>
+                </TableRow>
+              );
+            })}
+          </TableBody>
+        </Table>
+      </TableCard>
+      <ListPagination page={pageRows} href={(n) => href({ page: String(n) })} unit={`ราย (ดีลเลอร์ ${dealers.length}${odoo.data ? ` · ลูกค้า Odoo ยังไม่มีบัญชีเว็บ ${odooRows.length}` : ''})`} />
 
       {params.new && canEdit && (
-        <details open className="rounded-xl border border-primary/40 bg-card">
-          <summary className="cursor-pointer p-3 text-sm font-semibold">เพิ่มดีลเลอร์ใหม่</summary>
-          <DealerForm action={createDealerAction} partners={partners} zones={zones} groups={groups} />
-        </details>
+        <UrlDrawer key={`new-${params.partner ?? ''}`} title={prefill ? `สร้างดีลเลอร์จากลูกค้า Odoo` : 'เพิ่มดีลเลอร์ใหม่'} description={prefill?.name} closeHref={closeHref}>
+          {notice}
+          <DealerForm action={createDealerAction} prefill={prefill} partners={partners} zones={zones} groups={groups} />
+        </UrlDrawer>
       )}
 
-      {dealers.length === 0 && <p className="rounded-xl border border-dashed border-border p-6 text-center text-sm text-muted-foreground">ยังไม่มีดีลเลอร์{status ? `สถานะ${STATUS[status]}` : ''} · ใบสมัครใหม่อยู่ที่เมนู “ใบสมัครดีลเลอร์”</p>}
+      {openDealer && (() => {
+        const d = openDealer;
+        const zone = admin.zoneForProvince(d.province, zones);
+        const book = admin.findBookIn(settings, zone.id, d.tier as DealerTier);
+        const group = admin.groupForDealerIn(settings, d.id);
+        const customer = d.odooPartnerId ? customerById.get(d.odooPartnerId) : undefined;
+        return (
+          <UrlDrawer
+            key={d.id}
+            title={<span className="flex items-center gap-2"><DealerAvatar name={d.name} avatarFile={d.avatarFile} size={28} />{d.name}</span>}
+            description={`${d.province} · โซน ${zone.name} · ${d.types.map((t) => DEALER_TYPE_LABELS[t as DealerType]).join(', ')}${d.odooPartnerId ? ` · Odoo: ${customer?.name ?? partnerName(d.odooPartnerId) ?? `#${d.odooPartnerId}`}` : ' · ยังไม่ผูก Odoo'}`}
+            closeHref={closeHref}
+          >
+            {notice}
+            <div className="flex flex-wrap items-center gap-2">
+              <Badge variant="outline" className={cn('border-transparent', STATUS_CLASS[d.status as Status])}>{STATUS[d.status as Status]}</Badge>
+              <TierShield tier={d.tier as DealerTier} withLabel />
+              {d.creditEnabled && <CreditUsage limit={d.creditLimit == null ? null : Number(d.creditLimit)} used={creditUsed(d)} />}
+              <form action={openAsDealerAction} className="ml-auto"><input type="hidden" name="dealerId" value={d.id} /><Button type="submit" size="sm" variant="outline">เปิดมุมมองดีลเลอร์</Button></form>
+            </div>
 
-      <div className="space-y-2">
-        {dealers.map((d) => {
-          const zone = admin.zoneForProvince(d.province, zones);
-          const book = admin.findBookIn(settings, zone.id, d.tier as DealerTier);
-          const group = admin.groupForDealerIn(settings, d.id);
-          const open = params.open === d.id;
-          return (
-            <details key={d.id} open={open} id={`dealer-${d.id}`} className="rounded-xl border border-border bg-card">
-              <summary className="flex cursor-pointer flex-wrap items-center gap-3 p-3 text-sm">
-                <DealerAvatar name={d.name} avatarFile={d.avatarFile} size={32} />
-                <span className="font-medium">{d.name}</span>
-                <TierShield tier={d.tier as DealerTier} withLabel />
-                <Badge variant="outline" className={cn('border-transparent', STATUS_CLASS[d.status as Status])}>{STATUS[d.status as Status]}</Badge>
-                {d.creditEnabled && <Badge variant="outline" className="border-transparent bg-sky-500/15 text-sky-700">ลูกค้าเครดิต</Badge>}
-                {d.creditEnabled && <CreditUsage limit={d.creditLimit == null ? null : Number(d.creditLimit)} used={creditUsed(d)} />}
-                {group && <Badge variant="outline">กลุ่ม {group.name}</Badge>}
-                <span className="text-xs text-muted-foreground">{d.province} · โซน {zone.name} · {d.types.map((t) => DEALER_TYPE_LABELS[t as DealerType]).join(', ')}</span>
-                <span className="text-xs text-muted-foreground">{d.users.length} ผู้ใช้{d.odooPartnerId ? ` · Odoo: ${partnerName(d.odooPartnerId) ?? `#${d.odooPartnerId}`}` : ' · ยังไม่ผูก Odoo'}</span>
-                {d.odooPartnerId && (salesperson(d.odooPartnerId)
-                  ? <span className="text-xs text-muted-foreground">เซลล์: {salesperson(d.odooPartnerId)}</span>
-                  : <Badge variant="outline" className="border-transparent bg-amber-500/15 text-amber-700">ยังไม่ตั้งเซลล์ใน Odoo</Badge>)}
-                {open && params.saved && <span className="text-xs text-emerald-600">บันทึกแล้ว</span>}
-                <form action={openAsDealerAction} className="ml-auto"><input type="hidden" name="dealerId" value={d.id} /><Button type="submit" size="sm" variant="outline">เปิดมุมมองดีลเลอร์</Button></form>
-              </summary>
-              <div className="space-y-4 border-t border-border p-3">
-                {canEdit ? <DealerForm action={updateDealerAction} dealer={d} creditUsed={creditUsed(d)} partners={partners} zones={zones} groups={groups} groupId={group?.id} /> : <p className="text-xs text-muted-foreground">เฉพาะแอดมินแก้ไขข้อมูลร้านได้</p>}
-                <p className="text-xs text-muted-foreground">ราคาที่ร้านเห็น: {book?.status === 'PUBLISHED' ? `ตารางราคาเว็บ ${zone.name} / ${d.tier}` : `pricelist ของลูกค้าใน Odoo (ยังไม่มีตารางเว็บเผยแพร่สำหรับโซน ${zone.name} / ${d.tier})`}</p>
+            <section className="space-y-2">
+              <h2 className="text-sm font-semibold">ข้อมูลร้าน</h2>
+              {canEdit ? <DealerForm action={updateDealerAction} dealer={d} creditUsed={creditUsed(d)} partners={partners} zones={zones} groups={groups} groupId={group?.id} /> : <p className="text-xs text-muted-foreground">เฉพาะแอดมินแก้ไขข้อมูลร้านได้</p>}
+              <p className="text-xs text-muted-foreground">ราคาที่ร้านเห็น: {book?.status === 'PUBLISHED' ? `ตารางราคาเว็บ ${zone.name} / ${d.tier}` : `pricelist ของลูกค้าใน Odoo (ยังไม่มีตารางเว็บเผยแพร่สำหรับโซน ${zone.name} / ${d.tier})`}</p>
+            </section>
 
-                <div className="rounded-lg border border-border">
-                  <p className="border-b border-border px-3 py-2 text-sm font-semibold">บัญชีเข้าสู่ระบบของร้าน</p>
-                  {d.users.length === 0 && <p className="px-3 py-2 text-xs text-muted-foreground">ยังไม่มีบัญชี ร้านยังเข้าสู่ระบบไม่ได้</p>}
-                  <ul className="divide-y divide-border text-sm">
-                    {d.users.map((u) => (
-                      <li key={u.id} className="flex flex-wrap items-center gap-2 px-3 py-2">
-                        <span className={cn('font-medium', !u.isActive && 'line-through text-muted-foreground')}>{u.name}</span>
-                        <span className="text-xs text-muted-foreground">{u.email} · {ROLE_LABELS[u.role as Role]}{u.mustChangePassword && ' · รอตั้งรหัสใหม่'}{u.lastLoginAt && ` · เข้าล่าสุด ${u.lastLoginAt.toLocaleDateString('th-TH')}`}</span>
-                        {canEdit && (
-                          <span className="ml-auto flex items-center gap-2">
-                            <ResetPasswordButton action={resetPasswordAction} userId={u.id} />
-                            <form action={toggleUserActiveAction}><input type="hidden" name="userId" value={u.id} /><input type="hidden" name="back" value={`/admin/dealers?open=${d.id}`} /><Button type="submit" size="xs" variant="ghost">{u.isActive ? 'ปิดใช้งาน' : 'เปิดใช้งาน'}</Button></form>
-                          </span>
-                        )}
-                      </li>
-                    ))}
-                  </ul>
-                  {canEdit && <div className="border-t border-border p-3"><CreateUserForm action={createDealerUserAction} hidden={{ dealerId: d.id }} roles={DEALER_ROLES} /></div>}
-                </div>
-              </div>
-            </details>
-          );
-        })}
-      </div>
+            {d.odooPartnerId && (
+              <section className="space-y-2 rounded-lg border border-border p-3">
+                <h2 className="text-sm font-semibold">ลูกค้าใน Odoo · กลุ่มราคา / วงเงิน / การจัดส่ง</h2>
+                {customer && odoo.data
+                  ? <OdooCustomerPanel customer={customer} odoo={odoo.data} canEdit={canEdit} writable={writable} dealerId={d.id} />
+                  : <p className="text-xs text-muted-foreground">{odoo.data ? <OdooKindNote partnerId={d.odooPartnerId} kind={kindOf(d.odooPartnerId)} /> : 'เชื่อมต่อ Odoo ไม่ได้ในขณะนี้'}</p>}
+              </section>
+            )}
+
+            <section className="rounded-lg border border-border">
+              <h2 className="border-b border-border px-3 py-2 text-sm font-semibold">บัญชีเข้าสู่ระบบของร้าน</h2>
+              {d.users.length === 0 && <p className="px-3 py-2 text-xs text-muted-foreground">ยังไม่มีบัญชี ร้านยังเข้าสู่ระบบไม่ได้</p>}
+              <ul className="divide-y divide-border text-sm">
+                {d.users.map((u) => (
+                  <li key={u.id} className="flex flex-wrap items-center gap-2 px-3 py-2">
+                    <span className={cn('font-medium', !u.isActive && 'line-through text-muted-foreground')}>{u.name}</span>
+                    <span className="text-xs text-muted-foreground">{u.email} · {ROLE_LABELS[u.role as Role]}{u.mustChangePassword && ' · รอตั้งรหัสใหม่'}{u.lastLoginAt && ` · เข้าล่าสุด ${u.lastLoginAt.toLocaleDateString('th-TH')}`}</span>
+                    {canEdit && (
+                      <span className="ml-auto flex items-center gap-2">
+                        <ResetPasswordButton action={resetPasswordAction} userId={u.id} />
+                        <form action={toggleUserActiveAction}><input type="hidden" name="userId" value={u.id} /><input type="hidden" name="back" value={`/admin/dealers?open=${d.id}`} /><Button type="submit" size="xs" variant="ghost">{u.isActive ? 'ปิดใช้งาน' : 'เปิดใช้งาน'}</Button></form>
+                      </span>
+                    )}
+                  </li>
+                ))}
+              </ul>
+              {canEdit && <div className="border-t border-border p-3"><CreateUserForm action={createDealerUserAction} hidden={{ dealerId: d.id }} roles={DEALER_ROLES} /></div>}
+            </section>
+          </UrlDrawer>
+        );
+      })()}
+
+      {openCustomer && odoo.data && (
+        <UrlDrawer key={`odoo-${openCustomer.id}`} title={openCustomer.name} description={`ลูกค้า Odoo #${openCustomer.id} · ยังไม่มีบัญชีเว็บ${openCustomer.salesperson ? ` · เซลล์: ${openCustomer.salesperson}` : ''}`} closeHref={closeHref}>
+          {notice}
+          <div className="flex flex-wrap items-center gap-2">
+            <PricelistBadge customer={openCustomer} />
+            <OdooCredit customer={openCustomer} />
+            {canEdit && <Button size="sm" variant="outline" className="ml-auto" nativeButton={false} render={<Link href={href({ new: '1', partner: String(openCustomer.id) })} scroll={false} />}><UserPlus /> สร้างเป็นดีลเลอร์บนเว็บ</Button>}
+          </div>
+          <OdooCustomerPanel customer={openCustomer} odoo={odoo.data} canEdit={canEdit} writable={writable} />
+          <p className="text-xs text-muted-foreground">ลูกค้ารายนี้เข้าเว็บเองได้ด้วยอีเมล/รหัส Odoo portal หรือหน้า /activate (ระบบสร้างดีลเลอร์ให้อัตโนมัติ) · หรือกด “สร้างเป็นดีลเลอร์บนเว็บ” เพื่อตั้งประเภท/ระดับ/บัญชีเข้าสู่ระบบเอง</p>
+        </UrlDrawer>
+      )}
+    </div>
+  );
+}
+
+const KIND_BADGE: Record<OdooPartnerKind['kind'], { label: string; className: string; title: string }> = {
+  customer: { label: 'ลูกค้า Odoo', className: 'bg-violet-500/15 text-violet-700', title: 'Customer ระดับบริษัทใน Odoo (customer_rank > 0) · ตั้งกลุ่มราคา/วงเงิน/การจัดส่งได้' },
+  contact: { label: 'Contact Odoo', className: 'bg-amber-500/15 text-amber-800', title: 'Contact ใน Odoo ที่ยังไม่เป็น Customer หรือเป็นผู้ติดต่อใต้บริษัท' },
+  archived: { label: 'Odoo ถูกเก็บถาวร', className: 'bg-destructive/15 text-destructive', title: 'Partner นี้ถูก Archive ใน Odoo' },
+  missing: { label: 'ไม่พบใน Odoo', className: 'bg-destructive/15 text-destructive', title: 'ไม่พบ Partner id นี้ใน Odoo' },
+};
+
+/** Whether the linked Odoo partner is a company customer or only a contact (or archived / missing). Null = unknown (Odoo down). */
+function OdooKindBadge({ kind }: { kind: OdooPartnerKind | null }) {
+  if (!kind) return <Badge variant="outline" className="text-muted-foreground">Odoo</Badge>;
+  const badge = KIND_BADGE[kind.kind];
+  const title = kind.kind === 'contact' && kind.parent ? `${badge.title} · อยู่ใต้ ${kind.parent.name}` : badge.title;
+  return <Badge variant="outline" className={cn('border-transparent', badge.className)} title={title}>{badge.label}</Badge>;
+}
+
+/** Drawer note for a linked partner that cannot be priced here, saying why and what to do. */
+function OdooKindNote({ partnerId, kind }: { partnerId: number; kind: OdooPartnerKind | null }) {
+  if (kind?.kind === 'contact') {
+    return kind.parent
+      ? <>Odoo #{partnerId} เป็น Contact ใต้ “{kind.parent.name}” ราคา/วงเงินใช้ของบริษัทนั้น · ผูกร้านกับบริษัทแทนเพื่อตั้งค่าที่นี่</>
+      : <>Odoo #{partnerId} เป็น Contact ที่ยังไม่เป็น Customer (ยังไม่เคยขาย) · จะกลายเป็นลูกค้าเมื่อมีใบสั่งขายแรก แล้วตั้งกลุ่มราคา/วงเงินที่นี่ได้</>;
+  }
+  if (kind?.kind === 'archived') return <>Odoo #{partnerId} ถูกเก็บถาวร (Archive) ใน Odoo · เปิดใช้งานใน Odoo หรือผูกร้านกับลูกค้ารายอื่น</>;
+  return <>ไม่พบ Odoo #{partnerId} · ตรวจการผูกลูกค้าในฟอร์มด้านบน</>;
+}
+
+/** Odoo pricelist (price group) of the customer, or a warning badge when none is set. */
+function PricelistBadge({ customer }: { customer: OdooCustomer }) {
+  return customer.pricelist
+    ? <Badge variant="outline">{customer.pricelist.name}</Badge>
+    : <Badge variant="outline" className="border-transparent bg-amber-500/15 text-amber-700">ยังไม่ตั้งกลุ่มราคา</Badge>;
+}
+
+/** Odoo credit limit vs. receivable in a row header. */
+function OdooCredit({ customer }: { customer: OdooCustomer }) {
+  const over = customer.creditLimit !== null && customer.receivable > customer.creditLimit;
+  return (
+    <span className={cn('text-xs', over ? 'font-medium text-destructive' : 'text-muted-foreground')}>
+      Odoo: {customer.creditLimit === null ? 'ไม่จำกัดวงเงิน' : `วงเงิน ${baht(customer.creditLimit)}`} · ค้างชำระ {baht(customer.receivable)}{over ? ' · เกินวงเงิน' : ''}
+    </span>
+  );
+}
+
+/** Odoo contact details plus the pricelist / credit limit / delivery method form (written to res.partner). */
+function OdooCustomerPanel({ customer: c, odoo, canEdit, writable, dealerId }: { customer: OdooCustomer; odoo: OdooData; canEdit: boolean; writable: boolean; dealerId?: string }) {
+  const { pricelists, carriers, defaultCarrier } = odoo;
+  return (
+    <div className="space-y-3">
+      <p className="text-xs text-muted-foreground">
+        {[c.vat && `เลขภาษี ${c.vat}`, c.phone && `โทร ${c.phone}`, c.email].filter(Boolean).join(' · ') || 'ไม่มีข้อมูลติดต่อใน Odoo'} · Odoo #{c.id}
+        {' · '}ส่ง: {c.carrier?.name ?? `ค่าเริ่มต้น${defaultCarrier ? ` (${defaultCarrier.name})` : ''}`}
+      </p>
+      {canEdit ? (
+        <form action={updateOdooCustomerAction} className="grid gap-3 sm:grid-cols-3 sm:items-end">
+          <input type="hidden" name="partnerId" value={c.id} />
+          {dealerId && <input type="hidden" name="dealerId" value={dealerId} />}
+          <label className="text-xs font-medium">กลุ่มราคา (Pricelist)
+            <select name="pricelistId" defaultValue={c.pricelist?.id ?? ''} required disabled={!writable} className={field}>
+              <option value="" disabled>เลือกกลุ่มราคา</option>
+              {pricelists.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+            </select>
+          </label>
+          <label className="text-xs font-medium">วงเงินเครดิต Odoo (บาท)
+            <input name="creditLimit" inputMode="decimal" defaultValue={c.creditLimit ?? ''} placeholder="ว่าง = ไม่จำกัด" disabled={!writable} className={field} />
+          </label>
+          <label className="text-xs font-medium">การจัดส่ง
+            <select name="carrierId" defaultValue={c.carrier?.id ?? ''} disabled={!writable} className={field}>
+              <option value="">ค่าเริ่มต้น{defaultCarrier ? ` (${defaultCarrier.name})` : ''}</option>
+              {c.carrier && !carriers.some((k) => k.id === c.carrier!.id) && <option value={c.carrier.id}>{c.carrier.name} (ปิดใช้งานแล้ว · ใช้ค่าเริ่มต้นแทน)</option>}
+              {carriers.map((k) => <option key={k.id} value={k.id}>{k.name}</option>)}
+            </select>
+          </label>
+          <div className="sm:col-span-3"><Button type="submit" size="sm" disabled={!writable}>บันทึกลง Odoo</Button></div>
+          <p className="text-xs text-muted-foreground sm:col-span-3">ราคาบนเว็บใช้ pricelist นี้ (ยกเว้นโซน/ระดับที่มีตารางราคาเว็บเผยแพร่แล้ว) · วงเงินนี้คือ Credit Limit ใน Odoo ตอนสั่งเครดิตบนเว็บต้องผ่านทั้งวงเงิน Odoo และวงเงินเว็บ · ดีลเลอร์เลือกการจัดส่งเองไม่ได้ ออเดอร์ใช้การจัดส่งที่ตั้งที่นี่ (Delivery Method ของลูกค้าใน Odoo)</p>
+        </form>
+      ) : <p className="text-xs text-muted-foreground">เฉพาะแอดมินแก้กลุ่มราคาและวงเงินได้</p>}
     </div>
   );
 }
@@ -134,16 +427,17 @@ function CreditUsage({ limit, used }: { limit: number | null; used: number }) {
 
 type Partner = Awaited<ReturnType<typeof getPartners>>[number];
 type DealerRow = Awaited<ReturnType<typeof listDealers>>[number];
+/** Starting values for a new dealer created from an Odoo customer. */
+type DealerPrefill = { name: string; province: string; phone: string | null; taxId: string | null; odooPartnerId: number };
 
 /** Shared create/edit form. Province list is static so it works when Odoo is down. */
-function DealerForm({ action, dealer, creditUsed, partners, zones, groups, groupId }: { action: (formData: FormData) => Promise<void>; dealer?: DealerRow; creditUsed?: number; partners: Partner[]; zones: PriceZone[]; groups: CustomerGroup[]; groupId?: string }) {
-  const field = 'h-9 w-full rounded-lg border border-border bg-background px-2 text-sm';
+function DealerForm({ action, dealer, prefill, creditUsed, partners, zones, groups, groupId }: { action: (formData: FormData) => Promise<void>; dealer?: DealerRow; prefill?: DealerPrefill; creditUsed?: number; partners: Partner[]; zones: PriceZone[]; groups: CustomerGroup[]; groupId?: string }) {
   return (
     <form action={action} className="grid gap-3 md:grid-cols-2">
       {dealer && <input type="hidden" name="dealerId" value={dealer.id} />}
-      <label className="text-xs font-medium">ชื่อร้าน<input name="name" defaultValue={dealer?.name} required maxLength={120} className={field} /></label>
+      <label className="text-xs font-medium">ชื่อร้าน<input name="name" defaultValue={dealer?.name ?? prefill?.name} required maxLength={120} className={field} /></label>
       <label className="text-xs font-medium">จังหวัด
-        <select name="province" defaultValue={dealer?.province ?? ''} required className={field}>
+        <select name="province" defaultValue={dealer?.province ?? prefill?.province ?? ''} required className={field}>
           <option value="" disabled>เลือกจังหวัด</option>
           {PROVINCES.map((p) => <option key={p} value={p}>{p}{zones.find((z) => z.provinces.includes(p)) ? ` · โซน ${zones.find((z) => z.provinces.includes(p))!.name}` : ''}</option>)}
         </select>
@@ -168,26 +462,27 @@ function DealerForm({ action, dealer, creditUsed, partners, zones, groups, group
         <select name="status" defaultValue={dealer?.status ?? 'ACTIVE'} className={field}>{(Object.keys(STATUS) as Status[]).map((s) => <option key={s} value={s}>{STATUS[s]}</option>)}</select>
       </label>
       <label className="text-xs font-medium md:col-span-2">ลูกค้าใน Odoo (res.partner)
-        <select name="odooPartnerId" defaultValue={dealer?.odooPartnerId ?? ''} className={field}>
+        <select name="odooPartnerId" defaultValue={dealer?.odooPartnerId ?? prefill?.odooPartnerId ?? ''} className={field}>
           <option value="">ยังไม่ผูก (ใช้ pricelist เริ่มต้น)</option>
           {partners.map((p) => <option key={p.id} value={p.id}>{p.name}{p.state_id ? ` · ${p.state_id[1].replace(/\s*\(TH\)$/, '').replace(/^จังหวัด/, '')}` : ''}{p.property_product_pricelist ? ` · ${p.property_product_pricelist[1]}` : ''}</option>)}
         </select>
+        {dealer?.odooPartnerId && <span className="font-normal text-muted-foreground">กลุ่มราคา / วงเงินเครดิต / การจัดส่งใน Odoo ตั้งที่กล่อง “ลูกค้าใน Odoo” ด้านล่าง</span>}
       </label>
       <label className="flex items-start gap-2 rounded-lg border border-border p-2 text-xs md:col-span-2 has-[:checked]:border-primary has-[:checked]:bg-primary/5">
         <input type="checkbox" name="creditEnabled" defaultChecked={dealer?.creditEnabled ?? false} className="mt-0.5" />
         <span><span className="font-medium">ลูกค้าเครดิต</span><span className="block text-muted-foreground">สั่งแบบเครดิตได้โดยไม่ต้องแนบสลิป · ถ้าเลือกจ่ายเงินสด ได้ส่วนต่างราคาเครดิต−เงินสดเป็นส่วนลดท้ายบิล (ตั้งคู่ราคาที่หน้าตารางราคา)</span></span>
       </label>
-      <label className="text-xs font-medium">วงเงินเครดิต (บาท)
+      <label className="text-xs font-medium">วงเงินเครดิตเว็บ (บาท)
         <input name="creditLimit" inputMode="decimal" defaultValue={dealer?.creditLimit ?? ''} placeholder="ว่าง = ไม่จำกัด" className={field} />
-        <span className="font-normal text-muted-foreground">สั่งเครดิตจะตัดวงเงินทันที · คืนเมื่อออเดอร์เป็น “ชำระแล้ว” หรือถูกยกเลิก · ถ้าตั้ง Credit Limit ใน Odoo ด้วย ต้องผ่านทั้งสองที่</span>
+        <span className="font-normal text-muted-foreground">สั่งเครดิตจะตัดวงเงินทันที · คืนเมื่อออเดอร์เป็น “ชำระแล้ว” หรือถูกยกเลิก · บันทึกแล้วส่งเป็น Credit Limit ของลูกค้าใน Odoo ด้วย (ต้องผูกลูกค้า Odoo และเปิดการเขียน Odoo)</span>
       </label>
       <label className="text-xs font-medium">ยอดค้างยกมา (บาท)
         <input name="creditOpening" inputMode="decimal" defaultValue={dealer ? Number(dealer.creditOpening) || '' : ''} placeholder="0" className={field} />
         <span className="font-normal text-muted-foreground">หนี้ก่อนใช้เว็บ นับเป็นยอดใช้ไปแล้ว · ร้านจ่ายแล้วให้ลดยอดนี้ลง{creditUsed !== undefined ? ` · ใช้อยู่ตอนนี้ ${baht(creditUsed)} (รวมยอดยกมา)` : ''}</span>
       </label>
-      <label className="text-xs font-medium">โทร<input name="phone" defaultValue={dealer?.phone ?? ''} maxLength={30} className={field} /></label>
+      <label className="text-xs font-medium">โทร<input name="phone" defaultValue={dealer?.phone ?? prefill?.phone ?? ''} maxLength={30} className={field} /></label>
       <label className="text-xs font-medium">LINE ID<input name="lineId" defaultValue={dealer?.lineId ?? ''} maxLength={60} className={field} /></label>
-      <label className="text-xs font-medium">เลขผู้เสียภาษี<input name="taxId" defaultValue={dealer?.taxId ?? ''} maxLength={20} className={field} /></label>
+      <label className="text-xs font-medium">เลขผู้เสียภาษี<input name="taxId" defaultValue={dealer?.taxId ?? prefill?.taxId ?? ''} maxLength={20} className={field} /></label>
       <label className="text-xs font-medium">ที่อยู่จัดส่ง<input name="address" defaultValue={dealer?.address ?? ''} maxLength={300} className={field} /></label>
       <label className="text-xs font-medium md:col-span-2">หมายเหตุภายใน<input name="notes" defaultValue={dealer?.notes ?? ''} maxLength={500} className={field} /></label>
       <div className="md:col-span-2"><Button type="submit" size="sm">{dealer ? 'บันทึก' : 'สร้างดีลเลอร์'}</Button></div>

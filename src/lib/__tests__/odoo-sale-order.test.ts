@@ -4,7 +4,7 @@ import type { ProtoOrder } from '@/lib/shop/types';
 const rpc = vi.hoisted(() => ({ odooSearchRead: vi.fn(), odooWrite: vi.fn(), odooRead: vi.fn() }));
 vi.mock('@/lib/odoo/rpc', () => rpc);
 
-const { buildOrderLines, buildOrderNote, pushOrderToOdoo, salespersonFor, totalsMatch } = await import('@/lib/odoo/sale-order');
+const { buildOrderLines, buildOrderNote, carrierIdFor, pushOrderToOdoo, salespersonFor, totalsMatch } = await import('@/lib/odoo/sale-order');
 
 /** WEB-20261028-007 as stored by the shop. */
 function sampleOrder(overrides: Partial<ProtoOrder> = {}): ProtoOrder {
@@ -16,7 +16,7 @@ function sampleOrder(overrides: Partial<ProtoOrder> = {}): ProtoOrder {
       { productId: 533, name: 'ยางใน 2.00-17', code: 'EN0501', size: '2.00-17', qty: 60, unitPrice: 36, cashDiscountPerUnit: 0, unitId: 35, unitName: 'กระสอบ 60', unitQty: 1 },
     ],
     paymentMethod: 'CASH', subtotal: 5990.2, cashDiscount: 0, couponDiscount: 0, total: 5990.2,
-    address: '288 ตำบลในคลองบางปลากด', carrier: 'รถบริษัท', note: '', trackingRef: null,
+    address: '288 ตำบลในคลองบางปลากด', carrier: 'รถบริษัท', carrierId: 1, note: '', trackingRef: null,
     payment: { slipFile: 's.png', slipUploadedAt: '2026-10-28T07:13:23Z', verifiedAt: '2026-10-28T07:15:02Z' },
     createdAt: '2026-10-28T06:48:58Z', events: [],
     ...overrides,
@@ -54,7 +54,7 @@ describe('buildOrderNote', () => {
     const note = buildOrderNote(sampleOrder({ note: 'ส่งช่วงเช้า', cashDiscount: 12.5 }));
     expect(note).toContain('WEB-20261028-007');
     expect(note).toContain('รวมส่วนลดเงินสด 12.50 บาท');
-    expect(note).toContain('ขนส่ง: รถบริษัท');
+    expect(note).toContain('การจัดส่ง: รถบริษัท');
     expect(note).toContain('หมายเหตุ: ส่งช่วงเช้า');
     expect(note).not.toContain('เลขที่ใบสั่งซื้อ');
   });
@@ -80,7 +80,7 @@ describe('pushOrderToOdoo', () => {
 
     const [, , createArgs] = rpc.odooWrite.mock.calls[0];
     expect(rpc.odooWrite.mock.calls[0].slice(0, 2)).toEqual(['sale.order', 'create']);
-    expect(createArgs[0][0]).toMatchObject({ partner_id: 900, user_id: 12, client_order_ref: 'WEB-20261028-007', origin: 'Web' });
+    expect(createArgs[0][0]).toMatchObject({ partner_id: 900, user_id: 12, client_order_ref: 'WEB-20261028-007', origin: 'Web', carrier_id: 1 });
     expect(createArgs[0][0].order_line).toHaveLength(3);
     expect(rpc.odooWrite.mock.calls[1]).toEqual(['sale.order', 'action_confirm', [[77]]]);
     expect(result).toMatchObject({ status: 'SYNCED', saleOrderId: 77, saleOrderName: 'S00077', amountTotal: 5990.2 });
@@ -135,6 +135,23 @@ describe('pushOrderToOdoo', () => {
   it('flags MISMATCH when the Odoo total differs from the web total', async () => {
     rpc.odooSearchRead.mockResolvedValueOnce([{ id: 77, name: 'S00077', state: 'sale', amount_total: 6409.51 }]);
     expect((await pushOrderToOdoo(sampleOrder(), 900)).status).toBe('MISMATCH');
+  });
+});
+
+describe('carrierIdFor', () => {
+  beforeEach(() => vi.resetAllMocks());
+
+  it('uses the stored delivery method id without asking Odoo', async () => {
+    expect(await carrierIdFor({ carrier: 'รถบริษัท', carrierId: 5 })).toBe(5);
+    expect(rpc.odooSearchRead).not.toHaveBeenCalled();
+  });
+
+  it('looks older orders up by name, and sends none when the name is gone', async () => {
+    rpc.odooSearchRead.mockResolvedValueOnce([{ id: 437, name: 'เก็บค่าขนส่งปลายทาง', sequence: 10, active: true, is_published: true, product_id: [9, 'ค่าขนส่ง'] }]);
+    expect(await carrierIdFor({ carrier: 'เก็บค่าขนส่งปลายทาง', carrierId: null })).toBe(437);
+    expect(rpc.odooSearchRead.mock.calls[0].slice(0, 2)).toEqual(['delivery.carrier', [['name', '=', 'เก็บค่าขนส่งปลายทาง']]]);
+    rpc.odooSearchRead.mockResolvedValueOnce([]);
+    expect(await carrierIdFor({ carrier: 'ขนส่งที่ถูกลบ' })).toBeNull();
   });
 });
 

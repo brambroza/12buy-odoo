@@ -128,7 +128,7 @@ export default async function OrderDetailPage({ params, searchParams }: { params
       <section className="rounded-xl border border-border bg-card p-4 text-sm">
         <h2 className="mb-1 font-semibold">จัดส่ง</h2>
         <p className="whitespace-pre-line text-muted-foreground">{order.address}</p>
-        <p className="mt-1">ขนส่ง: {order.carrier}</p>
+        <p className="mt-1">การจัดส่ง: {order.carrier}</p>
         {order.poRef && <p className="mt-1">เลขที่ใบสั่งซื้อของร้าน: {order.poRef}</p>}
         {order.note && <p className="mt-1 text-muted-foreground">หมายเหตุ: {order.note}</p>}
       </section>

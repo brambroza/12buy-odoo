@@ -4,6 +4,7 @@
  */
 import type { OdooSync, ProtoOrder } from '@/lib/shop/types';
 import { PAYMENT_METHOD_LABELS } from '@/lib/shop/types';
+import { findCarrierByName } from './delivery-carrier';
 import { applyCouponToOrder } from './loyalty';
 import { odooSearchRead, odooWrite } from './rpc';
 
@@ -47,14 +48,14 @@ export function buildOrderLines(order: Pick<ProtoOrder, 'lines' | 'paymentMethod
   });
 }
 
-/** Free-text note on the SO: payment, carrier, delivery address and the dealer's remark. */
+/** Free-text note on the SO: payment, delivery method, delivery address and the dealer's remark. */
 export function buildOrderNote(order: ProtoOrder): string {
   return [
     `ออเดอร์เว็บ ${order.ref}`,
     `ชำระ: ${PAYMENT_METHOD_LABELS[order.paymentMethod]}${order.cashDiscount > 0 ? ` (รวมส่วนลดเงินสด ${order.cashDiscount.toFixed(2)} บาทในราคาแล้ว)` : ''}`,
     order.coupon ? `คูปอง: ${order.coupon.code} (${order.coupon.programName}) เว็บคำนวณส่วนลด ${order.couponDiscount.toFixed(2)} บาท` : '',
     order.poRef ? `เลขที่ใบสั่งซื้อของร้าน: ${order.poRef}` : '',
-    `ขนส่ง: ${order.carrier}`,
+    `การจัดส่ง: ${order.carrier}`,
     `ส่งที่: ${order.address}`,
     order.note ? `หมายเหตุ: ${order.note}` : '',
   ].filter(Boolean).join('\n');
@@ -63,6 +64,16 @@ export function buildOrderNote(order: ProtoOrder): string {
 /** Totals within 1 satang count as equal. */
 export function totalsMatch(odooTotal: number, webTotal: number): boolean {
   return Math.abs(odooTotal - webTotal) < 0.01;
+}
+
+/**
+ * Odoo delivery method for the SO: the stored id, else (orders from before the id was stored)
+ * the active method with the same name. None found: the SO goes without one and the note keeps the name.
+ */
+export async function carrierIdFor(order: Pick<ProtoOrder, 'carrier' | 'carrierId'>): Promise<number | null> {
+  if (order.carrierId) return order.carrierId;
+  if (!order.carrier) return null;
+  return (await findCarrierByName(order.carrier))?.id ?? null;
 }
 
 async function findByRef(ref: string): Promise<SaleOrderRead | null> {
@@ -85,12 +96,14 @@ export async function pushOrderToOdoo(order: ProtoOrder, partnerId: number): Pro
   let so = await findByRef(order.ref);
   if (!so) {
     const salesperson = await salespersonFor(partnerId);
+    const carrierId = await carrierIdFor(order);
     const created = await odooWrite<number | number[]>('sale.order', 'create', [[{
       partner_id: partnerId,
       user_id: salesperson,
       client_order_ref: order.ref,
       origin: 'Web',
       ...(order.odooPricelistId ? { pricelist_id: order.odooPricelistId } : {}),
+      ...(carrierId ? { carrier_id: carrierId } : {}),
       note: buildOrderNote(order),
       order_line: buildOrderLines(order).map((values) => [0, 0, values]),
     }]]);
