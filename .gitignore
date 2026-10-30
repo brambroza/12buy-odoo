@@ -1,8 +1,20 @@
 node_modules
 .next
-.env.local
 .env
+.env.local
+.env.*.local
 .DS_Store
+
+# Build output that changes on every build (TypeScript incremental state, Next's generated types)
+*.tsbuildinfo
+next-env.d.ts
+
+# Logs and local scratch
+*.log
+npm-debug.log*
+.scratch-*
+playwright-report/
+test-results/
 
 /archive
 
