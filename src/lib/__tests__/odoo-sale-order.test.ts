@@ -49,6 +49,39 @@ describe('buildOrderLines', () => {
   });
 });
 
+describe('cash discount as end-of-bill lines', () => {
+  const discount = { productId: 999, taxField: 'tax_ids' };
+  const lines = [
+    { productId: 1, name: 'a', code: 'a', size: null, qty: 4, unitPrice: 1000, cashDiscountPerUnit: 20, cashDiscountPercent: 2, taxIds: [5] },
+    { productId: 2, name: 'b', code: 'b', size: null, qty: 2, unitPrice: 500, cashDiscountPerUnit: 10, cashDiscountPercent: 2, taxIds: [5] },
+    { productId: 3, name: 'c', code: 'c', size: null, qty: 1, unitPrice: 300, cashDiscountPerUnit: 9, cashDiscountPercent: 3, taxIds: [6] },
+  ];
+
+  it('sends full prices plus one negative line per tax set', () => {
+    const out = buildOrderLines({ lines, paymentMethod: 'CASH', ref: 'WEB-1' }, discount);
+    expect(out.slice(0, 3).map((l) => l.price_unit)).toEqual([1000, 500, 300]);
+    expect(out.slice(3)).toEqual([
+      { product_id: 999, name: 'ส่วนลดเงินสด 2% (ออเดอร์เว็บ WEB-1)', product_uom_qty: 1, price_unit: -100, tax_ids: [[6, 0, [5]]] },
+      { product_id: 999, name: 'ส่วนลดเงินสด 3% (ออเดอร์เว็บ WEB-1)', product_uom_qty: 1, price_unit: -9, tax_ids: [[6, 0, [6]]] },
+    ]);
+    const sum = out.reduce((acc, l) => acc + (l.product_uom_qty as number) * (l.price_unit as number), 0);
+    expect(sum).toBe(5300 - 109);
+  });
+
+  it('adds no discount line on credit', () => {
+    expect(buildOrderLines({ lines, paymentMethod: 'CREDIT', ref: 'WEB-1' }, discount)).toHaveLength(3);
+  });
+
+  it('folds the discount into prices when a discounted line has no stored taxes (older orders)', () => {
+    const old = [{ ...lines[0], taxIds: undefined }];
+    expect(buildOrderLines({ lines: old, paymentMethod: 'CASH', ref: 'WEB-1' }, discount)).toEqual([{ product_id: 1, product_uom_qty: 4, price_unit: 980 }]);
+  });
+
+  it('says so in the note', () => {
+    expect(buildOrderNote(sampleOrder({ cashDiscount: 109 }), true)).toContain('ส่วนลดเงินสด 109.00 บาท เป็นบรรทัดท้ายบิล');
+  });
+});
+
 describe('buildOrderNote', () => {
   it('lists ref, payment, carrier, address and the dealer remark', () => {
     const note = buildOrderNote(sampleOrder({ note: 'ส่งช่วงเช้า', cashDiscount: 12.5 }));

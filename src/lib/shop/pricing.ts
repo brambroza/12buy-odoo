@@ -39,13 +39,47 @@ export function priceFromBook(catalog: Catalog, product: CatalogProduct, book: P
   return Math.round(base * (1 + percent / 100) * 100) / 100;
 }
 
+type CashProfile = Pick<DealerProfile, 'credit' | 'cashPercent' | 'typeCashPercents' | 'dealerCashPercents' | 'productCashDiscounts' | 'typePricelists'>;
+
+/** Where a cash discount comes from; `PAIR` = the credit/cash pricelist price difference. */
+export type CashRule = { kind: 'PERCENT' | 'BAHT'; value: number; source: 'DEALER' | 'PRODUCT' | 'PRICELIST' } | { kind: 'PAIR' };
+
 /**
- * Cash discount per base unit for a credit dealer who pays cash:
- * credit pricelist price − paired cash pricelist price (the family's own pricelist and its pair when one is set), never negative and never above the shown price.
- * Returns 0 for non-credit dealers or when no cash pricelist is paired.
+ * Cash discount rule for this product (credit dealers only; null for others), first match wins:
+ * the dealer's % for the family → the product's own discount (% or baht) → the % of the line's
+ * pricelist (the family's own pricelist, else the dealer's main one) → the pricelist pair.
+ */
+export function cashRuleOf(profile: CashProfile, product: Pick<CatalogProduct, 'dealerType' | 'tmplId'>): CashRule | null {
+  if (!profile.credit) return null;
+  const dealer = profile.dealerCashPercents?.[product.dealerType];
+  if (dealer !== undefined) return { kind: 'PERCENT', value: dealer, source: 'DEALER' };
+  const own = profile.productCashDiscounts?.[String(product.tmplId)];
+  if (own) return { ...own, source: 'PRODUCT' };
+  const pricelistPercent = typePricelistFor(profile, product) ? profile.typeCashPercents?.[product.dealerType] : profile.cashPercent ?? undefined;
+  if (pricelistPercent !== undefined && pricelistPercent !== null) return { kind: 'PERCENT', value: pricelistPercent, source: 'PRICELIST' };
+  return { kind: 'PAIR' };
+}
+
+/** Cash discount % for this product when its rule is a % (see `cashRuleOf`), else null (baht, pair or not a credit dealer). */
+export function cashPercentOf(profile: CashProfile, product: Pick<CatalogProduct, 'dealerType' | 'tmplId'>): number | null {
+  const rule = cashRuleOf(profile, product);
+  return rule?.kind === 'PERCENT' ? rule.value : null;
+}
+
+/**
+ * Cash discount per base unit for a credit dealer who pays cash, by `cashRuleOf`:
+ * a % of the shown price, a fixed baht amount, or credit pricelist price − paired cash pricelist price
+ * (the family's own pricelist and its pair when one is set).
+ * Never negative and never above the shown price. Returns 0 for non-credit dealers or when nothing is set.
  */
 export function cashDiscountPerUnit(catalog: Catalog, product: CatalogProduct, profile: DealerProfile, qty = 1, shownPrice?: number): number {
-  if (!profile.credit) return 0;
+  const rule = cashRuleOf(profile, product);
+  if (!rule) return 0;
+  if (rule.kind !== 'PAIR') {
+    const price = shownPrice ?? resolvePrice(catalog, product, profile, qty);
+    const off = rule.kind === 'PERCENT' ? price * rule.value / 100 : rule.value;
+    return round2(Math.min(Math.max(off, 0), price));
+  }
   const typePricelistId = typePricelistFor(profile, product);
   const creditPricelistId = typePricelistId ?? profile.pricelistId;
   const cashPricelistId = typePricelistId ? profile.typeCashPricelists?.[product.dealerType] ?? null : profile.cashPricelistId;
@@ -53,6 +87,13 @@ export function cashDiscountPerUnit(catalog: Catalog, product: CatalogProduct, p
   const diff = priceFor(catalog, product, creditPricelistId, qty) - priceFor(catalog, product, cashPricelistId, qty);
   const cap = shownPrice ?? resolvePrice(catalog, product, profile, qty);
   return round2(Math.min(Math.max(diff, 0), cap));
+}
+
+/** The cash % shared by every discounted line, for labels like "ส่วนลดเงินสด 2%"; null when mixed or from pricelist pairs. */
+export function uniformCashPercent(lines: { cashDiscountPerUnit?: number; cashDiscountPercent?: number | null }[]): number | null {
+  const percents = new Set(lines.filter((l) => (l.cashDiscountPerUnit ?? 0) > 0).map((l) => l.cashDiscountPercent ?? null));
+  const [only] = percents;
+  return percents.size === 1 && only !== undefined ? only : null;
 }
 
 /** Short VAT note shown next to a price: "รวม VAT", "+VAT 7%" or nothing for VAT-free items. */

@@ -1,4 +1,4 @@
-import type { CustomerGroup, PriceBook } from '@/lib/admin/types';
+import type { CustomerGroup, PriceBook, ProductCashDiscount } from '@/lib/admin/types';
 import type { ThaiAddress } from '@/lib/thai-address';
 
 /** Product family a dealer is allowed to buy, derived from the Odoo category suffix. */
@@ -47,6 +47,8 @@ export type CatalogProduct = {
   vatRate: number;
   /** True when prices already include that VAT (Odoo tax "7% (Inc)"); false = Odoo adds it on top. */
   vatIncluded: boolean;
+  /** Odoo sales tax ids (`taxes_id`), sent on the end-of-bill cash discount line. */
+  taxIds?: number[];
 };
 
 /** Mock dealer profile stored in a cookie for the prototype. */
@@ -79,6 +81,14 @@ export type DealerProfile = {
   typePricelists?: TypePricelists;
   /** Cash pricelist paired with each `typePricelists` entry (credit dealers only), for the cash discount. */
   typeCashPricelists?: TypePricelists;
+  /** Cash discount % of `pricelistId` (credit dealers only); wins over `cashPricelistId`. */
+  cashPercent?: number | null;
+  /** Cash discount % of each family's own pricelist (credit dealers only); wins over that pricelist's pair. */
+  typeCashPercents?: TypeCashPercents;
+  /** Cash discount % set on the dealer per family (credit dealers only); wins over everything else, 0 = none. */
+  dealerCashPercents?: TypeCashPercents;
+  /** Resolved per request from the admin settings (credit dealers only): cash discount per product template id. */
+  productCashDiscounts?: Record<string, ProductCashDiscount>;
   /** Customer group that narrows which products this dealer sees; null = all products of `types`. */
   customerGroupId: string | null;
   /** Profile picture file name in the `avatars` bucket; null = none. */
@@ -91,6 +101,9 @@ export type DealerProfile = {
 
 /** Odoo pricelist id per product family; a missing family means "use the dealer's normal price". */
 export type TypePricelists = Partial<Record<DealerType, number>>;
+
+/** Cash discount % per product family; a missing family falls back to the pricelist rules. */
+export type TypeCashPercents = Partial<Record<DealerType, number>>;
 
 /** CASH = transfer + slip before confirmation; CREDIT = billed on the dealer's payment term, no slip. */
 export type PaymentMethod = 'CASH' | 'CREDIT';
@@ -128,6 +141,10 @@ export type OrderLine = {
   unitId?: number | null;
   /** Cash discount per base unit when this line is paid cash (0 for non-credit dealers). */
   cashDiscountPerUnit?: number;
+  /** Cash discount % behind `cashDiscountPerUnit`; absent when it came from a credit/cash pricelist pair. */
+  cashDiscountPercent?: number;
+  /** Odoo sales tax ids of the product at order time, for the end-of-bill cash discount line. */
+  taxIds?: number[];
   /** VAT of the product at order time (see CatalogProduct). Older orders have none = included. */
   vatRate?: number;
   vatIncluded?: boolean;

@@ -10,10 +10,13 @@
 import { db } from '@/lib/db/client';
 import { unwrap } from '@/lib/db/rows';
 import type { DealerTier } from '@/lib/shop/types';
-import type { CashPair, CustomerGroup, DealerAssignment, PriceBook, PriceZone } from './types';
+import type { CashPair, CashPercent, CustomerGroup, ProductCashDiscount, DealerAssignment, PriceBook, PriceZone } from './types';
 
-/** `groupMembers` maps a dealer id (DB) to its customer group id; a dealer is in at most one group. */
-export type AdminShape = { zones: PriceZone[]; books: PriceBook[]; dealers: DealerAssignment[]; cashPairs: CashPair[]; groups: CustomerGroup[]; groupMembers: Record<string, string> };
+/**
+ * `groupMembers` maps a dealer id (DB) to its customer group id; a dealer is in at most one group.
+ * `productCashDiscounts` is keyed by Odoo product template id.
+ */
+export type AdminShape = { zones: PriceZone[]; books: PriceBook[]; dealers: DealerAssignment[]; cashPairs: CashPair[]; cashPercents: CashPercent[]; productCashDiscounts: Record<string, ProductCashDiscount>; groups: CustomerGroup[]; groupMembers: Record<string, string> };
 
 const ROW_ID = 'main';
 const MAX_ATTEMPTS = 5;
@@ -26,6 +29,8 @@ export function normalizeAdmin(input: Partial<AdminShape> | null | undefined): A
     books: input?.books ?? [],
     dealers: input?.dealers ?? [],
     cashPairs: input?.cashPairs ?? [],
+    cashPercents: input?.cashPercents ?? [],
+    productCashDiscounts: input?.productCashDiscounts ?? {},
     groups: input?.groups ?? [],
     groupMembers: input?.groupMembers ?? {},
   };
@@ -80,6 +85,11 @@ export function findBookIn(data: AdminShape, zoneId: string, tier: DealerTier): 
 /** Cash pricelist paired with a credit pricelist, if configured. */
 export function cashPricelistFor(creditPricelistId: number, pairs: CashPair[]): number | null {
   return pairs.find((p) => p.creditPricelistId === creditPricelistId)?.cashPricelistId ?? null;
+}
+
+/** Cash discount % set on a pricelist, if any. */
+export function cashPercentFor(pricelistId: number, percents: CashPercent[]): number | null {
+  return percents.find((p) => p.pricelistId === pricelistId)?.percent ?? null;
 }
 
 export function groupForDealerIn(data: AdminShape, dealerId: string): CustomerGroup | undefined {
@@ -257,6 +267,55 @@ export function saveCashPairs(pairs: CashPair[]): Promise<CashPair[]> {
     for (const pair of pairs) if (pair.creditPricelistId !== pair.cashPricelistId) byCredit.set(pair.creditPricelistId, pair);
     data.cashPairs = [...byCredit.values()];
     return data.cashPairs;
+  });
+}
+
+export async function listCashPercents(): Promise<CashPercent[]> {
+  return (await getAdminSnapshot()).cashPercents;
+}
+
+/** Replaces all pricelist cash %. One % per pricelist; values outside 0 < % ≤ 50 are dropped. */
+export function saveCashPercents(percents: CashPercent[]): Promise<CashPercent[]> {
+  return mutate((data) => {
+    const byPricelist = new Map<number, CashPercent>();
+    for (const p of percents) if (isCashPercent(p.percent)) byPricelist.set(p.pricelistId, { pricelistId: p.pricelistId, percent: Math.round(p.percent * 100) / 100 });
+    data.cashPercents = [...byPricelist.values()];
+    return data.cashPercents;
+  });
+}
+
+/** Valid cash discount % on a pricelist: above 0, at most 50. */
+export function isCashPercent(value: number): boolean {
+  return Number.isFinite(value) && value > 0 && value <= 50;
+}
+
+// ---------- cash discount per product ----------
+
+/** Valid product cash discount: 0 < % ≤ 50, or 0 < baht ≤ 100,000 per base unit. */
+export function isProductCashDiscount(d: { kind: string; value: number }): d is ProductCashDiscount {
+  if (!Number.isFinite(d.value) || d.value <= 0) return false;
+  if (d.kind === 'PERCENT') return d.value <= 50;
+  return d.kind === 'BAHT' && d.value <= 100_000;
+}
+
+export async function listProductCashDiscounts(): Promise<Record<string, ProductCashDiscount>> {
+  return (await getAdminSnapshot()).productCashDiscounts;
+}
+
+/**
+ * Sets or clears (null) the cash discount of the given product templates; others are kept.
+ * Invalid values are dropped. Returns how many products now have one.
+ */
+export function setProductCashDiscounts(changes: Record<string, ProductCashDiscount | null>): Promise<number> {
+  return mutate((data) => {
+    const next = { ...data.productCashDiscounts };
+    for (const [tmplId, discount] of Object.entries(changes)) {
+      if (!/^\d+$/.test(tmplId)) continue;
+      if (discount && isProductCashDiscount(discount)) next[tmplId] = { kind: discount.kind, value: Math.round(discount.value * 100) / 100 };
+      else delete next[tmplId];
+    }
+    data.productCashDiscounts = next;
+    return Object.keys(next).length;
   });
 }
 

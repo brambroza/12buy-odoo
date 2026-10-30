@@ -320,20 +320,31 @@ export async function importByTypeAction(formData: FormData) {
 
 // ---------- credit ↔ cash pricelist pairs ----------
 
-/** Saves which Odoo cash pricelist pairs with each credit pricelist (`cash_<creditId>` = cash id or empty). */
+/**
+ * Saves the cash discount of credit pricelists: `percent_<id>` = cash % (blank = none) and
+ * `cash_<creditId>` = paired cash pricelist id or empty. A % wins over the pair.
+ */
 export async function saveCashPairsAction(formData: FormData) {
   await requireAdmin();
   const { pricelists } = await getCatalog();
   const valid = new Set(pricelists.map((p) => p.id));
   const pairs: { creditPricelistId: number; cashPricelistId: number }[] = [];
+  const percents: { pricelistId: number; percent: number }[] = [];
   for (const [key, value] of formData.entries()) {
     const creditPricelistId = Number(key.match(/^cash_(\d+)$/)?.[1]);
     const cashPricelistId = Number(value);
     if (valid.has(creditPricelistId) && valid.has(cashPricelistId)) pairs.push({ creditPricelistId, cashPricelistId });
+    const percentPricelistId = Number(key.match(/^percent_(\d+)$/)?.[1]);
+    const text = String(value).trim();
+    if (!valid.has(percentPricelistId) || !text) continue;
+    const percent = Number(text);
+    if (!admin.isCashPercent(percent)) redirect('/admin/prices?pairs=open&error=' + encodeURIComponent('% ส่วนลดเงินสดต้องมากกว่า 0 และไม่เกิน 50'));
+    percents.push({ pricelistId: percentPricelistId, percent });
   }
   await admin.saveCashPairs(pairs);
+  await admin.saveCashPercents(percents);
   revalidateAdmin();
-  await flash('บันทึกคู่ราคาเครดิต–เงินสดแล้ว', { icon: 'price', description: `${pairs.length} คู่ · ใช้คำนวณส่วนลดเงินสดท้ายบิล` });
+  await flash('บันทึกส่วนลดเงินสดแล้ว', { icon: 'price', description: `${percents.length} pricelist ตั้ง % · ${pairs.length} คู่ราคา · ใช้คำนวณส่วนลดเงินสดท้ายบิล` });
   redirect('/admin/prices?pairs=1');
 }
 

@@ -18,6 +18,7 @@ export type DealerInput = {
   creditLimit?: number | null;
   creditOpening?: number;
   typePricelists?: Partial<Record<DealerType, number>>;
+  typeCashPercents?: Partial<Record<DealerType, number>>;
   notes?: string | null;
   avatarFile?: string | null;
 };

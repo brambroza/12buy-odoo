@@ -4,7 +4,7 @@ import { ChevronLeft } from 'lucide-react';
 import { PriceBox } from '@/components/shop/price-box';
 import { StockBadge } from '@/components/shop/stock-badge';
 import { baht, defaultQty, findProduct, getCatalog } from '@/lib/shop/catalog';
-import { resolvePrice, vatLabel } from '@/lib/shop/pricing';
+import { cashDiscountPerUnit, cashRuleOf, resolvePrice, vatLabel } from '@/lib/shop/pricing';
 import { canSeeProduct, getDealerProfile } from '@/lib/shop/dealer';
 import { DEALER_TYPE_LABELS } from '@/lib/shop/types';
 
@@ -18,6 +18,10 @@ export default async function ProductPage({ params }: { params: Promise<{ id: st
   if (!product || !canSeeProduct(profile, product)) notFound();
 
   const unit = resolvePrice(catalog, product, profile);
+  // Credit dealers see what paying cash takes off one unit (same rule as the cart and checkout).
+  const cashOff = cashDiscountPerUnit(catalog, product, profile, 1, unit);
+  const cashRule = cashRuleOf(profile, product);
+  const cashNote = cashOff > 0 ? `จ่ายเงินสดลด${cashRule?.kind === 'PERCENT' ? ` ${cashRule.value}%` : ''} −${baht(cashOff)} /${product.baseUnit} (หักท้ายบิล)` : '';
   const qty = defaultQty(product.dealerType);
   const sameSize = product.size
     ? catalog.products.filter((p) => p.id !== product.id && p.size?.label === product.size!.label && canSeeProduct(profile, p))
@@ -44,7 +48,7 @@ export default async function ProductPage({ params }: { params: Promise<{ id: st
         {product.size && <p className="text-2xl font-black text-primary">{product.size.label}</p>}
       </div>
 
-      <PriceBox productId={product.id} unitPrice={unit} baseUnit={product.baseUnit} units={product.units} defaultQty={qty} stock={<StockBadge qty={product.qtyAvailable} />} soldOut={product.qtyAvailable <= 0} vatNote={vatLabel(product)} />
+      <PriceBox productId={product.id} unitPrice={unit} baseUnit={product.baseUnit} units={product.units} defaultQty={qty} stock={<StockBadge qty={product.qtyAvailable} />} soldOut={product.qtyAvailable <= 0} vatNote={vatLabel(product)} cashNote={cashNote} />
 
       {sameSize.length > 0 && (
         <section className="space-y-2">

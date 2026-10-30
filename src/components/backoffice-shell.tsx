@@ -5,7 +5,7 @@ import { usePathname } from 'next/navigation';
 import { useRef, useState } from 'react';
 import gsap from 'gsap';
 import { useGSAP } from '@gsap/react';
-import { Gauge, LayoutDashboard, FileText, Users, Package, Menu, PanelLeftClose, PanelLeftOpen, MapPinned, Tags, Store, Inbox, Smartphone, UserPlus, ShieldCheck, LogOut, UsersRound, TicketPercent, Truck, UserRound, KeyRound, ChevronDown } from 'lucide-react';
+import { Gauge, LayoutDashboard, FileText, Users, Package, Menu, PanelLeftClose, PanelLeftOpen, MapPinned, Tags, Store, Inbox, Smartphone, UserPlus, ShieldCheck, LogOut, UsersRound, TicketPercent, BadgePercent, Truck, UserRound, KeyRound, ChevronDown } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { SIDEBAR_COOKIE } from '@/lib/backoffice-ui';
 import { AdminMotion } from '@/components/admin/admin-motion';
@@ -26,6 +26,7 @@ const NAV_ITEMS: { href: string; label: string; icon: typeof LayoutDashboard; gr
   { href: '/admin/groups', label: 'กลุ่มลูกค้า', icon: UsersRound, adminOnly: true },
   { href: '/admin/zones', label: 'โซนราคา', icon: MapPinned, adminOnly: true },
   { href: '/admin/prices', label: 'ตารางราคา', icon: Tags, adminOnly: true },
+  { href: '/admin/cash-discounts', label: 'ส่วนลดเงินสด', icon: BadgePercent, adminOnly: true },
   { href: '/admin/coupons', label: 'คูปอง', icon: TicketPercent, adminOnly: true },
   { href: '/admin/delivery', label: 'การจัดส่ง', icon: Truck, adminOnly: true },
   { href: '/admin/users', label: 'ผู้ใช้งานระบบ', icon: ShieldCheck, adminOnly: true },

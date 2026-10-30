@@ -5,7 +5,7 @@ import { redirect } from 'next/navigation';
 import { z } from 'zod';
 import { baht, defaultQty, findProduct, getCatalog, getDealerCarrier, searchProducts } from '@/lib/shop/catalog';
 import { flash } from '@/lib/flash';
-import { billTotals, cashDiscountPerUnit, orderPricelistId, resolvePrice, withCoupon } from '@/lib/shop/pricing';
+import { billTotals, cashDiscountPerUnit, cashPercentOf, orderPricelistId, resolvePrice, withCoupon } from '@/lib/shop/pricing';
 import { checkCartCoupon } from '@/lib/shop/cart-coupon';
 import { normalizeCode } from '@/lib/shop/coupon';
 import { creditAfterOrder } from '@/lib/shop/credit';
@@ -130,7 +130,8 @@ export async function clearCartAction() {
  * Creates a web order from the cart (Odoo gets it when the admin confirms; only the coupon is read from Odoo here).
  * Credit dealers choose CREDIT or CASH; CASH earns the credit→cash difference as an end-of-bill discount.
  * A coupon in the cart is re-checked and taken off the total.
- * Everyone else always pays CASH (slip) with no discount.
+ * Everyone else always pays CASH with no discount. CASH orders must carry the transfer slip (`slip` field);
+ * the admin verifies it, then confirms, which pushes the order to Odoo.
  */
 /** Dealers with a checkout in flight. A second submit while the first is running is refused (double tap). */
 const checkoutsInFlight = new Set<string>();
@@ -157,7 +158,8 @@ export async function checkoutAction(formData: FormData) {
   if (checkoutsInFlight.has(sid)) redirect('/shop/orders?error=' + encodeURIComponent('กำลังส่งออเดอร์ก่อนหน้า กรุณารอสักครู่'));
   checkoutsInFlight.add(sid);
   try {
-    await placeOrder(sid, parsed.data, shipTo);
+    const slip = formData.get('slip');
+    await placeOrder(sid, parsed.data, shipTo, slip instanceof File && slip.size > 0 ? slip : null);
   } finally {
     checkoutsInFlight.delete(sid);
   }
@@ -165,8 +167,11 @@ export async function checkoutAction(formData: FormData) {
 
 type CheckoutInput = { note: string; paymentMethod?: 'CASH' | 'CREDIT'; poRef: string };
 
-/** Validates the cart against the live catalog, stock and credit, then creates the web order and redirects to it. */
-async function placeOrder(sid: string, input: CheckoutInput, shipTo: string) {
+/**
+ * Validates the cart against the live catalog, stock and credit, then creates the web order and redirects to it.
+ * A cash order is refused without `slip`; the slip is stored before the order is created and attached right after.
+ */
+async function placeOrder(sid: string, input: CheckoutInput, shipTo: string, slip: File | null) {
   const [catalog, profile] = await Promise.all([getCatalog(), getDealerProfile()]);
   const cart = await store.getCart(sid);
   if (!cart.length) redirect('/shop/orders?error=' + encodeURIComponent('ตะกร้าว่าง หากเพิ่งกดสั่ง ออเดอร์อาจถูกสร้างแล้ว ตรวจสอบในรายการนี้'));
@@ -183,7 +188,8 @@ async function placeOrder(sid: string, input: CheckoutInput, shipTo: string) {
     if ((qtyByProduct.get(product.id) ?? item.qty) > product.qtyAvailable) redirect('/shop/cart?error=' + encodeURIComponent(`${product.size?.label ?? product.name} มีในสต็อก ${product.qtyAvailable} ${product.baseUnit} ปรับจำนวนก่อนสั่ง`));
     const unitPrice = resolvePrice(catalog, product, profile, item.qty);
     const cashOff = cashDiscountPerUnit(catalog, product, profile, item.qty, unitPrice);
-    lines.push({ productId: product.id, name: product.name, code: product.code, size: product.size?.label ?? null, qty: item.qty, unitPrice, cashDiscountPerUnit: cashOff, unitId: item.unitId ?? null, unitName: item.unitName ?? null, unitQty: item.unitQty ?? null, vatRate: product.vatRate, vatIncluded: product.vatIncluded });
+    const cashPercent = cashOff > 0 ? cashPercentOf(profile, product) : null;
+    lines.push({ productId: product.id, name: product.name, code: product.code, size: product.size?.label ?? null, qty: item.qty, unitPrice, cashDiscountPerUnit: cashOff, ...(cashPercent !== null ? { cashDiscountPercent: cashPercent } : {}), unitId: item.unitId ?? null, unitName: item.unitName ?? null, unitQty: item.unitQty ?? null, vatRate: product.vatRate, vatIncluded: product.vatIncluded, taxIds: product.taxIds ?? [] });
     priced.push({ product, qty: item.qty, unitPrice, cashDiscountPerUnit: cashOff });
   }
   const paymentMethod = profile.credit ? input.paymentMethod ?? 'CREDIT' : 'CASH';
@@ -204,6 +210,13 @@ async function placeOrder(sid: string, input: CheckoutInput, shipTo: string) {
     const credit = await getCreditLine(profile);
     if (creditAfterOrder(credit, totals.total).over) redirect('/shop/cart?error=' + encodeURIComponent('ยอดนี้เกินวงเงินเครดิต เลือกชำระเงินสด หรือลดจำนวน'));
   }
+  let slipName: string | null = null;
+  if (paymentMethod === 'CASH') {
+    if (!slip) redirect('/shop/cart?error=' + encodeURIComponent('ชำระเงินสด: โอนเงินแล้วแนบสลิปก่อนยืนยันสั่งซื้อ'));
+    const saved = await saveSlip(sid, slip);
+    if (!saved.ok) redirect('/shop/cart?error=' + encodeURIComponent(`สลิป: ${saved.reason}`));
+    slipName = saved.name;
+  }
   let order;
   try {
     order = await store.createOrder({
@@ -221,12 +234,18 @@ async function placeOrder(sid: string, input: CheckoutInput, shipTo: string) {
       poRef: input.poRef || undefined,
     });
   } catch (error) {
+    if (slipName) await deleteSlip(slipName);
     // The cart was emptied by a concurrent submit of the same checkout: that order already exists.
     if (error instanceof store.CartEmptyError) redirect('/shop/orders?error=' + encodeURIComponent('ออเดอร์นี้ถูกส่งไปแล้ว ตรวจสอบในรายการด้านล่าง'));
     throw error;
   }
+  // Attach failing (unlikely right after create) leaves the order without a slip: the dealer re-attaches it on the order page.
+  const withSlip = slipName ? await store.attachSlip(sid, order.id, slipName) : null;
+  if (slipName && withSlip?.payment.slipFile !== slipName) await deleteSlip(slipName);
   revalidatePath('/shop', 'layout');
-  await flash('ส่งคำสั่งซื้อสำเร็จ', { icon: 'order', description: `${order.ref} · ยอด ${baht(order.total)}${paymentMethod === 'CASH' ? ' · โอนแล้วแนบสลิปในหน้านี้' : ''}` });
+  revalidatePath('/admin/orders');
+  const slipNote = !slipName ? '' : withSlip?.payment.slipFile === slipName ? ' · แนบสลิปแล้ว รอฝ่ายขายตรวจ' : ' · แนบสลิปไม่สำเร็จ กรุณาแนบใหม่ในหน้านี้';
+  await flash('ส่งคำสั่งซื้อสำเร็จ', { icon: 'order', description: `${order.ref} · ยอด ${baht(order.total)}${slipNote}` });
   redirect(`/shop/orders/${order.id}?placed=1`);
 }
 

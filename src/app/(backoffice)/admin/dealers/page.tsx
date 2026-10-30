@@ -496,7 +496,11 @@ function prefillFrom(c: OdooCustomer): DealerPrefill {
  * small-dealer price). Blank = normal price. Only families ticked above are saved. When Odoo is down the
  * list is empty, so saved ids are kept as their own option and survive a save.
  */
-function TypePricelistFields({ saved, pricelists }: { saved: Partial<Record<DealerType, number>>; pricelists: OdooPricelistOption[] }) {
+/**
+ * Pricelist and cash discount % per product family. A blank % uses the product's own cash discount,
+ * then the % set on the pricelist (/admin/prices); 0 = no cash discount for that family. The % only applies to credit dealers paying cash.
+ */
+function TypePricelistFields({ saved, savedPercents, pricelists }: { saved: Partial<Record<DealerType, number>>; savedPercents: Partial<Record<DealerType, number>>; pricelists: OdooPricelistOption[] }) {
   return (
     <fieldset className="md:col-span-2">
       <legend className="text-xs font-medium">กลุ่มราคาตามประเภทสินค้า</legend>
@@ -505,16 +509,25 @@ function TypePricelistFields({ saved, pricelists }: { saved: Partial<Record<Deal
           const current = saved[t];
           const missing = current && !pricelists.some((p) => p.id === current);
           return (
-            <label key={t} className="text-xs">{DEALER_TYPE_LABELS[t]}
-              <select name={`typePricelist_${t}`} defaultValue={current ?? ''} className={field}>
-                <option value="">ราคาปกติ</option>
-                {missing && <option value={current}>Pricelist #{current}</option>}
-                {pricelists.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
-              </select>
-            </label>
+            <div key={t} className="text-xs">
+              <span>{DEALER_TYPE_LABELS[t]}</span>
+              <div className="flex gap-1.5">
+                <select name={`typePricelist_${t}`} aria-label={`กลุ่มราคา ${DEALER_TYPE_LABELS[t]}`} defaultValue={current ?? ''} className={cn(field, 'min-w-0 flex-1')}>
+                  <option value="">ราคาปกติ</option>
+                  {missing && <option value={current}>Pricelist #{current}</option>}
+                  {pricelists.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+                </select>
+                <label className="flex w-24 shrink-0 items-center gap-1">
+                  <span className="sr-only">% ส่วนลดเงินสด {DEALER_TYPE_LABELS[t]}</span>
+                  <input name={`typeCashPercent_${t}`} type="number" inputMode="decimal" min="0" max="50" step="0.01" defaultValue={savedPercents[t] ?? ''} placeholder="ตามสินค้า" title="% ส่วนลดเงินสด (ว่าง = ตามสินค้า/pricelist, 0 = ไม่ลด)" className={cn(field, 'text-right')} />
+                  <span className="text-muted-foreground">%</span>
+                </label>
+              </div>
+            </div>
           );
         })}
       </div>
+      <p className="mt-1 text-[11px] text-muted-foreground">ช่อง % = ส่วนลดเงินสดเมื่อลูกค้าเครดิตเลือกจ่ายสด ใช้ก่อนทุกค่า · ว่าง = ใช้ค่าที่ตั้งรายสินค้า (หน้าส่วนลดเงินสด) แล้วจึงใช้ % ของ pricelist · 0 = ไม่ให้ส่วนลดกลุ่มนี้</p>
     </fieldset>
   );
 }
@@ -537,7 +550,7 @@ function DealerForm({ action, dealer, prefill, creditUsed, odooCreditLimit, part
           {TYPES.map((t) => <label key={t} className="flex items-center gap-1.5 rounded-lg border border-border px-2 py-1 has-[:checked]:border-primary has-[:checked]:bg-primary/10"><input type="checkbox" name="types" value={t} defaultChecked={dealer ? dealer.types.includes(t) : t === 'CAR'} />{DEALER_TYPE_LABELS[t]}</label>)}
         </div>
       </fieldset>
-      <TypePricelistFields saved={dealer?.typePricelists ?? {}} pricelists={pricelists} />
+      <TypePricelistFields saved={dealer?.typePricelists ?? {}} savedPercents={dealer?.typeCashPercents ?? {}} pricelists={pricelists} />
       <label className="text-xs font-medium md:col-span-2">กลุ่มลูกค้า
         <select name="customerGroupId" defaultValue={groupId ?? ''} className={field}>
           <option value="">ไม่จัดกลุ่ม</option>

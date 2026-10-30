@@ -4,7 +4,7 @@ const storage = vi.hoisted(() => ({ upload: vi.fn(), download: vi.fn(), remove: 
 vi.mock('@/lib/db/client', () => ({ db: () => ({ storage: { from: storage.from } }) }));
 
 const { deleteAvatar, saveAvatar } = await import('@/lib/shop/uploads');
-const { sanitizeProfile } = await import('@/lib/shop/dealer');
+const { cashPercentsFor, sanitizeProfile } = await import('@/lib/shop/dealer');
 
 const JPEG = new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 0, 0, 0, 0, 0, 0, 0, 0]);
 
@@ -53,5 +53,19 @@ describe('sanitizeProfile typePricelists', () => {
     const profile = sanitizeProfile({ typePricelists: { CAR: 9, MOTORCYCLE: 7, BOAT: 3, TRUCK: -1, WHEEL: 1.5 } as never, typeCashPricelists: 'x' as never });
     expect(profile.typePricelists).toEqual({ CAR: 9, MOTORCYCLE: 7 });
     expect(profile.typeCashPricelists).toEqual({});
+  });
+
+  it('keeps cash % from 0 to 50 per known family and a main % above 0', () => {
+    const profile = sanitizeProfile({ typeCashPercents: { CAR: 2, TRUCK: 0, WHEEL: 60, BOAT: 1, BATTERY: -1 } as never, cashPercent: 1.5 });
+    expect(profile.typeCashPercents).toEqual({ CAR: 2, TRUCK: 0 });
+    expect(profile.cashPercent).toBe(1.5);
+    expect(sanitizeProfile({ cashPercent: 0 }).cashPercent).toBeNull();
+  });
+});
+
+describe('cashPercentsFor', () => {
+  it('takes the % of each family pricelist, skipping pricelists without one', () => {
+    const percents = [{ pricelistId: 20, percent: 2 }, { pricelistId: 30, percent: 4 }];
+    expect(cashPercentsFor({ CAR: 20, MOTORCYCLE: 30, WHEEL: 99 }, percents)).toEqual({ CAR: 2, MOTORCYCLE: 4 });
   });
 });

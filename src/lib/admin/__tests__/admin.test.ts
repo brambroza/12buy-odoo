@@ -95,6 +95,25 @@ describe('cash pairs', () => {
     expect(store.cashPricelistFor(7, await store.listCashPairs())).toBe(8);
     expect(store.cashPricelistFor(10, await store.listCashPairs())).toBeNull();
   });
+
+  it('saves one cash % per pricelist, rounded, and drops values outside 0 < % ≤ 50', async () => {
+    await store.saveCashPercents([{ pricelistId: 7, percent: 1 }, { pricelistId: 7, percent: 2.456 }, { pricelistId: 10, percent: 0 }, { pricelistId: 3, percent: 80 }]);
+    expect(await store.listCashPercents()).toEqual([{ pricelistId: 7, percent: 2.46 }]);
+    expect(store.cashPercentFor(7, await store.listCashPercents())).toBe(2.46);
+    expect(store.cashPercentFor(10, await store.listCashPercents())).toBeNull();
+  });
+
+  it('reads older settings without cash % as none', () => {
+    expect(store.normalizeAdmin({ cashPairs: [] }).cashPercents).toEqual([]);
+    expect(store.normalizeAdmin({ cashPairs: [] }).productCashDiscounts).toEqual({});
+  });
+
+  it('sets and clears product cash discounts, keeping products not in the change', async () => {
+    expect(await store.setProductCashDiscounts({ '10': { kind: 'PERCENT', value: 2 }, '20': { kind: 'BAHT', value: 50.555 }, '30': { kind: 'PERCENT', value: 80 }, abc: { kind: 'BAHT', value: 1 } })).toBe(2);
+    expect(await store.listProductCashDiscounts()).toEqual({ '10': { kind: 'PERCENT', value: 2 }, '20': { kind: 'BAHT', value: 50.56 } });
+    expect(await store.setProductCashDiscounts({ '10': null })).toBe(1);
+    expect(await store.listProductCashDiscounts()).toEqual({ '20': { kind: 'BAHT', value: 50.56 } });
+  });
 });
 
 describe('dryRunPublish', () => {

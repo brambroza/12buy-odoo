@@ -120,6 +120,7 @@ async function loadCatalog(): Promise<Catalog> {
       baseUnit: baseUnitLabel(classified.dealerType),
       units: unitsForProduct(classified.dealerType, raw.uom_id ? raw.uom_id[0] : 0, raw.uom_ids || [], unitIndex),
       ...vatFromTaxes(raw.taxes_id ?? [], taxIndex),
+      taxIds: raw.taxes_id ?? [],
     });
   }
 

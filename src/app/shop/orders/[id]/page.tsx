@@ -13,7 +13,7 @@ import { baht } from '@/lib/shop/catalog';
 import { getSessionId } from '@/lib/shop/session';
 import { getOrder } from '@/lib/shop/store';
 import { refreshIfStale } from '@/lib/shop/status-sync';
-import { billTotals, withCoupon } from '@/lib/shop/pricing';
+import { billTotals, uniformCashPercent, withCoupon } from '@/lib/shop/pricing';
 import { ORDER_STATUS_FLOW, ORDER_STATUS_LABELS, PAYMENT_METHOD_LABELS } from '@/lib/shop/types';
 import { advanceOrderAction, cancelOrderAction, reorderAction, uploadSlipAction } from '../../actions';
 
@@ -29,6 +29,7 @@ export default async function OrderDetailPage({ params, searchParams }: { params
   // Demo status buttons: back-office users only, and never unless SHOP_DEMO_CONTROLS=true.
   // Orders from before per-product VAT carry no rate: their prices were VAT-included 7% (Odoo tax "7% (Inc)").
   const bill = withCoupon(billTotals(order.lines.map((l) => ({ ...l, vatRate: l.vatRate ?? 7 })), order.paymentMethod), order.couponDiscount);
+  const cashPercent = uniformCashPercent(order.lines);
   const user = await getCurrentUser();
   const showDemoControls = process.env.SHOP_DEMO_CONTROLS === 'true' && !!user && isBackofficeRole(user.role as Role);
 
@@ -40,7 +41,7 @@ export default async function OrderDetailPage({ params, searchParams }: { params
       {placed && (
         <div className="rounded-xl border border-emerald-500/30 max-md:-order-2 bg-emerald-500/5 p-4">
           <p className="font-semibold text-emerald-700 dark:text-emerald-400">รับออเดอร์แล้ว</p>
-          <p className="text-sm text-muted-foreground">{order.paymentMethod === 'CREDIT' ? 'สั่งแบบเครดิต ไม่ต้องแนบสลิป ฝ่ายขายยืนยันภายใน 2 ชั่วโมงทำการ' : 'โอนเงินแล้วแนบสลิปด้านล่าง ฝ่ายขายตรวจสลิปและยืนยันภายใน 2 ชั่วโมงทำการ'} ติดตามสถานะได้ที่หน้านี้และหน้า “ออเดอร์”</p>
+          <p className="text-sm text-muted-foreground">{order.paymentMethod === 'CREDIT' ? 'สั่งแบบเครดิต ไม่ต้องแนบสลิป ฝ่ายขายยืนยันภายใน 2 ชั่วโมงทำการ' : order.payment.slipFile ? 'ได้รับสลิปแล้ว ฝ่ายขายตรวจสลิปและยืนยันภายใน 2 ชั่วโมงทำการ' : 'โอนเงินแล้วแนบสลิปด้านล่าง ฝ่ายขายตรวจสลิปและยืนยันภายใน 2 ชั่วโมงทำการ'} ติดตามสถานะได้ที่หน้านี้และหน้า “ออเดอร์”</p>
         </div>
       )}
 
@@ -109,7 +110,7 @@ export default async function OrderDetailPage({ params, searchParams }: { params
             <div className="flex justify-between text-sm"><span className="text-muted-foreground">รวมราคาสินค้า</span><span>{baht(order.subtotal)}</span></div>
           )}
           {order.cashDiscount > 0 && (
-            <div className="flex justify-between text-sm text-emerald-700 dark:text-emerald-400"><span>ส่วนลดเงินสด (ท้ายบิล)</span><span>−{baht(order.cashDiscount)}</span></div>
+            <div className="flex justify-between text-sm text-emerald-700 dark:text-emerald-400"><span>ส่วนลดเงินสด{cashPercent !== null ? ` ${cashPercent}%` : ''} (ท้ายบิล)</span><span>−{baht(order.cashDiscount)}</span></div>
           )}
           {order.couponDiscount > 0 && order.coupon && (
             <div className="flex justify-between gap-2 text-sm text-emerald-700 dark:text-emerald-400"><span>คูปอง <span className="font-mono">{order.coupon.code}</span> · {order.coupon.label}</span><span>−{baht(order.couponDiscount)}</span></div>

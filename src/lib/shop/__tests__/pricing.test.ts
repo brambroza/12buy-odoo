@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { PriceBook } from '@/lib/admin/types';
 import type { Catalog } from '../catalog';
-import { billTotals, cashDiscountPerUnit, orderPricelistId, priceFromBook, resolvePrice, vatLabel, withCoupon } from '../pricing';
+import { billTotals, cashDiscountPerUnit, cashPercentOf, cashRuleOf, orderPricelistId, priceFromBook, resolvePrice, uniformCashPercent, vatLabel, withCoupon } from '../pricing';
 import { vatFromTaxes } from '../catalog';
 import type { CatalogProduct, DealerProfile } from '../types';
 import type { PricelistItem } from '../price-engine';
@@ -73,6 +73,40 @@ describe('pricelist per product family', () => {
     expect(cashDiscountPerUnit(familyCatalog, product, creditDealer)).toBe(100);
     expect(cashDiscountPerUnit(familyCatalog, product, { ...creditDealer, typeCashPricelists: {} })).toBe(0);
     expect(cashDiscountPerUnit(familyCatalog, product, { ...creditDealer, cashPricelistId: 21, typeCashPricelists: {} })).toBe(0);
+  });
+});
+
+describe('cash discount %', () => {
+  const credit: DealerProfile = { ...profile, credit: true, pricelistId: 9, cashPricelistId: 21 };
+  it('takes the pricelist % of the shown price and wins over the pricelist pair', () => {
+    expect(cashDiscountPerUnit(catalog, product, { ...credit, cashPercent: 2 })).toBe(48); // 2% of 2400
+    expect(cashDiscountPerUnit(catalog, product, { ...credit, cashPercent: 2 }, 1, 2333)).toBe(46.66);
+  });
+  it('uses the dealer family % over everything; 0 means no discount', () => {
+    const product20 = { '777': { kind: 'BAHT' as const, value: 100 } };
+    expect(cashDiscountPerUnit(catalog, product, { ...credit, cashPercent: 2, productCashDiscounts: product20, dealerCashPercents: { CAR: 3 } })).toBe(72);
+    expect(cashDiscountPerUnit(catalog, product, { ...credit, cashPercent: 2, dealerCashPercents: { CAR: 0 } })).toBe(0);
+    expect(cashDiscountPerUnit(catalog, product, { ...credit, cashPercent: 2, dealerCashPercents: { TRUCK: 5 } })).toBe(48);
+  });
+  it('uses the product discount (% or baht) over the pricelist %', () => {
+    expect(cashDiscountPerUnit(catalog, product, { ...credit, cashPercent: 2, productCashDiscounts: { '777': { kind: 'PERCENT', value: 5 } } })).toBe(120);
+    expect(cashDiscountPerUnit(catalog, product, { ...credit, cashPercent: 2, productCashDiscounts: { '777': { kind: 'BAHT', value: 150 } } })).toBe(150);
+    expect(cashDiscountPerUnit(catalog, product, { ...credit, productCashDiscounts: { '777': { kind: 'BAHT', value: 9999 } } })).toBe(2400); // capped at the price
+    expect(cashPercentOf({ ...credit, productCashDiscounts: { '777': { kind: 'BAHT', value: 150 } } }, product)).toBeNull();
+    expect(cashRuleOf({ ...credit, productCashDiscounts: { '1': { kind: 'BAHT', value: 150 } } }, product)).toEqual({ kind: 'PAIR' });
+  });
+  it('ignores the main pricelist % for a family priced by its own pricelist', () => {
+    expect(cashPercentOf({ ...credit, cashPercent: 2, typePricelists: { CAR: 20 } }, product)).toBeNull();
+    expect(cashPercentOf({ ...credit, cashPercent: 2, typePricelists: { CAR: 20 }, typeCashPercents: { CAR: 1.5 } }, product)).toBe(1.5);
+  });
+  it('gives non-credit dealers nothing', () => {
+    expect(cashDiscountPerUnit(catalog, product, { ...profile, cashPercent: 2, dealerCashPercents: { CAR: 3 }, productCashDiscounts: { '777': { kind: 'PERCENT', value: 5 } } })).toBe(0);
+    expect(cashRuleOf({ ...profile, cashPercent: 2 }, product)).toBeNull();
+  });
+  it('labels a single shared %', () => {
+    expect(uniformCashPercent([{ cashDiscountPerUnit: 48, cashDiscountPercent: 2 }, { cashDiscountPerUnit: 0 }])).toBe(2);
+    expect(uniformCashPercent([{ cashDiscountPerUnit: 48, cashDiscountPercent: 2 }, { cashDiscountPerUnit: 10, cashDiscountPercent: 3 }])).toBeNull();
+    expect(uniformCashPercent([{ cashDiscountPerUnit: 48 }])).toBeNull();
   });
 });
 

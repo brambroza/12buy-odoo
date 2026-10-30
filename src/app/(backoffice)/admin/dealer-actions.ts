@@ -56,18 +56,20 @@ const dealerSchema = z.object({
   creditLimit: optionalBaht,
   creditOpening: optionalBaht.transform((v) => v ?? 0),
   typePricelists: z.partialRecord(typeSchema, z.coerce.number().int().positive('เลือกกลุ่มราคาตามประเภทสินค้าไม่ถูกต้อง')),
+  typeCashPercents: z.partialRecord(typeSchema, z.coerce.number().min(0, '% ส่วนลดเงินสดต้องไม่ติดลบ').max(50, '% ส่วนลดเงินสดต้องไม่เกิน 50').transform((v) => Math.round(v * 100) / 100)),
   notes: optionalText(500),
 }).transform((d) => ({
   ...d,
-  // A family pricelist only matters for families the dealer may buy; drop the rest.
+  // A family pricelist or cash % only matters for families the dealer may buy; drop the rest.
   typePricelists: Object.fromEntries(Object.entries(d.typePricelists).filter(([type]) => d.types.includes(type as z.infer<typeof typeSchema>))),
+  typeCashPercents: Object.fromEntries(Object.entries(d.typeCashPercents).filter(([type]) => d.types.includes(type as z.infer<typeof typeSchema>))),
 }));
 
-/** `typePricelist_<TYPE>` selects of the dealer form; blank = use the normal price for that family. */
-function readTypePricelists(formData: FormData): Record<string, string> {
+/** `typePricelist_<TYPE>` selects (or `typeCashPercent_<TYPE>` inputs) of the dealer form; blank = use the normal rule for that family. */
+function readTypePricelists(formData: FormData, prefix = 'typePricelist_'): Record<string, string> {
   const out: Record<string, string> = {};
   for (const type of typeSchema.options) {
-    const value = String(formData.get(`typePricelist_${type}`) ?? '').trim();
+    const value = String(formData.get(`${prefix}${type}`) ?? '').trim();
     if (value) out[type] = value;
   }
   return out;
@@ -93,7 +95,7 @@ function readDealerForm(formData: FormData) {
   const s = (k: string) => String(formData.get(k) ?? '');
   return dealerSchema.safeParse({
     name: s('name'), province: s('province'), types: formData.getAll('types').map(String), tier: s('tier'), status: s('status'),
-    odooPartnerId: s('odooPartnerId').trim(), address: s('address'), phone: s('phone'), lineId: s('lineId'), taxId: s('taxId'), creditEnabled: formData.get('creditEnabled') === 'on', creditLimit: s('creditLimit'), creditOpening: s('creditOpening'), typePricelists: readTypePricelists(formData), notes: s('notes'),
+    odooPartnerId: s('odooPartnerId').trim(), address: s('address'), phone: s('phone'), lineId: s('lineId'), taxId: s('taxId'), creditEnabled: formData.get('creditEnabled') === 'on', creditLimit: s('creditLimit'), creditOpening: s('creditOpening'), typePricelists: readTypePricelists(formData), typeCashPercents: readTypePricelists(formData, 'typeCashPercent_'), notes: s('notes'),
   });
 }
 
@@ -197,7 +199,7 @@ export async function updateDealerAction(formData: FormData) {
   if (parsed.data.status === 'SUSPENDED') for (const u of before.users) await revokeAllSessions(u.id);
   const groupBefore = (await admin.groupForDealer(id))?.id ?? null;
   const groupAfter = await saveDealerGroup(id, formData);
-  await audit(actor.id, 'dealer.update', 'Dealer', id, { from: { status: before.status, tier: before.tier, types: before.types, creditEnabled: before.creditEnabled, creditLimit: before.creditLimit === null ? null : Number(before.creditLimit), creditOpening: Number(before.creditOpening), typePricelists: before.typePricelists ?? {}, customerGroupId: groupBefore }, to: { status: parsed.data.status, tier: parsed.data.tier, types: parsed.data.types, creditEnabled: parsed.data.creditEnabled, creditLimit: parsed.data.creditLimit, creditOpening: parsed.data.creditOpening, typePricelists: parsed.data.typePricelists, customerGroupId: groupAfter } });
+  await audit(actor.id, 'dealer.update', 'Dealer', id, { from: { status: before.status, tier: before.tier, types: before.types, creditEnabled: before.creditEnabled, creditLimit: before.creditLimit === null ? null : Number(before.creditLimit), creditOpening: Number(before.creditOpening), typePricelists: before.typePricelists ?? {}, typeCashPercents: before.typeCashPercents ?? {}, customerGroupId: groupBefore }, to: { status: parsed.data.status, tier: parsed.data.tier, types: parsed.data.types, creditEnabled: parsed.data.creditEnabled, creditLimit: parsed.data.creditLimit, creditOpening: parsed.data.creditOpening, typePricelists: parsed.data.typePricelists, typeCashPercents: parsed.data.typeCashPercents, customerGroupId: groupAfter } });
   const odooWarning = await syncCreditLimitToOdoo(actor.id, before, parsed.data);
   revalidate();
   await flash(odooWarning ? 'บันทึกข้อมูลดีลเลอร์แล้ว (วงเงินยังไม่เข้า Odoo)' : 'บันทึกข้อมูลดีลเลอร์แล้ว', {

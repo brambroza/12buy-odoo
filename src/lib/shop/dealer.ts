@@ -7,7 +7,7 @@ import type { Dealer } from '@/lib/db/types';
 import { formatThaiAddress, parseThaiAddress } from '@/lib/thai-address';
 import { getPartner } from './catalog';
 import { AVATAR_NAME } from './uploads';
-import type { CatalogProduct, DealerProfile, DealerTier, DealerType, TypePricelists } from './types';
+import type { CatalogProduct, DealerProfile, DealerTier, DealerType, TypeCashPercents, TypePricelists } from './types';
 import { isProductVisible, type VisibilityScope } from './visibility';
 
 /** Cookie used by back-office staff to browse the shop as a specific dealer (impersonation). */
@@ -45,6 +45,29 @@ export function sanitizeTypePricelists(input: unknown): TypePricelists {
   return out;
 }
 
+/** Keeps only known families mapped to a cash discount % from 0 to 50 (0 = no discount). */
+export function sanitizeTypeCashPercents(input: unknown): TypeCashPercents {
+  const out: TypeCashPercents = {};
+  if (!input || typeof input !== 'object' || Array.isArray(input)) return out;
+  for (const type of VALID_TYPES) {
+    const raw = (input as Record<string, unknown>)[type];
+    if (raw === null || raw === undefined || raw === '') continue;
+    const percent = Number(raw);
+    if (Number.isFinite(percent) && percent >= 0 && percent <= 50) out[type] = Math.round(percent * 100) / 100;
+  }
+  return out;
+}
+
+/** Cash % of each family's own pricelist; families without a pricelist or a % are left out. */
+export function cashPercentsFor(typePricelists: TypePricelists, percents: admin.AdminShape['cashPercents']): TypeCashPercents {
+  const out: TypeCashPercents = {};
+  for (const [type, id] of Object.entries(typePricelists) as [DealerType, number][]) {
+    const percent = admin.cashPercentFor(id, percents);
+    if (percent !== null) out[type] = percent;
+  }
+  return out;
+}
+
 /** Cash pricelist paired with each family pricelist; families without a pair are left out. */
 function cashPricelistsFor(typePricelists: TypePricelists, pairs: admin.AdminShape['cashPairs']): TypePricelists {
   const out: TypePricelists = {};
@@ -75,6 +98,9 @@ export function sanitizeProfile(input: Partial<DealerProfile> | null | undefined
     cashPricelistId: Number.isInteger(input?.cashPricelistId) && (input!.cashPricelistId as number) > 0 ? (input!.cashPricelistId as number) : null,
     typePricelists: sanitizeTypePricelists(input?.typePricelists),
     typeCashPricelists: sanitizeTypePricelists(input?.typeCashPricelists),
+    cashPercent: typeof input?.cashPercent === 'number' && input.cashPercent > 0 && input.cashPercent <= 50 ? input.cashPercent : null,
+    typeCashPercents: sanitizeTypeCashPercents(input?.typeCashPercents),
+    dealerCashPercents: sanitizeTypeCashPercents(input?.dealerCashPercents),
     customerGroupId: typeof input?.customerGroupId === 'string' && input.customerGroupId ? input.customerGroupId.slice(0, 40) : null,
     avatarFile: typeof input?.avatarFile === 'string' && AVATAR_NAME.test(input.avatarFile) ? input.avatarFile : null,
   };
@@ -93,17 +119,17 @@ export function canSeeProduct(profile: Pick<DealerProfile, 'types' | 'customerGr
   return isProductVisible(product, visibilityScope(profile));
 }
 
-/** Serializes a profile for cookie storage (impersonation). Resolved book/group are left out. */
+/** Serializes a profile for cookie storage (impersonation). Resolved book/group/product discounts are left out. */
 export function encodeProfile(profile: DealerProfile): string {
-  const { priceBook: _book, customerGroup: _group, ...stored } = profile;
+  const { priceBook: _book, customerGroup: _group, productCashDiscounts: _discounts, ...stored } = profile;
   return Buffer.from(JSON.stringify(stored), 'utf8').toString('base64url');
 }
 
-/** Attaches the published price book and customer group from the current admin settings. */
+/** Attaches the published price book, customer group and (credit dealers) product cash discounts from the current admin settings. */
 export function withAdminSettings(profile: DealerProfile, data: admin.AdminShape): DealerProfile {
   const book = profile.priceBookId ? data.books.find((b) => b.id === profile.priceBookId) : undefined;
   const group = profile.customerGroupId ? data.groups.find((g) => g.id === profile.customerGroupId) : undefined;
-  return { ...profile, priceBook: book?.status === 'PUBLISHED' ? book : null, customerGroup: group ?? null };
+  return { ...profile, priceBook: book?.status === 'PUBLISHED' ? book : null, customerGroup: group ?? null, productCashDiscounts: profile.credit ? data.productCashDiscounts : {} };
 }
 
 /** Reads the impersonation cookie, if any. */
@@ -121,7 +147,7 @@ async function readImpersonationCookie(): Promise<DealerProfile | null> {
 /**
  * Builds the shop profile for a DB dealer: product families, customer group, tier, province and
  * the published web price book for its zone, plus the Odoo pricelist of the linked partner,
- * the per-family pricelists set on the dealer and, for credit dealers, the cash pricelists paired with them.
+ * the per-family pricelists set on the dealer and, for credit dealers, the cash % and the cash pricelists paired with them.
  */
 export async function profileFromDealer(dealer: Dealer, settings?: admin.AdminShape): Promise<DealerProfile> {
   const data = settings ?? await admin.getAdminSnapshot();
@@ -156,6 +182,9 @@ export async function profileFromDealer(dealer: Dealer, settings?: admin.AdminSh
     cashPricelistId: dealer.creditEnabled ? admin.cashPricelistFor(pricelistId, data.cashPairs) : null,
     typePricelists,
     typeCashPricelists: dealer.creditEnabled ? cashPricelistsFor(typePricelists, data.cashPairs) : {},
+    cashPercent: dealer.creditEnabled ? admin.cashPercentFor(pricelistId, data.cashPercents) : null,
+    typeCashPercents: dealer.creditEnabled ? cashPercentsFor(typePricelists, data.cashPercents) : {},
+    dealerCashPercents: dealer.creditEnabled ? sanitizeTypeCashPercents(dealer.typeCashPercents) : {},
     customerGroupId: admin.groupForDealerIn(data, dealer.id)?.id ?? null,
     avatarFile: dealer.avatarFile ?? null,
   }), data);

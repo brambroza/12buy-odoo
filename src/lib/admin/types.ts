@@ -76,6 +76,12 @@ export type DryRunResult = {
 /** Pairs an Odoo credit pricelist with its cash counterpart (e.g. TBR Credit ↔ TBR Cash). */
 export type CashPair = { creditPricelistId: number; cashPricelistId: number };
 
+/** Cash discount % for dealers on this pricelist who pay cash; wins over the pricelist's cash pair. */
+export type CashPercent = { pricelistId: number; percent: number };
+
+/** Cash discount set on one product (template): % of the dealer's price, or baht off per base unit. */
+export type ProductCashDiscount = { kind: 'PERCENT' | 'BAHT'; value: number };
+
 /** Admin assignment for an Odoo customer (partner). */
 export type DealerAssignment = {
   odooPartnerId: number;

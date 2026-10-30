@@ -40,17 +40,12 @@ function formatSize(bytes: number): string {
   return bytes < 1024 * 1024 ? `${Math.max(1, Math.round(bytes / 1024))} KB` : `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 }
 
-/**
- * Slip picker: drag & drop or browse on desktop, camera or photo library on phones.
- * Shows a preview before sending; posts `orderId` + `slip` to the given server action.
- */
-export function SlipUpload({ orderId, action, replacing }: { orderId: string; action: (formData: FormData) => Promise<void>; replacing: boolean }) {
+/** Picked slip state: type/size checks, shrinking and the preview URL. */
+function useSlipPicker(onChange?: (file: File | null) => void) {
   const [file, setFile] = useState<File | null>(null);
   const [preview, setPreview] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [dragging, setDragging] = useState(false);
   const [preparing, setPreparing] = useState(false);
-  const [pending, startTransition] = useTransition();
   const cameraRef = useRef<HTMLInputElement>(null);
   const pickerRef = useRef<HTMLInputElement>(null);
 
@@ -66,6 +61,7 @@ export function SlipUpload({ orderId, action, replacing }: { orderId: string; ac
     if (ready.size > MAX_BYTES) { setError('ไฟล์ใหญ่เกิน 4 MB'); return; }
     setFile(ready);
     setPreview(URL.createObjectURL(ready));
+    onChange?.(ready);
   };
 
   const clear = () => {
@@ -74,17 +70,21 @@ export function SlipUpload({ orderId, action, replacing }: { orderId: string; ac
     setError(null);
     if (cameraRef.current) cameraRef.current.value = '';
     if (pickerRef.current) pickerRef.current.value = '';
+    onChange?.(null);
   };
 
-  const submit = () => {
-    if (!file) return;
-    const formData = new FormData();
-    formData.set('orderId', orderId);
-    formData.set('slip', file);
-    startTransition(() => action(formData));
-  };
+  return { file, preview, error, preparing, cameraRef, pickerRef, accept, clear };
+}
 
-  const busy = preparing || pending;
+type Picker = ReturnType<typeof useSlipPicker>;
+
+/**
+ * Hidden inputs, the preview (with `actions` under it) or the drop zone, phone buttons and the error line.
+ * Drag & drop or browse on desktop, camera or photo library on phones.
+ */
+function SlipPickerView({ picker, busy, locked, actions }: { picker: Picker; busy: boolean; locked: boolean; actions: React.ReactNode }) {
+  const { file, preview, error, preparing, cameraRef, pickerRef, accept, clear } = picker;
+  const [dragging, setDragging] = useState(false);
 
   return (
     <div className="space-y-3">
@@ -96,7 +96,7 @@ export function SlipUpload({ orderId, action, replacing }: { orderId: string; ac
           <div className="relative flex justify-center bg-muted p-2">
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img src={preview} alt="ตัวอย่างสลิป" className="max-h-80 rounded-lg object-contain" />
-            {!pending && (
+            {!locked && (
               <button type="button" onClick={clear} aria-label="เอารูปนี้ออก" className="absolute right-2 top-2 flex size-8 items-center justify-center rounded-full bg-background/90 shadow hover:bg-background">
                 <X className="size-4" />
               </button>
@@ -104,11 +104,8 @@ export function SlipUpload({ orderId, action, replacing }: { orderId: string; ac
           </div>
           <div className="flex flex-wrap items-center gap-2 p-3">
             <p className="min-w-0 flex-1 truncate text-xs text-muted-foreground">{file.name} · {formatSize(file.size)}</p>
-            <Button type="button" variant="ghost" size="sm" onClick={() => pickerRef.current?.click()} disabled={pending}><RefreshCw className="size-4" /> เปลี่ยนรูป</Button>
-            <Button type="button" size="sm" onClick={submit} disabled={pending}>
-              {pending ? <Loader2 className="size-4 animate-spin" /> : <Upload className="size-4" />}
-              {pending ? 'กำลังส่ง...' : replacing ? 'ส่งสลิปใหม่' : 'ส่งสลิป'}
-            </Button>
+            <Button type="button" variant="ghost" size="sm" onClick={() => pickerRef.current?.click()} disabled={locked}><RefreshCw className="size-4" /> เปลี่ยนรูป</Button>
+            {actions}
           </div>
         </div>
       ) : (
@@ -146,5 +143,60 @@ export function SlipUpload({ orderId, action, replacing }: { orderId: string; ac
 
       {error && <p role="alert" className="text-xs text-destructive">{error}</p>}
     </div>
+  );
+}
+
+/**
+ * Slip upload for an existing order: shows a preview before sending;
+ * posts `orderId` + `slip` to the given server action.
+ */
+export function SlipUpload({ orderId, action, replacing }: { orderId: string; action: (formData: FormData) => Promise<void>; replacing: boolean }) {
+  const picker = useSlipPicker();
+  const [pending, startTransition] = useTransition();
+
+  const submit = () => {
+    if (!picker.file) return;
+    const formData = new FormData();
+    formData.set('orderId', orderId);
+    formData.set('slip', picker.file);
+    startTransition(() => action(formData));
+  };
+
+  return (
+    <SlipPickerView
+      picker={picker}
+      busy={picker.preparing || pending}
+      locked={pending}
+      actions={(
+        <Button type="button" size="sm" onClick={submit} disabled={pending}>
+          {pending ? <Loader2 className="size-4 animate-spin" /> : <Upload className="size-4" />}
+          {pending ? 'กำลังส่ง...' : replacing ? 'ส่งสลิปใหม่' : 'ส่งสลิป'}
+        </Button>
+      )}
+    />
+  );
+}
+
+/**
+ * Slip field inside a larger form (checkout): the picked, shrunk image is put into a hidden
+ * `<input type="file" name={name}>` so it is sent with the form. `onChange` reports whether one is picked.
+ */
+export function SlipField({ name = 'slip', disabled = false, onChange }: { name?: string; disabled?: boolean; onChange?: (picked: boolean) => void }) {
+  const fieldRef = useRef<HTMLInputElement>(null);
+  const picker = useSlipPicker((file) => {
+    const input = fieldRef.current;
+    if (input) {
+      const transfer = new DataTransfer();
+      if (file) transfer.items.add(file);
+      input.files = transfer.files;
+    }
+    onChange?.(Boolean(file));
+  });
+
+  return (
+    <>
+      <input ref={fieldRef} type="file" name={name} accept={ACCEPT} className="hidden" tabIndex={-1} aria-hidden />
+      <SlipPickerView picker={picker} busy={picker.preparing} locked={disabled} actions={null} />
+    </>
   );
 }

@@ -10,6 +10,7 @@ import { IconSubmit } from '@/components/admin/icon-submit';
 import { UrlDrawer } from '@/components/admin/url-drawer';
 import { listHref, matchesSearch, paginate, searchText } from '@/lib/admin/list';
 import { creditDues } from '@/lib/admin/dashboard';
+import { uniformCashPercent } from '@/lib/shop/pricing';
 import { baht } from '@/lib/shop/catalog';
 import { canSyncOrder } from '@/lib/shop/odoo-sync';
 import { countStalePending, isPaymentReady, listAllOrders } from '@/lib/shop/store';
@@ -66,7 +67,7 @@ function OrderTotal({ order: o }: { order: ProtoOrder }) {
   return (
     <span className="font-bold tabular-nums">
       {baht(o.total)}
-      {o.cashDiscount > 0 && <span className="block text-xs font-normal text-emerald-700">ลดเงินสดท้ายบิล −{baht(o.cashDiscount)} จาก {baht(o.subtotal)}</span>}
+      {o.cashDiscount > 0 && <span className="block text-xs font-normal text-emerald-700">ลดเงินสดท้ายบิล{percentLabel(o.lines)} −{baht(o.cashDiscount)} จาก {baht(o.subtotal)}</span>}
       {o.coupon && o.couponDiscount > 0 && <span className="block text-xs font-normal text-emerald-700">คูปอง {o.coupon.code} −{baht(o.couponDiscount)}</span>}
     </span>
   );
@@ -326,4 +327,10 @@ function OrderDrawer({ order: o, closeHref, notice }: { order: ProtoOrder; close
       )}
     </UrlDrawer>
   );
+}
+
+/** " 2%" when every cash-discounted line has the same %, else empty. */
+function percentLabel(lines: Parameters<typeof uniformCashPercent>[0]): string {
+  const percent = uniformCashPercent(lines);
+  return percent !== null ? ` ${percent}%` : '';
 }

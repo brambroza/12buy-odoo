@@ -9,7 +9,7 @@ import { EmptyRow, FilterChip, ListPagination, ListSearch, TableCard } from '@/c
 import { IconSubmit } from '@/components/admin/icon-submit';
 import { UrlDrawer } from '@/components/admin/url-drawer';
 import * as admin from '@/lib/admin/store';
-import type { CashPair, PriceBook, PriceZone } from '@/lib/admin/types';
+import type { CashPair, CashPercent, PriceBook, PriceZone } from '@/lib/admin/types';
 import { pricelistNameFor } from '@/lib/admin/dry-run';
 import { listHref, paginate } from '@/lib/admin/list';
 import { baht, getCatalog, priceFor, searchProducts, shortProvince } from '@/lib/shop/catalog';
@@ -39,7 +39,7 @@ const TYPES = Object.keys(DEALER_TYPE_LABELS) as DealerType[];
  */
 export default async function PricesPage({ searchParams }: { searchParams: Promise<Params> }) {
   const params = await searchParams;
-  const [catalog, zones, books, pairs] = [await getCatalog(), await admin.listZones(), await admin.listBooks(), await admin.listCashPairs()];
+  const [catalog, zones, books, pairs, percents] = [await getCatalog(), await admin.listZones(), await admin.listBooks(), await admin.listCashPairs(), await admin.listCashPercents()];
   const book = params.book ? books.find((b) => b.id === params.book) : undefined;
   const zone = book ? zones.find((z) => z.id === book.zoneId) : undefined;
   const type = TYPES.includes(params.type as DealerType) ? (params.type as DealerType) : undefined;
@@ -100,8 +100,8 @@ export default async function PricesPage({ searchParams }: { searchParams: Promi
       </TableCard>
 
       {pairsOpen && (
-        <UrlDrawer key="pairs" title="ส่วนลดเงินสดของลูกค้าเครดิต" description={`${pairs.length} คู่ · ใช้คำนวณส่วนลดเงินสดท้ายบิล`} closeHref={PATH}>
-          <CashPairs pricelists={catalog.pricelists} pairs={pairs} saved={params.pairs === '1'} />
+        <UrlDrawer key="pairs" title="ส่วนลดเงินสดของลูกค้าเครดิต" description={`${percents.length} pricelist ตั้ง % · ${pairs.length} คู่ราคา · ใช้คำนวณส่วนลดเงินสดท้ายบิล`} closeHref={PATH}>
+          <CashPairs pricelists={catalog.pricelists} pairs={pairs} percents={percents} saved={params.pairs === '1'} error={params.error} />
         </UrlDrawer>
       )}
 
@@ -121,34 +121,46 @@ export default async function PricesPage({ searchParams }: { searchParams: Promi
 }
 
 /**
- * Credit ↔ cash pricelist pairs. A credit dealer who pays cash gets the price
- * difference between the two as an end-of-bill discount.
+ * Cash discount for credit dealers who pay cash, per pricelist: a % of the price, or (no %) the
+ * price difference to a paired cash pricelist. The dealer form can override the % per product family.
+ * Pricelists named "Credit" come first, then the rest so any pricelist used by a credit dealer can get a %.
  */
-function CashPairs({ pricelists, pairs, saved }: { pricelists: { id: number; name: string }[]; pairs: CashPair[]; saved: boolean }) {
-  const credits = pricelists.filter((p) => /credit/i.test(p.name) || pairs.some((x) => x.creditPricelistId === p.id));
+function CashPairs({ pricelists, pairs, percents, saved, error }: { pricelists: { id: number; name: string }[]; pairs: CashPair[]; percents: CashPercent[]; saved: boolean; error?: string }) {
+  const isCredit = (p: { id: number; name: string }) => /credit/i.test(p.name) || pairs.some((x) => x.creditPricelistId === p.id) || percents.some((x) => x.pricelistId === p.id);
+  const ordered = [...pricelists.filter(isCredit), ...pricelists.filter((p) => !isCredit(p))];
   return (
     <form action={saveCashPairsAction} className="space-y-3">
       {saved && <p className="rounded-lg bg-emerald-500/10 px-3 py-2 text-sm text-emerald-700">บันทึกแล้ว</p>}
-      <p className="text-xs text-muted-foreground">ร้านที่ตั้งเป็นลูกค้าเครดิตแล้วเลือกจ่ายเงินสด จะได้ส่วนลดท้ายบิล = ราคา pricelist เครดิตของร้าน − ราคา pricelist เงินสดที่จับคู่ไว้ (คิดรายสินค้า)</p>
-      {credits.length === 0 && <p className="text-xs text-muted-foreground">ไม่พบ pricelist ที่ชื่อมีคำว่า Credit ใน Odoo</p>}
-      {credits.map((credit) => {
+      {error && <p role="alert" className="rounded-lg bg-destructive/10 px-3 py-2 text-sm text-destructive">{error}</p>}
+      <p className="text-xs text-muted-foreground">ร้านที่ติ๊ก “ลูกค้าเครดิต” แล้วเลือกจ่ายเงินสด จะได้ส่วนลดท้ายบิล คิดรายสินค้าตามลำดับ: % ที่ตั้งในข้อมูลดีลเลอร์ (ต่อกลุ่มสินค้า) → ค่าที่ตั้งรายสินค้า (เมนูส่วนลดเงินสด) → % ของ pricelist ด้านล่าง → ส่วนต่างกับ pricelist เงินสดที่จับคู่ไว้</p>
+      {pricelists.length === 0 && <p className="text-xs text-muted-foreground">อ่าน pricelist จาก Odoo ไม่ได้</p>}
+      <div className="hidden grid-cols-[1fr_88px_1fr] gap-2 text-xs text-muted-foreground sm:grid">
+        <span>Pricelist</span><span>% เงินสด</span><span>หรือจ่ายสดใช้ราคา</span>
+      </div>
+      {ordered.map((credit) => {
         const current = admin.cashPricelistFor(credit.id, pairs);
         const suggested = current ?? admin.suggestCashPair(credit, pricelists);
+        const percent = admin.cashPercentFor(credit.id, percents);
         return (
-          <label key={credit.id} className="grid items-center gap-2 text-sm sm:grid-cols-[1fr_auto_1fr]">
+          <div key={credit.id} className="grid items-center gap-2 text-sm sm:grid-cols-[1fr_88px_1fr]">
             <span className="font-medium">{credit.name}</span>
-            <span className="text-xs text-muted-foreground">จ่ายสดใช้ราคา</span>
-            <span className="flex items-center gap-2">
+            <label className="flex items-center gap-1">
+              <span className="sr-only">% ส่วนลดเงินสดของ {credit.name}</span>
+              <input name={`percent_${credit.id}`} type="number" inputMode="decimal" min="0.01" max="50" step="0.01" defaultValue={percent ?? ''} placeholder="—" className="h-9 w-full rounded-lg border border-border bg-background px-2 text-right text-sm" />
+              <span className="text-xs text-muted-foreground">%</span>
+            </label>
+            <label className="flex items-center gap-2">
+              <span className="sr-only">pricelist เงินสดของ {credit.name}</span>
               <select name={`cash_${credit.id}`} defaultValue={suggested ?? ''} className="h-9 w-full rounded-lg border border-border bg-background px-2 text-sm">
-                <option value="">ไม่มีส่วนลดเงินสด</option>
+                <option value="">ไม่จับคู่</option>
                 {pricelists.filter((p) => p.id !== credit.id).map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
               </select>
               {current === null && suggested !== null && <span className="shrink-0 text-xs text-amber-600">แนะนำ ยังไม่บันทึก</span>}
-            </span>
-          </label>
+            </label>
+          </div>
         );
       })}
-      <Button type="submit" size="sm">บันทึกคู่ราคา</Button>
+      <Button type="submit" size="sm">บันทึกส่วนลดเงินสด</Button>
     </form>
   );
 }

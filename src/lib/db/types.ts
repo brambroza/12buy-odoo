@@ -127,6 +127,8 @@ export type Dealer = {
   creditOpening: number | string;
   /** Odoo pricelist id per product family (`{ "MOTORCYCLE": 7, "CAR": 9 }`); families left out use the normal price. */
   typePricelists: Partial<Record<DealerType, number>> | null;
+  /** Cash discount % per product family (`{ "CAR": 2 }`), overriding the pricelist %; 0 = none. */
+  typeCashPercents: Partial<Record<DealerType, number>> | null;
   /** Profile picture in the private `avatars` bucket, uploaded by the dealer owner. */
   avatarFile: string | null;
   status: DealerStatus;

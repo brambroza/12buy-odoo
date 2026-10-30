@@ -7,7 +7,7 @@ import { PAYMENT_METHOD_LABELS } from '@/lib/shop/types';
 import { formatAmount } from '@/lib/money';
 import { findCarrierByName } from './delivery-carrier';
 import { applyCouponToOrder } from './loyalty';
-import { odooSearchRead, odooWrite } from './rpc';
+import { odooRead, odooSearchRead, odooWrite } from './rpc';
 
 type SaleOrderRead = { id: number; name: string; state: string; amount_total: number };
 type PartnerSalesRead = { id: number; user_id: [number, string] | false; commercial_partner_id: [number, string] | false };
@@ -29,15 +29,64 @@ export async function salespersonFor(partnerId: number): Promise<number | false>
 
 const round2 = (n: number) => Math.round(n * 100) / 100;
 
+/** Odoo product used for the end-of-bill cash discount line (`ODOO_CASH_DISCOUNT_PRODUCT_ID`); null = not set up. */
+export function cashDiscountProductId(): number | null {
+  const id = Number(process.env.ODOO_CASH_DISCOUNT_PRODUCT_ID);
+  return Number.isInteger(id) && id > 0 ? id : null;
+}
+
+/** How the cash discount goes to Odoo: as separate end-of-bill lines (product + tax field name), or folded into prices. */
+export type CashDiscountLine = { productId: number; taxField: string } | null;
+
+/**
+ * The cash discount can go as its own lines only when every discounted line knows its taxes
+ * (orders placed before tax ids were stored do not), so the discount lines carry the right VAT.
+ */
+export function canSendCashDiscountLine(order: Pick<ProtoOrder, 'lines' | 'paymentMethod'>): boolean {
+  const discounted = order.paymentMethod === 'CASH' ? order.lines.filter((l) => (l.cashDiscountPerUnit ?? 0) > 0) : [];
+  return discounted.length > 0 && discounted.every((l) => Array.isArray(l.taxIds));
+}
+
+/**
+ * End-of-bill cash discount lines: one negative line per set of taxes, so VAT drops with the discount
+ * exactly as on the web bill. The label shows the % when every line of the set has the same one.
+ */
+function cashDiscountLines(order: Pick<ProtoOrder, 'lines' | 'ref'>, discount: NonNullable<CashDiscountLine>): Record<string, unknown>[] {
+  const groups = new Map<string, { taxIds: number[]; amount: number; percents: Set<number | undefined> }>();
+  for (const line of order.lines) {
+    const off = line.qty * (line.cashDiscountPerUnit ?? 0);
+    if (off <= 0) continue;
+    const taxIds = [...(line.taxIds ?? [])].sort((a, b) => a - b);
+    const key = taxIds.join(',');
+    const group = groups.get(key) ?? { taxIds, amount: 0, percents: new Set() };
+    group.amount += off;
+    group.percents.add(line.cashDiscountPercent);
+    groups.set(key, group);
+  }
+  return [...groups.values()].map((g) => {
+    const [percent] = g.percents;
+    const label = g.percents.size === 1 && percent !== undefined ? `ส่วนลดเงินสด ${percent}%` : 'ส่วนลดเงินสด';
+    return {
+      product_id: discount.productId,
+      name: `${label} (ออเดอร์เว็บ ${order.ref})`,
+      product_uom_qty: 1,
+      price_unit: -round2(g.amount),
+      [discount.taxField]: [[6, 0, g.taxIds]],
+    };
+  });
+}
+
 /**
  * Maps web order lines to `sale.order.line` values.
  * A line bought in packs (e.g. "มัด 10 เส้น" × 2) goes out in that pack unit with the
- * pack price, so the warehouse sees packs; otherwise base units. The cash discount
- * is folded into the unit price so the Odoo total equals what the dealer paid.
+ * pack price, so the warehouse sees packs; otherwise base units. The cash discount goes as
+ * end-of-bill lines when `discount` is given, otherwise it is folded into the unit price;
+ * either way the Odoo total equals what the dealer paid.
  */
-export function buildOrderLines(order: Pick<ProtoOrder, 'lines' | 'paymentMethod'>): Record<string, unknown>[] {
-  return order.lines.map((line) => {
-    const net = line.unitPrice - (order.paymentMethod === 'CASH' ? line.cashDiscountPerUnit ?? 0 : 0);
+export function buildOrderLines(order: Pick<ProtoOrder, 'lines' | 'paymentMethod'> & { ref?: string }, discount: CashDiscountLine = null): Record<string, unknown>[] {
+  const asLines = Boolean(discount) && canSendCashDiscountLine(order);
+  const products = order.lines.map((line) => {
+    const net = line.unitPrice - (order.paymentMethod === 'CASH' && !asLines ? line.cashDiscountPerUnit ?? 0 : 0);
     const inPacks = Boolean(line.unitId && line.unitQty && line.qty % line.unitQty === 0);
     const factor = inPacks ? line.qty / line.unitQty! : 1;
     return {
@@ -47,13 +96,34 @@ export function buildOrderLines(order: Pick<ProtoOrder, 'lines' | 'paymentMethod
       price_unit: round2(net * factor),
     };
   });
+  return asLines ? [...products, ...cashDiscountLines({ lines: order.lines, ref: order.ref ?? '' }, discount!)] : products;
+}
+
+let taxFieldCache: string | null = null;
+
+/** Name of the taxes field on `sale.order.line`: `tax_ids` on Odoo 19, `tax_id` before. Read once. */
+export async function saleLineTaxField(): Promise<string> {
+  if (taxFieldCache) return taxFieldCache;
+  const fields = await odooRead<Record<string, unknown>>('sale.order.line', 'fields_get', [], { attributes: ['type'] });
+  taxFieldCache = 'tax_ids' in fields ? 'tax_ids' : 'tax_id';
+  return taxFieldCache;
+}
+
+/** Cash discount mode for this order: end-of-bill lines when the Odoo product is set up and the order allows it. */
+async function cashDiscountLineFor(order: ProtoOrder): Promise<CashDiscountLine> {
+  const productId = cashDiscountProductId();
+  if (!productId || !canSendCashDiscountLine(order)) return null;
+  return { productId, taxField: await saleLineTaxField() };
 }
 
 /** Free-text note on the SO: payment, delivery method, delivery address and the dealer's remark. */
-export function buildOrderNote(order: ProtoOrder): string {
+export function buildOrderNote(order: ProtoOrder, discountAsLine = false): string {
+  const cashNote = order.cashDiscount <= 0 ? '' : discountAsLine
+    ? ` (ส่วนลดเงินสด ${formatAmount(order.cashDiscount)} บาท เป็นบรรทัดท้ายบิล)`
+    : ` (รวมส่วนลดเงินสด ${formatAmount(order.cashDiscount)} บาทในราคาแล้ว)`;
   return [
     `ออเดอร์เว็บ ${order.ref}`,
-    `ชำระ: ${PAYMENT_METHOD_LABELS[order.paymentMethod]}${order.cashDiscount > 0 ? ` (รวมส่วนลดเงินสด ${formatAmount(order.cashDiscount)} บาทในราคาแล้ว)` : ''}`,
+    `ชำระ: ${PAYMENT_METHOD_LABELS[order.paymentMethod]}${cashNote}`,
     order.coupon ? `คูปอง: ${order.coupon.code} (${order.coupon.programName}) เว็บคำนวณส่วนลด ${formatAmount(order.couponDiscount)} บาท` : '',
     order.poRef ? `เลขที่ใบสั่งซื้อของร้าน: ${order.poRef}` : '',
     `การจัดส่ง: ${order.carrier}`,
@@ -98,6 +168,7 @@ export async function pushOrderToOdoo(order: ProtoOrder, partnerId: number): Pro
   if (!so) {
     const salesperson = await salespersonFor(partnerId);
     const carrierId = await carrierIdFor(order);
+    const discount = await cashDiscountLineFor(order);
     const created = await odooWrite<number | number[]>('sale.order', 'create', [[{
       partner_id: partnerId,
       user_id: salesperson,
@@ -105,8 +176,8 @@ export async function pushOrderToOdoo(order: ProtoOrder, partnerId: number): Pro
       origin: 'Web',
       ...(order.odooPricelistId ? { pricelist_id: order.odooPricelistId } : {}),
       ...(carrierId ? { carrier_id: carrierId } : {}),
-      note: buildOrderNote(order),
-      order_line: buildOrderLines(order).map((values) => [0, 0, values]),
+      note: buildOrderNote(order, Boolean(discount)),
+      order_line: buildOrderLines(order, discount).map((values) => [0, 0, values]),
     }]]);
     so = await readById(Array.isArray(created) ? created[0] : created);
   }

@@ -4,7 +4,7 @@ import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { baht, findProduct, getCatalog, getDealerCarrier } from '@/lib/shop/catalog';
 import { getCreditLine } from '@/lib/shop/credit-line';
-import { billTotals, cashDiscountPerUnit, resolvePrice, withCoupon } from '@/lib/shop/pricing';
+import { billTotals, cashDiscountPerUnit, cashPercentOf, resolvePrice, uniformCashPercent, withCoupon } from '@/lib/shop/pricing';
 import { canSeeProduct, getDealerProfile } from '@/lib/shop/dealer';
 import { checkCartCoupon } from '@/lib/shop/cart-coupon';
 import { getSessionId } from '@/lib/shop/session';
@@ -29,7 +29,7 @@ export default async function CartPage({ searchParams }: { searchParams: Promise
     .map((item) => ({ item, product: findProduct(catalog, item.productId) }))
     .filter((l): l is { item: typeof l.item; product: NonNullable<typeof l.product> } => Boolean(l.product))
     .map((l) => ({ ...l, unit: resolvePrice(catalog, l.product, profile, l.item.qty), sale: pickUnit(l.product.units, l.item.unitId) }))
-    .map((l) => ({ ...l, cashOff: cashDiscountPerUnit(catalog, l.product, profile, l.item.qty, l.unit), allowed: canSeeProduct(profile, l.product) }));
+    .map((l) => ({ ...l, cashOff: cashDiscountPerUnit(catalog, l.product, profile, l.item.qty, l.unit), cashPercent: cashPercentOf(profile, l.product), allowed: canSeeProduct(profile, l.product) }));
   const billLines = lines.map((l) => ({ qty: l.item.qty, unitPrice: l.unit, cashDiscountPerUnit: l.cashOff, vatRate: l.product.vatRate, vatIncluded: l.product.vatIncluded }));
   const couponCode = await getCartCoupon(sid);
   const coupon = couponCode && lines.length
@@ -38,6 +38,7 @@ export default async function CartPage({ searchParams }: { searchParams: Promise
   const couponOff = (method: 'CREDIT' | 'CASH') => { const r = coupon[method]; return r?.ok ? r.discount : 0; };
   const creditBill = withCoupon(billTotals(billLines, 'CREDIT'), couponOff('CREDIT'));
   const cashBill = withCoupon(billTotals(billLines, 'CASH'), couponOff('CASH'));
+  const cashPercent = uniformCashPercent(lines.map((l) => ({ cashDiscountPerUnit: l.cashOff, cashDiscountPercent: l.cashPercent })));
   const couponResult = coupon[profile.credit ? 'CREDIT' : 'CASH'] ?? coupon.CASH;
   // Live: the tighter of the web limit and Odoo's credit_limit; Odoo unreachable leaves only the web limit.
   const creditLine = await getCreditLine(profile);
@@ -68,7 +69,7 @@ export default async function CartPage({ searchParams }: { searchParams: Promise
       {error && <p role="alert" className="rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-sm font-medium text-destructive">{error}</p>}
 
       <ul className="space-y-2">
-        {lines.map(({ item, product, unit, sale, allowed }, index) => (
+        {lines.map(({ item, product, unit, sale, allowed, cashOff, cashPercent }, index) => (
           <li key={`${product.id}-${item.unitId ?? 'base'}`} className="rounded-xl border border-border bg-card p-3">
             <div className="flex items-start gap-3">
               <Link href={`/shop/product/${product.id}`} className="shrink-0">
@@ -84,6 +85,7 @@ export default async function CartPage({ searchParams }: { searchParams: Promise
                 <p className="truncate text-sm font-medium">{product.name}</p>
                 <p className="text-xs text-muted-foreground">{baht(unit)} /{product.baseUnit}{sale.factor > 1 && <> · {baht(unit * sale.factor)} /{sale.name}</>}</p>
                 <p className="text-xs font-medium">{describeQty(item.qty, product.baseUnit, sale, item.unitQty)}</p>
+                {cashOff > 0 && <p className="text-xs text-emerald-700 dark:text-emerald-400">จ่ายเงินสดลด{cashPercent !== null ? ` ${cashPercent}%` : ''} −{baht(cashOff * item.qty)}</p>}
               </div>
               <p className="shrink-0 font-bold">{baht(unit * item.qty)}</p>
             </div>
@@ -162,7 +164,7 @@ export default async function CartPage({ searchParams }: { searchParams: Promise
           <span className="text-xs text-muted-foreground">เลขที่ใบสั่งซื้อของร้าน (ไม่บังคับ)</span>
           <input name="poRef" maxLength={40} placeholder="เช่น PO-6811-023" className="mt-1 h-10 w-full rounded-lg border border-border bg-background px-3 text-sm" />
         </label>
-        <CheckoutSummary credit={profile.credit} creditBill={creditBill} cashBill={cashBill} creditLine={creditLine} lineCount={lines.length} blocked={!delivery ? 'ยังไม่มีการจัดส่ง' : notAllowed ? 'ลบสินค้าที่สั่งไม่ได้ก่อน' : overStock ? 'แก้จำนวนก่อน' : couponCode && !couponResult?.ok ? 'ลบโค้ดที่ใช้ไม่ได้ก่อน' : null} />
+        <CheckoutSummary credit={profile.credit} creditBill={creditBill} cashBill={cashBill} cashPercent={cashPercent} creditLine={creditLine} lineCount={lines.length} blocked={!delivery ? 'ยังไม่มีการจัดส่ง' : notAllowed ? 'ลบสินค้าที่สั่งไม่ได้ก่อน' : overStock ? 'แก้จำนวนก่อน' : couponCode && !couponResult?.ok ? 'ลบโค้ดที่ใช้ไม่ได้ก่อน' : null} />
        {/*  <p className="text-[11px] text-muted-foreground">ออเดอร์เข้า Odoo เมื่อฝ่ายขายยืนยัน</p> */}
       </form>
       </div>
