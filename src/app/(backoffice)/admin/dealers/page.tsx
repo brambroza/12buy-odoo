@@ -18,6 +18,7 @@ import { listOpenCreditOrders } from '@/lib/shop/store';
 import { DEALER_TIER_LABELS, DEALER_TYPE_LABELS, type DealerTier, type DealerType } from '@/lib/shop/types';
 import { DealerAvatar } from '@/components/shop/dealer-avatar';
 import { UrlDrawer } from '@/components/admin/url-drawer';
+import { ExportMenu } from '@/components/admin/export-menu';
 import { DealerNameField, type ExistingShop } from '@/components/admin/dealer-name-field';
 import { formatTaxId } from '@/lib/tax-id';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
@@ -159,6 +160,7 @@ export default async function DealersPage({ searchParams }: { searchParams: Prom
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <h1 className="text-2xl font-bold">ดีลเลอร์ / ลูกค้า Odoo</h1>
+          {canEdit && <div className="mt-1"><ExportMenu kind="dealers" label="ส่งออกดีลเลอร์" size="xs" /></div>}
           <p className="text-sm text-muted-foreground">อนุมัติร้าน กำหนดประเภท/ระดับ สร้างบัญชีเข้าสู่ระบบ และตั้งกลุ่มราคา (pricelist) วงเงินเครดิต การจัดส่งของลูกค้าใน Odoo ในที่เดียว · กดแถวเพื่อแก้ไข · โซนราคาคำนวณจากจังหวัด</p>
         </div>
         {canEdit && <Button nativeButton={false} render={<Link href={href({ new: '1' })} scroll={false} />} size="sm"><Plus /> เพิ่มดีลเลอร์</Button>}

@@ -12,7 +12,7 @@ import type { OdooPublishResult, PriceBook } from '@/lib/admin/types';
 import { flash } from '@/lib/flash';
 import { returnUrl } from '@/lib/admin/return-url';
 import { audit } from '@/lib/auth/audit';
-import { requireAdmin, requireBackoffice } from '@/lib/auth/session';
+import { requireAdmin, requireBackoffice, requirePermission } from '@/lib/auth/session';
 import { cancelOrderInOdoo, needsOdooCancel } from '@/lib/odoo/cancel';
 import { notifyCreditPaymentReview, notifyOdooFailure, notifyOrderStatus, notifySlipVerified } from '@/lib/notify';
 import { canSyncOrder, syncOrderToOdoo } from '@/lib/shop/odoo-sync';
@@ -364,9 +364,10 @@ export async function saveCashPairsAction(formData: FormData) {
  * invoice, for cash and credit alike; a failed push keeps the web confirmation and shows a retry button.
  */
 export async function adminAdvanceOrderAction(formData: FormData) {
-  const user = await requireBackoffice();
   const id = String(formData.get('orderId') ?? '');
   const order = await shopStore.getOrder(null, id);
+  // Confirming is a sales decision; moving a confirmed order on (ship) is the warehouse's.
+  const user = await requirePermission(order?.status === 'PENDING' ? 'order.confirm' : 'order.ship');
   // The form posts the status it was rendered with; a stale/double submit must not skip a step.
   const expected = String(formData.get('expectedStatus') ?? '');
   if (!order || (expected && order.status !== expected)) redirect(await back('/admin/orders'));
@@ -411,7 +412,7 @@ async function pushOrReport(order: ProtoOrder): Promise<string | null> {
 
 /** Re-sends a confirmed order to Odoo (after a failure, or for orders confirmed before the Odoo link existed). */
 export async function adminSyncOrderAction(formData: FormData) {
-  const user = await requireBackoffice();
+  const user = await requirePermission('order.confirm');
   const order = await shopStore.getOrder(null, String(formData.get('orderId') ?? ''));
   if (!order || !canSyncOrder(order)) redirect(await back('/admin/orders'));
   const failure = await pushOrReport(order);
@@ -428,7 +429,7 @@ export async function adminSyncOrderAction(formData: FormData) {
  * Verifying does not mark the order PAID: accounting registers the payment in Odoo and the status sync follows.
  */
 export async function reviewCreditPaymentAction(formData: FormData) {
-  const user = await requireBackoffice();
+  const user = await requirePermission('order.credit_review');
   const parsed = z.object({ orderId: z.string().min(1), paymentId: z.string().min(1), decision: z.enum(['VERIFIED', 'REJECTED']), reason: z.string().trim().max(300).optional().default('') })
     .safeParse({ orderId: formData.get('orderId'), paymentId: formData.get('paymentId'), decision: formData.get('decision'), reason: formData.get('reason') ?? '' });
   if (!parsed.success) redirect(await back('/admin/orders', { error: 'ข้อมูลไม่ครบ' }));
@@ -449,7 +450,7 @@ export async function reviewCreditPaymentAction(formData: FormData) {
 
 /** Resends the chatter note for every credit payment of an order whose last note failed. */
 export async function resendCreditPaymentLogAction(formData: FormData) {
-  await requireBackoffice();
+  await requirePermission('order.credit_review');
   const order = await shopStore.getOrder(null, String(formData.get('orderId') ?? ''));
   if (!order) redirect(await back('/admin/orders'));
   const targets = creditPaymentsToResend(order);
@@ -464,7 +465,7 @@ export async function resendCreditPaymentLogAction(formData: FormData) {
 }
 
 export async function verifySlipAction(formData: FormData) {
-  const user = await requireBackoffice();
+  const user = await requirePermission('order.verify_slip');
   const order = await shopStore.verifySlip(String(formData.get('orderId') ?? ''));
   revalidateAdmin();
   if (order?.payment.verifiedAt) {
@@ -492,7 +493,7 @@ export async function adminRefreshStatusesAction() {
 
 /** Saves the parcel tracking number the warehouse got from the carrier. */
 export async function adminSetTrackingAction(formData: FormData) {
-  const user = await requireBackoffice();
+  const user = await requirePermission('order.ship');
   const trackingRef = String(formData.get('trackingRef') ?? '');
   const order = await shopStore.setTrackingRef(String(formData.get('orderId') ?? ''), trackingRef);
   if (order) await audit(user.id, 'order.tracking', 'ShopOrder', order.id, { ref: order.ref, trackingRef: trackingRef.trim() || null });
@@ -505,7 +506,7 @@ export async function adminSetTrackingAction(formData: FormData) {
  * is cancelled there too; a posted invoice blocks that part and the admin is told what accounting must do.
  */
 export async function adminCancelOrderAction(formData: FormData) {
-  const user = await requireBackoffice();
+  const user = await requirePermission('order.cancel');
   const id = String(formData.get('orderId') ?? '');
   const before = await shopStore.getOrder(null, id);
   const order = await shopStore.cancelOrder(null, id, { id: user.id, name: user.name });
@@ -528,7 +529,7 @@ export async function adminCancelOrderAction(formData: FormData) {
 
 /** Retries the Odoo side of a cancel that failed (e.g. after accounting credit-noted the invoice). */
 export async function adminRetryOdooCancelAction(formData: FormData) {
-  const user = await requireBackoffice();
+  const user = await requirePermission('order.cancel');
   const order = await shopStore.getOrder(null, String(formData.get('orderId') ?? ''));
   if (!order || order.status !== 'CANCELLED' || !needsOdooCancel(order)) redirect(await back('/admin/orders'));
   const outcome = await cancelOrderInOdoo(order);
@@ -537,4 +538,56 @@ export async function adminRetryOdooCancelAction(formData: FormData) {
   revalidateAdmin();
   if (outcome.ok) await flash('ยกเลิก SO ใน Odoo แล้ว', { icon: 'cancel', description: `${order.ref} · ${outcome.note ?? ''}` });
   else redirect(await back('/admin/orders', { error: `${order.ref}: ${outcome.error}` }));
+}
+
+// ---------- bulk ----------
+
+/** Order ids ticked in the list (`ids` checkboxes), at most 50. */
+function selectedIds(formData: FormData): string[] {
+  return [...new Set(formData.getAll('ids').map(String).filter(Boolean))].slice(0, 50);
+}
+
+/**
+ * Confirms every selected PENDING order that is ready (credit, or cash with a verified slip) and pushes
+ * each to Odoo. Orders that are not ready are skipped and counted, never half-done.
+ */
+export async function bulkConfirmOrdersAction(formData: FormData) {
+  const user = await requirePermission('order.confirm');
+  const ids = selectedIds(formData);
+  if (!ids.length) redirect(await back('/admin/orders', { error: 'ยังไม่ได้เลือกออเดอร์' }));
+  let confirmed = 0;
+  let skipped = 0;
+  const problems: string[] = [];
+  for (const id of ids) {
+    const order = await shopStore.getOrder(null, id);
+    if (!order || order.status !== 'PENDING' || !shopStore.isPaymentReady(order)) { skipped += 1; continue; }
+    const advanced = await shopStore.advanceOrder(null, id, undefined, 'PENDING', { id: user.id, name: user.name });
+    if (!advanced || advanced.status !== 'PREPARING') { skipped += 1; continue; }
+    confirmed += 1;
+    await audit(user.id, 'order.confirm', 'ShopOrder', id, { ref: order.ref, from: 'PENDING', to: 'PREPARING', bulk: true });
+    await notifyOrderStatus(advanced);
+    if (canSyncOrder(advanced)) {
+      const failure = await pushOrReport(advanced);
+      if (failure) problems.push(failure);
+    }
+  }
+  revalidateAdmin();
+  await flash(`ยืนยันแล้ว ${confirmed} ออเดอร์`, { type: problems.length ? 'warning' : 'success', icon: 'check', description: `${skipped ? `ข้าม ${skipped} ที่ยังไม่พร้อม (ยังไม่ตรวจสลิป / ไม่ได้รอยืนยัน)` : 'ทุกออเดอร์ที่เลือกพร้อม'}${problems.length ? ` · Odoo มีปัญหา ${problems.length} ออเดอร์` : ''}` });
+  if (problems.length) redirect(await back('/admin/orders', { error: problems.slice(0, 2).join(' · ') }));
+  redirect(await back('/admin/orders'));
+}
+
+/** Pulls Odoo status for the selected orders only. */
+export async function bulkRefreshStatusesAction(formData: FormData) {
+  await requireBackoffice();
+  const ids = new Set(selectedIds(formData));
+  const orders = (await shopStore.listAllOrders()).filter((o) => ids.has(o.id));
+  try {
+    const { checked, changed } = await refreshOrderStatuses(orders);
+    await flash('อัปเดตสถานะที่เลือกแล้ว', { icon: 'sync', description: `ตรวจ ${checked} · เปลี่ยน ${changed}` });
+  } catch (error) {
+    await flash('อ่านสถานะจาก Odoo ไม่สำเร็จ', { type: 'error', icon: 'sync', description: error instanceof Error ? error.message : String(error) });
+  }
+  revalidateAdmin();
+  redirect(await back('/admin/orders'));
 }

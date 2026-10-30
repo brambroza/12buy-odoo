@@ -23,7 +23,13 @@ import type { OrderCreditView } from '@/lib/shop/credit';
 import { countStalePending, isPaymentReady, listAllOrders } from '@/lib/shop/store';
 import { CREDIT_PAYMENT_STATUS_LABELS, ORDER_STATUS_FLOW, ORDER_STATUS_LABELS, type CreditPayment, type CreditPaymentStatus, type OdooSync, type OrderStatus, type ProtoOrder } from '@/lib/shop/types';
 import { cn } from '@/lib/utils';
-import { adminAdvanceOrderAction, adminCancelOrderAction, adminRefreshStatusesAction, adminRetryOdooCancelAction, adminSetTrackingAction, adminSyncOrderAction, resendCreditPaymentLogAction, reviewCreditPaymentAction, verifySlipAction } from '../actions';
+import { adminAdvanceOrderAction, adminCancelOrderAction, adminRefreshStatusesAction, adminRetryOdooCancelAction, adminSetTrackingAction, adminSyncOrderAction, bulkConfirmOrdersAction, bulkRefreshStatusesAction, resendCreditPaymentLogAction, reviewCreditPaymentAction, verifySlipAction } from '../actions';
+import { ExportMenu } from '@/components/admin/export-menu';
+import { BulkBar } from '@/components/admin/bulk-bar';
+import { can } from '@/lib/auth/permissions';
+import { requireBackoffice } from '@/lib/auth/session';
+import type { Role } from '@/lib/auth/roles';
+import { Printer } from 'lucide-react';
 
 const STYLE: Record<OrderStatus, string> = {
   PENDING: 'bg-amber-500/15 text-amber-700', PREPARING: 'bg-blue-500/15 text-blue-700', SHIPPED: 'bg-violet-500/15 text-violet-700',
@@ -108,7 +114,9 @@ function OrderTotal({ order: o }: { order: ProtoOrder }) {
 
 /** Admin inbox for web orders: searchable, paged table with quick status moves; details and forms in a drawer. */
 export default async function AdminOrdersPage({ searchParams }: { searchParams: Promise<Search> }) {
-  const params = await searchParams;
+  const [params, actor] = await Promise.all([searchParams, requireBackoffice()]);
+  const role = actor.role as Role;
+  const may = { confirm: can(role, 'order.confirm'), ship: can(role, 'order.ship'), cancel: can(role, 'order.cancel'), credit: can(role, 'order.credit_review'), slip: can(role, 'order.verify_slip'), export: can(role, 'order.export') };
   const status = STATUSES.includes(params.status as OrderStatus) ? (params.status as OrderStatus) : undefined;
   const [all, pendingOld, odooBase] = await Promise.all([listAllOrders(), countStalePending(2 * 60 * 60 * 1000), odooBaseUrl()]);
   const counts = Object.fromEntries(STATUSES.map((s) => [s, all.filter((o) => o.status === s).length])) as Record<OrderStatus, number>;
@@ -145,7 +153,10 @@ export default async function AdminOrdersPage({ searchParams }: { searchParams: 
           <h1 className="text-2xl font-bold">ออเดอร์จากเว็บ</h1>
           <p className="hidden max-w-3xl text-sm text-muted-foreground md:block">ยืนยันออเดอร์ (เงินสดหลังตรวจสลิป / เครดิตกดได้ทันที) = สร้างและยืนยันใบสั่งขาย (SO) พร้อมใบแจ้งหนี้ร่างใน Odoo อัตโนมัติ · หลังจากนั้นสถานะจัดส่ง/วางบิล/ชำระเงินตามที่คลังและบัญชีทำใน Odoo (ดึงอัตโนมัติทุกไม่กี่นาที)</p>
         </div>
-        <form action={adminRefreshStatusesAction}><Button type="submit" size="sm" variant="outline"><RefreshCw /> ดึงสถานะจาก Odoo ตอนนี้</Button></form>
+        <div className="flex flex-wrap items-center gap-2">
+          {may.export && <ExportMenu kind="orders" query={{ status, q: params.q }} />}
+          <form action={adminRefreshStatusesAction}><Button type="submit" size="sm" variant="outline"><RefreshCw /> ดึงสถานะจาก Odoo ตอนนี้</Button></form>
+        </div>
       </div>
       {!openOrder && notice}
       {pendingOld > 0 && <p className="rounded-lg bg-amber-500/10 p-3 text-sm text-amber-800">มี {pendingOld} ออเดอร์รอยืนยันเกิน 2 ชั่วโมง</p>}
@@ -165,10 +176,14 @@ export default async function AdminOrdersPage({ searchParams }: { searchParams: 
         </div>
       </div>
 
+      <form id="bulk-orders" action={bulkConfirmOrdersAction} className="hidden" aria-hidden="true" />
+      <div className="space-y-3">
+      <BulkBar canConfirm={may.confirm} canPrint={may.ship || may.confirm} canExport={may.export} confirmAction={bulkConfirmOrdersAction} refreshAction={bulkRefreshStatusesAction} />
       <TableCard>
         <Table>
           <TableHeader className="bg-muted/50">
             <TableRow>
+              <TableHead className="w-8"><span className="sr-only">เลือก</span></TableHead>
               <TableHead>ออเดอร์</TableHead>
               <TableHead>ร้าน</TableHead>
               <TableHead>สถานะ</TableHead>
@@ -179,13 +194,14 @@ export default async function AdminOrdersPage({ searchParams }: { searchParams: 
             </TableRow>
           </TableHeader>
           <TableBody>
-            {all.length === 0 && <EmptyRow colSpan={7}>ยังไม่มีออเดอร์ — ลองสั่งจาก <Link href="/shop" className="text-primary">หน้าดีลเลอร์</Link></EmptyRow>}
-            {all.length > 0 && orders.length === 0 && <EmptyRow colSpan={7}>ไม่พบออเดอร์ตามเงื่อนไข</EmptyRow>}
+            {all.length === 0 && <EmptyRow colSpan={8}>ยังไม่มีออเดอร์ — ลองสั่งจาก <Link href="/shop" className="text-primary">หน้าดีลเลอร์</Link></EmptyRow>}
+            {all.length > 0 && orders.length === 0 && <EmptyRow colSpan={8}>ไม่พบออเดอร์ตามเงื่อนไข</EmptyRow>}
             {pageRows.items.map((o) => {
               const { next, cancellable, blocked } = orderFlow(o);
               const openHref = href({ open: o.id });
               return (
                 <TableRow key={o.id} data-state={params.open === o.id ? 'selected' : undefined} className="[&>td]:align-top [&>td]:whitespace-normal">
+                  <TableCell data-label="เลือก" className="pr-0"><input type="checkbox" name="ids" value={o.id} form="bulk-orders" aria-label={`เลือก ${o.ref}`} className="mt-1 size-4 accent-primary" data-bulk-item /></TableCell>
                   <TableCell data-label="ออเดอร์">
                     <Link href={openHref} scroll={false} className="block hover:underline">
                       <span className="block font-medium">{o.ref}</span>
@@ -216,17 +232,18 @@ export default async function AdminOrdersPage({ searchParams }: { searchParams: 
                   <TableCell data-label="">
                     <span className="flex justify-end gap-1">
                       <IconLink href={openHref} label="ดูรายละเอียด"><Eye /></IconLink>
-                      {next && (
+                      {next && (o.status === 'PENDING' ? may.confirm : may.ship) && (
                         <form action={adminAdvanceOrderAction}>
                           <input type="hidden" name="orderId" value={o.id} />
                           <input type="hidden" name="expectedStatus" value={o.status} />
                           <IconSubmit label={blocked ? `${next} (ต้องตรวจสลิปก่อน)` : o.status === 'PENDING' ? `${next} · สร้าง SO + ใบแจ้งหนี้ร่างใน Odoo` : next} tone="primary" disabled={blocked}>{NEXT_ICON[o.status]}</IconSubmit>
                         </form>
                       )}
-                      {canSyncOrder(o) && (
+                      {canSyncOrder(o) && may.confirm && (
                         <form action={adminSyncOrderAction}><input type="hidden" name="orderId" value={o.id} /><IconSubmit label={o.odoo ? 'ส่งเข้า Odoo อีกครั้ง' : 'ส่งเข้า Odoo'}><UploadCloud /></IconSubmit></form>
                       )}
-                      {cancellable && (
+                      {o.status !== 'CANCELLED' && (may.ship || may.confirm) && <IconLink href={`/admin/orders/picking?ids=${o.id}`} label="พิมพ์ใบจัดของ"><Printer /></IconLink>}
+                      {cancellable && may.cancel && (
                         <form action={adminCancelOrderAction}><input type="hidden" name="orderId" value={o.id} /><IconSubmit label="ยกเลิก" tone="danger" confirm={`${o.ref}: ${CANCEL_CONFIRM}`}><Ban /></IconSubmit></form>
                       )}
                     </span>
@@ -237,6 +254,7 @@ export default async function AdminOrdersPage({ searchParams }: { searchParams: 
           </TableBody>
         </Table>
       </TableCard>
+      </div>
       <ListPagination page={pageRows} href={(n) => href({ page: String(n) })} unit="ออเดอร์" />
 
       {openOrder && <OrderDrawer key={openOrder.id} order={openOrder} closeHref={closeHref} notice={notice} odooBase={odooBase} />}
@@ -328,6 +346,7 @@ function OrderDrawer({ order: o, closeHref, notice, odooBase }: { order: ProtoOr
       {o.paymentMethod === 'CREDIT' && creditPayments(o).length > 0 && <CreditPaymentsSection order={o} odooBase={odooBase} />}
 
       <section className="flex flex-wrap items-center gap-2">
+        {o.status !== 'CANCELLED' && <Button nativeButton={false} render={<a href={`/admin/orders/picking?ids=${o.id}`} target="_blank" rel="noreferrer" />} size="sm" variant="outline"><Printer /> ใบจัดของ PDF</Button>}
         {next && (
           <form action={adminAdvanceOrderAction} className="flex items-center gap-2">
             <input type="hidden" name="orderId" value={o.id} />

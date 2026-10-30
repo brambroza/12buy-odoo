@@ -1,0 +1,19 @@
+# Daily maintenance: retry failed Odoo pushes, purge expired sessions / old rate-limit windows /
+# read notifications (90 days) / audit rows (1 year). Needs the same secrets as odoo-status-sync.
+name: housekeeping
+on:
+  schedule:
+    - cron: '30 19 * * *' # 02:30 ICT daily
+  workflow_dispatch:
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Call housekeeping
+        env:
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+          SITE_URL: ${{ secrets.SITE_URL }}
+        run: |
+          if [ -z "$CRON_SECRET" ] || [ -z "$SITE_URL" ]; then echo "CRON_SECRET / SITE_URL not set"; exit 0; fi
+          curl --fail-with-body -sS -X POST -H "Authorization: Bearer $CRON_SECRET" "$SITE_URL/api/cron/housekeeping"

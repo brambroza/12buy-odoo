@@ -112,7 +112,7 @@ export default async function PricesPage({ searchParams }: { searchParams: Promi
           key={book.id}
           size="xl"
           title={`${zone.name} · ${book.tier} ${DEALER_TIER_LABELS[book.tier]}`}
-          description={<>จะเผยแพร่เป็น pricelist ชื่อ <span className="font-mono">{pricelistNameFor(zone, book)}</span> · {zone.isDefault ? 'ใช้กับจังหวัดที่ไม่ถูกจัดโซน' : zone.provinces.map(shortProvince).join(', ')}</>}
+          description={<>จะเผยแพร่เป็น pricelist ชื่อ <span className="font-mono">{pricelistNameFor(zone, book)}</span> · {zone.isDefault ? 'ใช้กับจังหวัดที่ไม่ถูกจัดโซน' : zone.provinces.map(shortProvince).join(', ')} · <a href={`/api/admin/export/prices?book=${book.id}&format=xlsx`} className="text-primary underline">ส่งออก Excel</a> · <a href={`/api/admin/export/prices?book=${book.id}&format=csv`} className="text-primary underline">CSV</a></>}
           closeHref={PATH}
         >
           <BookEditor book={book} zone={zone} catalog={catalog} type={type} query={query} params={params} />

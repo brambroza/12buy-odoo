@@ -1,3 +1,4 @@
+import { can, permissionLabel, type PermissionKey } from './permissions';
 import { cache } from 'react';
 import { cookies, headers } from 'next/headers';
 import { redirect } from 'next/navigation';
@@ -70,6 +71,13 @@ export async function requireUser(): Promise<CurrentUser> {
 export async function requireBackoffice(): Promise<CurrentUser> {
   const user = await requireUser();
   if (!isBackofficeRole(user.role as Role)) redirect('/shop');
+  return user;
+}
+
+/** Staff member holding `key` (see `PERMISSIONS`); others bounce to the orders inbox with a notice. */
+export async function requirePermission(key: PermissionKey): Promise<CurrentUser> {
+  const user = await requireBackoffice();
+  if (!can(user.role as Role, key)) redirect(`/admin/orders?error=${encodeURIComponent(`บทบาทของคุณทำรายการนี้ไม่ได้ (${permissionLabel(key)})`)}`);
   return user;
 }
 

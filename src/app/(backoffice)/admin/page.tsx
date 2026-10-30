@@ -16,6 +16,9 @@ import { listAllCarriers } from '@/lib/odoo/delivery-carrier';
 import { baht } from '@/lib/shop/catalog';
 import { listAllOrders } from '@/lib/shop/store';
 import { ORDER_STATUS_LABELS, type OrderStatus } from '@/lib/shop/types';
+import { RANGE_LABELS, dailySeries, ordersInRange, rangeTotals, resolveRange, type RangeKey } from '@/lib/admin/reports';
+import { FilterChip } from '@/components/admin/list-kit';
+import { CalendarRange } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 const PRIORITY: Record<TaskPriority, { label: string; dot: string; badge: string }> = {
@@ -45,8 +48,8 @@ async function safe<T>(promise: Promise<T>, fallback: T): Promise<T> {
 }
 
 /** Back-office home: sales summary, what is waiting for approval, and today's to-do list with links to act. */
-export default async function AdminDashboardPage() {
-  const actor = await requireBackoffice();
+export default async function AdminDashboardPage({ searchParams }: { searchParams: Promise<{ range?: string; from?: string; to?: string }> }) {
+  const [actor, rangeParams] = await Promise.all([requireBackoffice(), searchParams]);
   const isAdmin = isAdminRole(actor.role as Role);
   const [orders, leads, pendingDealers, books, zones, resets, carriers] = await Promise.all([
     safe(listAllOrders(), []),
@@ -59,6 +62,13 @@ export default async function AdminDashboardPage() {
   ]);
   const now = currentTime();
   const summary = summarizeOrders(orders, now);
+  // Period tiles + chart follow the picked range; approvals and tasks are always "now".
+  const { key: rangeKey, range } = resolveRange(rangeParams, now);
+  const inRange = ordersInRange(orders, range);
+  const period = rangeTotals(inRange);
+  const series = dailySeries(inRange, range);
+  const QUICK: RangeKey[] = ['today', '7d', '30d', 'month', 'lastMonth'];
+  const rangeHref = (k: RangeKey) => `/admin?range=${k}`;
   const dues = creditDues(orders, now);
   const booksPending = books.filter((b) => b.status === 'PENDING_APPROVAL')
     .map((b) => ({ id: b.id, label: `${zones.find((z) => z.id === b.zoneId)?.name ?? 'โซน'} · ${b.tier}` }));
@@ -90,12 +100,18 @@ export default async function AdminDashboardPage() {
         <Button variant="outline" size="sm" nativeButton={false} render={<Link href="/admin/orders" />}><Inbox /> ดูออเดอร์ทั้งหมด</Button>
       </div>
 
+      <div className="flex flex-wrap items-center gap-2 text-xs">
+        <CalendarRange className="size-4 text-muted-foreground" aria-hidden />
+        <span className="text-muted-foreground">ช่วงเวลา:</span>
+        {QUICK.map((k) => <FilterChip key={k} href={rangeHref(k)} active={rangeKey === k}>{RANGE_LABELS[k]}</FilterChip>)}
+        <Link href="/admin/reports" className="ml-auto text-primary underline">รายงานละเอียด →</Link>
+      </div>
       <section aria-label="สรุปยอดขาย" className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        <StatTile icon={Coins} label="ยอดขายทั้งหมด" value={<CountUp value={summary.sales} format="baht" />} sub={`${summary.orders.toLocaleString('th-TH')} ออเดอร์ (ไม่รวมที่ยกเลิก)`} href="/admin/orders" />
+        <StatTile icon={Coins} label={`ยอดขาย ${RANGE_LABELS[rangeKey]}`} value={<CountUp value={period.sales} format="baht" />} sub={`${period.orders.toLocaleString('th-TH')} ออเดอร์ · ${period.dealers} ร้าน · เฉลี่ย ${baht(period.avgOrder)}`} href={`/admin/reports?range=${rangeKey}`} />
         <StatTile icon={CalendarCheck} label="ยอดขายเดือนนี้" value={<CountUp value={summary.month.sales} format="baht" />}
-          sub={<>{summary.month.orders.toLocaleString('th-TH')} ออเดอร์{monthTrend !== null && <Trend value={monthTrend} />}</>} href="/admin/orders" />
+          sub={<>{summary.month.orders.toLocaleString('th-TH')} ออเดอร์{monthTrend !== null && <Trend value={monthTrend} />}</>} href="/admin/reports?range=month" />
         <StatTile icon={ShoppingCart} label="วันนี้" value={<CountUp value={summary.today.sales} format="baht" />} sub={`${summary.today.orders} ออเดอร์ใหม่`} href="/admin/orders" />
-        <StatTile icon={Wallet} label="รับชำระแล้ว" value={<CountUp value={summary.paid} format="baht" />}
+        <StatTile icon={Wallet} label="รับชำระแล้ว (ทั้งหมด)" value={<CountUp value={summary.paid} format="baht" />}
           sub={`${summary.byStatus.PAID} ออเดอร์ · ค้างรับ ${baht(Math.max(0, summary.sales - summary.paid))}`} href="/admin/orders?status=PAID" />
       </section>
 
@@ -139,7 +155,7 @@ export default async function AdminDashboardPage() {
       </div>
 
       <div className="grid gap-6 xl:grid-cols-[1.4fr_1fr]">
-        <DailySales daily={summary.daily} today={thaiDay(now)} />
+        <DailySales daily={series.length <= 62 ? series : summary.daily} today={thaiDay(now)} />
         <section aria-labelledby="top-heading" className="rounded-xl border border-border bg-card p-4">
           <h2 id="top-heading" className="mb-3 font-semibold">ดีลเลอร์ยอดสูงสุดเดือนนี้</h2>
           {summary.topDealers.length === 0 ? <p className="text-sm text-muted-foreground">ยังไม่มีออเดอร์เดือนนี้</p> : (

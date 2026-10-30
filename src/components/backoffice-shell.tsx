@@ -5,7 +5,7 @@ import { usePathname } from 'next/navigation';
 import { useRef, useState } from 'react';
 import gsap from 'gsap';
 import { useGSAP } from '@gsap/react';
-import { Gauge, LayoutDashboard, Megaphone, Menu, PanelLeftClose, PanelLeftOpen, MapPinned, Tags, Store, Inbox, Smartphone, UserPlus, ShieldCheck, LogOut, UsersRound, TicketPercent, BadgePercent, Truck, UserRound, KeyRound, ChevronDown, Plug } from 'lucide-react';
+import { BarChart3, Gauge, History, LayoutDashboard, Megaphone, Menu, PanelLeftClose, PanelLeftOpen, MapPinned, Tags, Store, Inbox, Smartphone, UserPlus, ShieldCheck, LogOut, UsersRound, TicketPercent, BadgePercent, Truck, UserRound, KeyRound, ChevronDown, Plug } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { SIDEBAR_COOKIE } from '@/lib/backoffice-ui';
 import { AdminMotion } from '@/components/admin/admin-motion';
@@ -13,6 +13,7 @@ import { Button } from '@/components/ui/button';
 import { Sheet, SheetContent, SheetTitle, SheetTrigger } from '@/components/ui/sheet';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { NotificationBell } from '@/components/admin/notification-bell';
+import { OdooHealthBadge } from '@/components/admin/odoo-health-badge';
 import { DealerAvatar } from '@/components/shop/dealer-avatar';
 import { ROLE_LABELS, isAdminRole, type Role } from '@/lib/auth/roles';
 import { logoutAction } from '@/app/login/actions';
@@ -21,6 +22,7 @@ import { BrandLogo } from '@/components/landing/brand-logo';
 const NAV_ITEMS: { href: string; label: string; icon: typeof LayoutDashboard; group?: string; adminOnly?: boolean }[] = [
   { href: '/admin', label: 'แดชบอร์ด', icon: Gauge, group: 'ดีลเลอร์' },
   { href: '/admin/orders', label: 'ออเดอร์จากเว็บ', icon: Inbox },
+  { href: '/admin/reports', label: 'รายงานยอดขาย', icon: BarChart3 },
   { href: '/admin/dealers', label: 'ดีลเลอร์ / ลูกค้า Odoo', icon: Store },
   { href: '/admin/leads', label: 'ใบสมัครดีลเลอร์', icon: UserPlus },
   { href: '/admin/groups', label: 'กลุ่มลูกค้า', icon: UsersRound, adminOnly: true },
@@ -32,6 +34,7 @@ const NAV_ITEMS: { href: string; label: string; icon: typeof LayoutDashboard; gr
   { href: '/admin/promotions', label: 'โปรโมชันหน้าแรก', icon: Megaphone, adminOnly: true },
   { href: '/admin/users', label: 'ผู้ใช้งานระบบ', icon: ShieldCheck, adminOnly: true },
   { href: '/admin/settings', label: 'ตั้งค่าระบบ (Odoo · LINE)', icon: Plug, adminOnly: true },
+  { href: '/admin/audit', label: 'ประวัติการแก้ไข', icon: History, adminOnly: true },
   { href: '/shop', label: 'เปิดหน้าดีลเลอร์', icon: Smartphone },
   // Legacy "Odoo Sync (เดิม)" demo (/dashboard, /sale-orders, /customers, /products) is kept reachable by URL
   // for reference but no longer listed: dealer ordering replaced it.
@@ -185,6 +188,7 @@ export function BackofficeShell({ user, sidebarOpen: initialSidebarOpen = true, 
           </Button>
           <p className={cn('flex items-center gap-2 text-sm font-medium text-muted-foreground', sidebarOpen && 'md:hidden')}><BrandLogo size={28} /> 12buy Admin</p>
           <div className="ml-auto flex items-center gap-1">
+            <OdooHealthBadge />
             <NotificationBell />
             <UserMenu user={{ ...user, role }} />
           </div>

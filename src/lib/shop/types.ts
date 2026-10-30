@@ -196,6 +196,8 @@ export type OdooSync = {
   /** Why the draft invoice could not be made; the SO itself is in Odoo. */
   invoiceError?: string | null;
   at: string;
+  /** Automatic re-push attempts made by the housekeeping job after a FAILED push. */
+  retries?: number;
   /** Result of cancelling the SO in Odoo after a web cancel (absent until the admin cancels). */
   cancel?: { ok: boolean; at: string; note?: string; error?: string } | null;
   /** Last read of delivery/invoice progress from Odoo (status sync). */
