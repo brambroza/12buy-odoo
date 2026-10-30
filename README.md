@@ -268,7 +268,10 @@ yarn dev                       # http://localhost:3000
 
 ### ข้อจำกัดที่ยังมี
 
-- ยังไม่มี LINE Login, ลืมรหัสผ่านต้องผ่านแอดมิน, ยังไม่มี rate limit การ login
+- ลืมรหัสผ่านยังต้องผ่านแอดมิน (ไม่มีอีเมลอัตโนมัติ); LINE ใช้เพื่อรับแจ้งเตือนเท่านั้น ยังไม่ใช้ login ด้วย LINE
+- ใบกำกับภาษี PDF ดึงจากไฟล์แนบของใบแจ้งหนี้ใน Odoo จึงขึ้นหลังบัญชีกดพิมพ์/ส่งใบแจ้งหนี้แล้ว (ดีลเลอร์กด “ขอใบกำกับภาษี” แจ้งบัญชีได้)
+- CSP ยังเป็นโหมด report-only จนกว่าจะตั้ง `CSP_ENFORCE=true`; Sentry ทำงานเมื่อตั้ง `SENTRY_DSN`
+- หลังบ้านเพิ่ม: รายงานยอดขาย (`/admin/reports`), ประวัติการแก้ไข (`/admin/audit`), โปรโมชันหน้าแรก (`/admin/promotions`), ส่งออก CSV/Excel, bulk ยืนยัน/พิมพ์ใบจัดของ, ตั้งค่า LINE ใน `/admin/settings`; ดู `docs/RUNBOOK.md` สำหรับ deploy/backup/incident
 - เลขพัสดุกรอกในเว็บ (Odoo ยังไม่ได้ติดตั้ง `stock_delivery`)
 - คูปองและการเผยแพร่ pricelist เข้า Odoo ยังไม่ได้ทดสอบบน staging
 - staging ใช้ Supabase ตัวเดียวกับ production แนะนำแยก
