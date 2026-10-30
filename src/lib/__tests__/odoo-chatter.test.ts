@@ -34,6 +34,7 @@ describe('buildCreditPaymentNote', () => {
 describe('postNote', () => {
   const fetchSpy = vi.fn();
   const calls: { model: string; method: string; args: unknown[]; kwargs: Record<string, unknown> }[] = [];
+  let storedSize = 3;
 
   beforeEach(() => {
     calls.length = 0;
@@ -42,7 +43,11 @@ describe('postNote', () => {
       if (params.method === 'authenticate') return new Response(JSON.stringify({ jsonrpc: '2.0', result: 7 }));
       const [, , , model, method, args, kwargs] = params.args as [string, number, string, string, string, unknown[], Record<string, unknown>];
       calls.push({ model, method, args, kwargs });
-      return new Response(JSON.stringify({ jsonrpc: '2.0', result: method === 'create' ? 55 : 99 }));
+      // Odoo 19: `ir.attachment` has `raw` but no `datas`; `read` reports the stored size.
+      const result = method === 'fields_get' ? { raw: { type: 'binary' }, name: { type: 'char' } }
+        : method === 'read' ? [{ id: 55, file_size: storedSize }]
+          : method === 'create' ? 55 : 99;
+      return new Response(JSON.stringify({ jsonrpc: '2.0', result }));
     });
     vi.stubGlobal('fetch', fetchSpy);
     vi.stubEnv('ODOO_URL', 'https://odoo.test');
@@ -58,19 +63,27 @@ describe('postNote', () => {
     fetchSpy.mockReset();
   });
 
-  it('uploads the slip as an attachment of the record, then posts an internal note with it', async () => {
+  it('uploads the slip through the content field this Odoo has, checks the size, then posts an HTML note with it', async () => {
+    storedSize = 3;
     const id = await postNote('sale.order', 42, '<p>hi</p>', { name: 'slip.jpg', mimetype: 'image/jpeg', body: Buffer.from('abc') });
     expect(id).toBe(99);
-    expect(calls.map((c) => `${c.model}.${c.method}`)).toEqual(['ir.attachment.create', 'sale.order.message_post']);
-    expect(calls[0].args).toEqual([[{ name: 'slip.jpg', mimetype: 'image/jpeg', datas: Buffer.from('abc').toString('base64'), res_model: 'sale.order', res_id: 42 }]]);
-    expect(calls[1].args).toEqual([[42]]);
-    expect(calls[1].kwargs).toEqual({ body: '<p>hi</p>', message_type: 'comment', subtype_xmlid: 'mail.mt_note', attachment_ids: [55] });
+    const writes = calls.filter((c) => c.method !== 'fields_get');
+    expect(writes.map((c) => `${c.model}.${c.method}`)).toEqual(['ir.attachment.create', 'ir.attachment.read', 'sale.order.message_post']);
+    expect(writes[0].args).toEqual([[{ name: 'slip.jpg', mimetype: 'image/jpeg', raw: Buffer.from('abc').toString('base64'), res_model: 'sale.order', res_id: 42 }]]);
+    expect(writes[2].args).toEqual([[42]]);
+    expect(writes[2].kwargs).toEqual({ body: '<p>hi</p>', body_is_html: true, message_type: 'comment', subtype_xmlid: 'mail.mt_note', attachment_ids: [55] });
+  });
+
+  it('fails loudly when Odoo stored an empty file instead of posting a note without the slip', async () => {
+    storedSize = 0;
+    await expect(postNote('sale.order', 42, '<p>hi</p>', { name: 'slip.jpg', mimetype: 'image/jpeg', body: Buffer.from('abc') })).rejects.toThrow('เก็บไฟล์สลิปไม่ครบ');
+    expect(calls.some((c) => c.method === 'message_post')).toBe(false);
   });
 
   it('posts without an attachment on the invoice', async () => {
     await postNote('account.move', 9, '<p>x</p>', null);
     expect(calls).toHaveLength(1);
-    expect(calls[0]).toMatchObject({ model: 'account.move', method: 'message_post', kwargs: { body: '<p>x</p>', subtype_xmlid: 'mail.mt_note' } });
+    expect(calls[0]).toMatchObject({ model: 'account.move', method: 'message_post', kwargs: { body: '<p>x</p>', body_is_html: true, subtype_xmlid: 'mail.mt_note' } });
     expect(calls[0].kwargs).not.toHaveProperty('attachment_ids');
   });
 });

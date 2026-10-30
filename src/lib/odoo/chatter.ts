@@ -5,7 +5,7 @@
  */
 import { formatAmount } from '@/lib/money';
 import type { CreditPayment, ProtoOrder } from '@/lib/shop/types';
-import { odooWrite } from './rpc';
+import { odooRead, odooWrite } from './rpc';
 
 /** Image attached to the note: file name, MIME type and raw bytes. */
 export type NoteAttachment = { name: string; mimetype: string; body: Buffer };
@@ -49,20 +49,45 @@ export function buildCreditPaymentNote(order: Pick<ProtoOrder, 'ref' | 'dealerNa
   return `<p><b>${escapeHtml(EVENT_TITLE[event])}</b></p><ul>${list}</ul><p>${escapeHtml(footer)}</p>`;
 }
 
+let contentFieldCache: 'datas' | 'raw' | null = null;
+
+/**
+ * Field that takes the file content of an `ir.attachment` over RPC (base64 either way):
+ * `datas` up to Odoo 18, `raw` on Odoo 19+ where `datas` no longer exists. Read once per process.
+ */
+export async function attachmentContentField(): Promise<'datas' | 'raw'> {
+  if (contentFieldCache) return contentFieldCache;
+  const fields = await odooRead<Record<string, unknown>>('ir.attachment', 'fields_get', [], { attributes: ['type'] });
+  contentFieldCache = 'datas' in fields ? 'datas' : 'raw';
+  return contentFieldCache;
+}
+
+/**
+ * Uploads `attachment` as an `ir.attachment` of `model`/`id` and checks Odoo really stored the bytes
+ * (Odoo ignores unknown fields silently, which would leave an empty file). Returns the attachment id.
+ */
+export async function uploadAttachment(model: string, id: number, attachment: NoteAttachment): Promise<number> {
+  const field = await attachmentContentField();
+  const created = await odooWrite<number | number[]>('ir.attachment', 'create', [[{
+    name: attachment.name, mimetype: attachment.mimetype, [field]: attachment.body.toString('base64'), res_model: model, res_id: id,
+  }]]);
+  const attachmentId = Array.isArray(created) ? created[0] : created;
+  const [stored] = await odooRead<{ file_size: number }[]>('ir.attachment', 'read', [[attachmentId], ['file_size']]);
+  if (!stored || stored.file_size !== attachment.body.length) {
+    throw new Error(`Odoo เก็บไฟล์สลิปไม่ครบ (ได้ ${stored?.file_size ?? 0} จาก ${attachment.body.length} ไบต์ ผ่านฟิลด์ ${field})`);
+  }
+  return attachmentId;
+}
+
 /**
  * Posts one internal note (`mail.mt_note`, no e-mail to followers) on `model`/`id`, with `attachment`
- * uploaded as an `ir.attachment` of that record first. Returns the new `mail.message` id.
+ * uploaded as an `ir.attachment` of that record first. `body` is HTML (`body_is_html`, Odoo 17+;
+ * without it Odoo escapes the markup and shows the tags as text). Returns the new `mail.message` id.
  */
 export async function postNote(model: 'sale.order' | 'account.move', id: number, body: string, attachment?: NoteAttachment | null): Promise<number> {
-  const attachmentIds: number[] = [];
-  if (attachment) {
-    const created = await odooWrite<number | number[]>('ir.attachment', 'create', [[{
-      name: attachment.name, mimetype: attachment.mimetype, datas: attachment.body.toString('base64'), res_model: model, res_id: id,
-    }]]);
-    attachmentIds.push(Array.isArray(created) ? created[0] : created);
-  }
+  const attachmentIds: number[] = attachment ? [await uploadAttachment(model, id, attachment)] : [];
   const message = await odooWrite<number | number[] | { id: number }>(model, 'message_post', [[id]], {
-    body, message_type: 'comment', subtype_xmlid: 'mail.mt_note', ...(attachmentIds.length ? { attachment_ids: attachmentIds } : {}),
+    body, body_is_html: true, message_type: 'comment', subtype_xmlid: 'mail.mt_note', ...(attachmentIds.length ? { attachment_ids: attachmentIds } : {}),
   });
   if (typeof message === 'number') return message;
   if (Array.isArray(message)) return message[0];

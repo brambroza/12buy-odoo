@@ -42,15 +42,16 @@ const WRITE_METHODS: Record<string, ReadonlySet<string>> = {
 
 /** Keyword arguments allowed per `model.method` (others are refused before any request). */
 const WRITE_KWARGS: Record<string, ReadonlySet<string>> = {
-  'sale.order.message_post': new Set(['body', 'message_type', 'subtype_xmlid', 'attachment_ids']),
-  'account.move.message_post': new Set(['body', 'message_type', 'subtype_xmlid', 'attachment_ids']),
+  'sale.order.message_post': new Set(['body', 'body_is_html', 'message_type', 'subtype_xmlid', 'attachment_ids']),
+  'account.move.message_post': new Set(['body', 'body_is_html', 'message_type', 'subtype_xmlid', 'attachment_ids']),
 };
 
 /** Writes limited to these fields (`model.method` → fields allowed in the values dict, `args[1]`). */
 const WRITE_FIELDS: Record<string, ReadonlySet<string>> = {
   'res.partner.write': new Set(['property_product_pricelist', 'credit_limit', 'use_partner_credit_limit', 'property_delivery_carrier_id']),
   'delivery.carrier.write': new Set(['name', 'sequence', 'is_published', 'active']),
-  'ir.attachment.create': new Set(['name', 'mimetype', 'datas', 'res_model', 'res_id']),
+  // File content: `datas` (≤ Odoo 18) or `raw` (Odoo 19+), base64 over RPC either way.
+  'ir.attachment.create': new Set(['name', 'mimetype', 'datas', 'raw', 'res_model', 'res_id']),
 };
 
 type RpcConfig = { url: string; db: string; username: string; apiKey: string };
