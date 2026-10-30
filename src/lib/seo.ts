@@ -5,10 +5,10 @@
 
 export const SITE = {
   name: '12buy Dealer',
-  legalName: 'บริษัท ดรีมเมคเกอร์-ไทย คอร์ปอเรชั่น จำกัด',
-  legalNameEn: 'DreamMaker-Thai Corporation Co., Ltd.',
-  address: '555/55 อาคาร SSP TOWER ชั้น 20 ซอยสุขุมวิท 63 (เอกมัย) แขวงคลองตันเหนือ เขตวัฒนา กรุงเทพฯ 10110',
-  postalAddress: { streetAddress: '555/55 อาคาร SSP TOWER ชั้น 20 ซอยสุขุมวิท 63 (เอกมัย)', addressLocality: 'เขตวัฒนา', addressRegion: 'กรุงเทพมหานคร', postalCode: '10110', addressCountry: 'TH' },
+  legalName: 'บริษัท วันทูบาย ช้อป จำกัด',
+  legalNameEn: '12BUY SHOP CO., LTD.',
+  address: '1000/53 อาคารลิเบอร์ตี้พล่าซ่า ชั้นที่ 3 ซอย สุขุมวิท 55 (ทองหล่อ) แขวงคลองตันเหนือ เขตวัฒนา กรุงเทพมหานคร 10110',
+  postalAddress: { streetAddress: '1000/53 อาคารลิเบอร์ตี้พล่าซ่า ชั้นที่ 3 ซอย สุขุมวิท 55 (ทองหล่อ) แขวงคลองตันเหนือ', addressLocality: 'เขตวัฒนา', addressRegion: 'กรุงเทพมหานคร', postalCode: '10110', addressCountry: 'TH' },
   emails: ['por@dreammakerthai.com', 'sapol@dreammakerthai.com'],
   businessHours: 'จ-ศ 09:00-18:00',
   description:

@@ -17,6 +17,7 @@ export function LandingFooter() {
             <Building2 className="mt-0.5 size-4 shrink-0 text-[var(--lp-accent)]" aria-hidden="true" />
             <span>
               <span className="block font-semibold text-[var(--lp-fg)]">{SITE.legalName}</span>
+              <span className="block font-semibold text-[var(--lp-fg)]">{SITE.legalNameEn}</span>
               {SITE.address}
             </span>
           </address>

@@ -21,8 +21,8 @@ import { BrandLogo } from '@/components/landing/brand-logo';
 
 const NAV_ITEMS: { href: string; label: string; icon: typeof LayoutDashboard; group?: string; adminOnly?: boolean }[] = [
   { href: '/admin', label: 'แดชบอร์ด', icon: Gauge, group: 'ดีลเลอร์' },
-  { href: '/admin/orders', label: 'ออเดอร์จากเว็บ', icon: Inbox },
   { href: '/admin/reports', label: 'รายงานยอดขาย', icon: BarChart3 },
+  { href: '/admin/orders', label: 'ออเดอร์จากเว็บ', icon: Inbox },
   { href: '/admin/dealers', label: 'ดีลเลอร์ / ลูกค้า Odoo', icon: Store },
   { href: '/admin/leads', label: 'ใบสมัครดีลเลอร์', icon: UserPlus },
   { href: '/admin/groups', label: 'กลุ่มลูกค้า', icon: UsersRound, adminOnly: true },
