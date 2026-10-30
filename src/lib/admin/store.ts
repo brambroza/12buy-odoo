@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 /**
  * Admin settings: zones, price books, dealer assignments, credit↔cash pairs, customer groups.
  * Stored as one versioned JSON document in Supabase (`AdminState`, id `main`); every write
@@ -10,13 +11,13 @@
 import { db } from '@/lib/db/client';
 import { unwrap } from '@/lib/db/rows';
 import type { DealerTier } from '@/lib/shop/types';
-import type { CashPair, CashPercent, CustomerGroup, ProductCashDiscount, DealerAssignment, PriceBook, PriceZone } from './types';
+import type { AdminPromotion, CashPair, CashPercent, CustomerGroup, ProductCashDiscount, DealerAssignment, PriceBook, PriceZone } from './types';
 
 /**
  * `groupMembers` maps a dealer id (DB) to its customer group id; a dealer is in at most one group.
  * `productCashDiscounts` is keyed by Odoo product template id.
  */
-export type AdminShape = { zones: PriceZone[]; books: PriceBook[]; dealers: DealerAssignment[]; cashPairs: CashPair[]; cashPercents: CashPercent[]; productCashDiscounts: Record<string, ProductCashDiscount>; groups: CustomerGroup[]; groupMembers: Record<string, string> };
+export type AdminShape = { zones: PriceZone[]; books: PriceBook[]; dealers: DealerAssignment[]; cashPairs: CashPair[]; cashPercents: CashPercent[]; productCashDiscounts: Record<string, ProductCashDiscount>; groups: CustomerGroup[]; groupMembers: Record<string, string>; promotions: AdminPromotion[] };
 
 const ROW_ID = 'main';
 const MAX_ATTEMPTS = 5;
@@ -33,6 +34,7 @@ export function normalizeAdmin(input: Partial<AdminShape> | null | undefined): A
     productCashDiscounts: input?.productCashDiscounts ?? {},
     groups: input?.groups ?? [],
     groupMembers: input?.groupMembers ?? {},
+    promotions: input?.promotions ?? [],
   };
   if (!data.zones.some((z) => z.isDefault)) data.zones.unshift({ ...DEFAULT_ZONE });
   return data;
@@ -105,6 +107,30 @@ export function suggestCashPair(credit: { id: number; name: string }, pricelists
 }
 
 // ---------- zones ----------
+
+// ---------- landing promotions ----------
+
+export async function listPromotions(): Promise<AdminPromotion[]> {
+  return [...(await getAdminSnapshot()).promotions].sort((a, b) => a.sort - b.sort || a.from.localeCompare(b.from));
+}
+
+/** Creates or updates a promotion card. */
+export function upsertPromotion(input: Omit<AdminPromotion, 'id' | 'sort'> & { id?: string; sort?: number }): Promise<AdminPromotion> {
+  return mutate((data) => {
+    const existing = input.id ? data.promotions.find((p) => p.id === input.id) : undefined;
+    if (existing) {
+      Object.assign(existing, { ...input, id: existing.id, sort: input.sort ?? existing.sort });
+      return existing;
+    }
+    const promo: AdminPromotion = { ...input, id: randomUUID().replace(/-/g, '').slice(0, 12), sort: input.sort ?? data.promotions.length + 1 };
+    data.promotions.push(promo);
+    return promo;
+  });
+}
+
+export function deletePromotion(id: string): Promise<void> {
+  return mutate((data) => { data.promotions = data.promotions.filter((p) => p.id !== id); });
+}
 
 export async function listZones(): Promise<PriceZone[]> {
   return (await getAdminSnapshot()).zones;

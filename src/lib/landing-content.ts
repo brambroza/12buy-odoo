@@ -71,12 +71,22 @@ export const TRUST_POINTS = [
   { title: 'เคลมตามเงื่อนไขผู้ผลิต', body: 'ประสานงานเคลมกับแบรนด์ให้ แจ้งผ่าน LINE ได้เลย' },
 ] as const;
 
-/** Placeholder testimonials. Replace with real dealer quotes (name, province, quote) before go-live. */
-export const TESTIMONIALS = [
-  { shop: 'ร้านยางตัวอย่าง 1', province: 'เชียงใหม่', quote: 'พิมพ์ขนาดแล้วเห็นราคาของร้านเลย ไม่ต้องโทรถามเซลล์ทีละรุ่น' },
-  { shop: 'ร้านยางตัวอย่าง 2', province: 'ขอนแก่น', quote: 'สั่งซ้ำออเดอร์เดิมปุ่มเดียว ตอนเช้าสั่ง บ่ายได้เลขพัสดุ' },
-  { shop: 'ร้านยางตัวอย่าง 3', province: 'สงขลา', quote: 'สถานะขึ้นใน LINE ทุกขั้น ลูกค้าหน้าร้านถามก็ตอบได้ทันที' },
-] as const;
+/**
+ * Dealer testimonials. Entries marked `placeholder: true` are sample copy and are NOT rendered on the
+ * public page: add real quotes (shop, province, quote, with the dealer's consent) and drop the flag.
+ */
+export type Testimonial = { shop: string; province: string; quote: string; placeholder?: boolean };
+
+export const TESTIMONIALS: readonly Testimonial[] = [
+  { shop: 'ร้านยางตัวอย่าง 1', province: 'เชียงใหม่', quote: 'พิมพ์ขนาดแล้วเห็นราคาของร้านเลย ไม่ต้องโทรถามเซลล์ทีละรุ่น', placeholder: true },
+  { shop: 'ร้านยางตัวอย่าง 2', province: 'ขอนแก่น', quote: 'สั่งซ้ำออเดอร์เดิมปุ่มเดียว ตอนเช้าสั่ง บ่ายได้เลขพัสดุ', placeholder: true },
+  { shop: 'ร้านยางตัวอย่าง 3', province: 'สงขลา', quote: 'สถานะขึ้นใน LINE ทุกขั้น ลูกค้าหน้าร้านถามก็ตอบได้ทันที', placeholder: true },
+];
+
+/** Testimonials fit to publish (real ones only). */
+export function publishedTestimonials(items: readonly Testimonial[] = TESTIMONIALS): Testimonial[] {
+  return items.filter((t) => !t.placeholder);
+}
 
 /** Promotions shown on the landing. Dates are ISO strings so the card can hide expired items. */
 export type Promotion = { title: string; body: string; image: string; from: string; to: string; href: string };

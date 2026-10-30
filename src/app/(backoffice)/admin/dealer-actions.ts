@@ -6,6 +6,7 @@ import { redirect } from 'next/navigation';
 import { z } from 'zod';
 import type { CredentialResult } from '@/components/admin/credential-forms';
 import { audit } from '@/lib/auth/audit';
+import { notifyDealerApproved } from '@/lib/notify';
 import { generateTempPassword } from '@/lib/auth/password';
 import { findResetRequest, resolveResetRequests } from '@/lib/auth/reset-requests';
 import { canManageRole, isBackofficeRole, type Role } from '@/lib/auth/roles';
@@ -372,6 +373,7 @@ export async function approveLeadAction(formData: FormData) {
   await updateDealer(dealer.id, { approvedAt: new Date(), approvedById: actor.id });
   await setLeadStatus(leadId, 'APPROVED', { dealerId: dealer.id });
   await audit(actor.id, 'lead.approve', 'DealerLead', leadId, { dealerId: dealer.id, tier });
+  await notifyDealerApproved(dealer.id, dealer.name);
   let accountNote = '';
   if (lead.email && lead.passwordHash) {
     if (await findUserByEmail(lead.email)) {

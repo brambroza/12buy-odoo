@@ -1,6 +1,7 @@
 'use server';
 
 import { revalidatePath } from 'next/cache';
+import { cookies } from 'next/headers';
 import { redirect } from 'next/navigation';
 import { z } from 'zod';
 import { baht, defaultQty, findProduct, getCatalog, getDealerCarrier, searchProducts } from '@/lib/shop/catalog';
@@ -19,6 +20,9 @@ import { requireDealerAccess } from '@/lib/auth/session';
 import { createUser, isUniqueViolation } from '@/lib/auth/users';
 import { generateTempPassword } from '@/lib/auth/password';
 import { audit } from '@/lib/auth/audit';
+import { RECENT_COOKIE, parseRecent, pushRecent } from '@/lib/shop/recent';
+import { updateUser } from '@/lib/auth/users';
+import { notifyOrderPlaced, notifyStaffGroup } from '@/lib/notify';
 import { deleteAvatar, deleteSlip, saveAvatar, saveSlip } from '@/lib/shop/uploads';
 import { canPayCredit, creditOutstanding, parseCreditAmount } from '@/lib/shop/credit-payment';
 import { logCreditPaymentToOdoo } from '@/lib/shop/credit-payment-odoo';
@@ -247,6 +251,7 @@ async function placeOrder(sid: string, input: CheckoutInput, shipTo: string, sli
   revalidatePath('/shop', 'layout');
   revalidatePath('/admin/orders');
   const slipNote = !slipName ? '' : withSlip?.payment.slipFile === slipName ? ' · แนบสลิปแล้ว รอฝ่ายขายตรวจ' : ' · แนบสลิปไม่สำเร็จ กรุณาแนบใหม่ในหน้านี้';
+  await notifyOrderPlaced(withSlip ?? order);
   await flash('ส่งคำสั่งซื้อสำเร็จ', { icon: 'order', description: `${order.ref} · ยอด ${baht(order.total)}${slipNote}` });
   redirect(`/shop/orders/${order.id}?placed=1`);
 }
@@ -290,7 +295,10 @@ export async function cancelOrderAction(formData: FormData) {
   const id = String(formData.get('orderId') ?? '');
   const [sid, user] = await Promise.all([ensureSessionId(), requireDealerAccess()]);
   const order = await store.cancelOrder(sid, id, { id: user.id, name: user.name });
-  if (order?.status === 'CANCELLED') await audit(user.id, 'order.cancel', 'ShopOrder', order.id, { ref: order.ref, by: 'dealer' });
+  if (order?.status === 'CANCELLED') {
+    await audit(user.id, 'order.cancel', 'ShopOrder', order.id, { ref: order.ref, by: 'dealer' });
+    await notifyStaffGroup({ title: 'ดีลเลอร์ยกเลิกออเดอร์', body: `${order.dealerName} ยกเลิก ${order.ref} ยอด ${baht(order.total)}`, href: `/admin/orders?open=${order.id}` });
+  }
   revalidatePath(`/shop/orders/${id}`);
   if (order?.status === 'CANCELLED') await flash('ยกเลิกคำสั่งซื้อแล้ว', { icon: 'cancel', description: order.ref });
   else if (order) await flash('ยกเลิกไม่ได้', { type: 'error', icon: 'cancel', description: `${order.ref} อยู่ในสถานะ “${ORDER_STATUS_LABELS[order.status]}” แล้ว ติดต่อฝ่ายขาย` });
@@ -299,6 +307,46 @@ export async function cancelOrderAction(formData: FormData) {
 /** True when the demo status buttons may be shown/used in the shop (never on production). */
 function shopDemoControlsEnabled(): boolean {
   return process.env.SHOP_DEMO_CONTROLS === 'true';
+}
+
+/** Adds / removes a product from the shop's favourites. Returns the new state. */
+export async function toggleFavoriteAction(productId: number): Promise<boolean> {
+  const sid = await ensureSessionId();
+  if (!Number.isInteger(productId) || productId <= 0) return false;
+  const active = await store.toggleFavorite(sid, productId);
+  revalidatePath('/shop', 'layout');
+  return active;
+}
+
+/** Remembers a viewed product in the "ดูล่าสุด" cookie (per browser, 30 days). */
+export async function recordViewedAction(productId: number): Promise<void> {
+  if (!Number.isInteger(productId) || productId <= 0) return;
+  const jar = await cookies();
+  const next = pushRecent(parseRecent(jar.get(RECENT_COOKIE)?.value), productId);
+  jar.set(RECENT_COOKIE, next.join(','), { httpOnly: true, sameSite: 'lax', secure: process.env.NODE_ENV === 'production', path: '/shop', maxAge: 30 * 24 * 3600 });
+}
+
+/** Dealer asks accounting for the tax invoice PDF of an order (LINE group + in-app confirmation). */
+export async function requestTaxInvoiceAction(formData: FormData) {
+  const [user, sid] = await Promise.all([requireDealerAccess(), ensureSessionId()]);
+  const id = String(formData.get('orderId') ?? '');
+  const order = await store.getOrder(sid, id);
+  if (!order) redirect('/shop/orders');
+  await audit(user.id, 'order.tax_invoice_request', 'ShopOrder', order.id, { ref: order.ref });
+  await notifyStaffGroup({ title: 'ขอใบกำกับภาษี', body: `${order.dealerName} ขอไฟล์ใบกำกับภาษีของ ${order.ref}${order.odoo?.saleOrderName ? ` (${order.odoo.saleOrderName})` : ''} กรุณาพิมพ์/ส่งใบแจ้งหนี้ใน Odoo แล้วไฟล์จะขึ้นในเว็บเอง`, href: `/admin/orders?open=${order.id}`, rows: [{ label: 'ออเดอร์', value: order.ref }, { label: 'โดย', value: user.name }] });
+  revalidatePath(`/shop/orders/${id}`);
+  await flash('ส่งคำขอใบกำกับภาษีแล้ว', { icon: 'mail', description: 'บัญชีจะพิมพ์เอกสารใน Odoo แล้วไฟล์จะปรากฏในหน้านี้ภายใน 1 วันทำการ' });
+  redirect(`/shop/orders/${id}`);
+}
+
+/** Removes the LINE link of the signed-in user (pushes stop; in-app notifications continue). */
+export async function unlinkLineAction() {
+  const user = await requireDealerAccess();
+  await updateUser(user.id, { lineUserId: null, lineLinkedAt: null });
+  await audit(user.id, 'user.line_unlink', 'User', user.id);
+  revalidatePath('/shop/account');
+  await flash('ยกเลิกการเชื่อม LINE แล้ว', { type: 'info', icon: 'userOff' });
+  redirect('/shop/account');
 }
 
 export type QuickOrderResult = {

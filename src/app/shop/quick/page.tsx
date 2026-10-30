@@ -1,4 +1,7 @@
+import type { Metadata } from 'next';
 import { QuickOrderForm } from '@/components/shop/quick-order-form';
+
+export const metadata: Metadata = { title: 'สั่งเร็ว' };
 
 /** Quick order pad: paste "size qty" per line. */
 export default function QuickOrderPage() {

@@ -13,8 +13,9 @@ import { Promotions } from '@/components/landing/promotions';
 import { Faq } from '@/components/landing/faq';
 import { RegisterForm } from '@/components/landing/register-form';
 import { StickyCta } from '@/components/landing/sticky-cta';
-import { BRANDS, FAQ, PROMOTIONS, TESTIMONIALS, TRUST_POINTS } from '@/lib/landing-content';
+import { BRANDS, FAQ, PROMOTIONS, TRUST_POINTS, publishedTestimonials } from '@/lib/landing-content';
 import { listBrands, loadPublicCatalog } from '@/lib/shop/public-catalog';
+import { listPromotions } from '@/lib/admin/store';
 import { buildSizeOptions } from '@/lib/shop/size-options';
 import { ORDER_STATUS_FLOW, ORDER_STATUS_LABELS } from '@/lib/shop/types';
 import { SITE, absoluteUrl, landingJsonLd } from '@/lib/seo';
@@ -72,6 +73,9 @@ export const revalidate = 300;
 
 /** Public landing page shown before dealers log in. Mobile-first; search options come from the live catalog. */
 export default async function LandingPage() {
+  // Cards managed in /admin/promotions; the coded defaults show only until the first one is saved.
+  const saved = await listPromotions().catch(() => []);
+  const promotions = saved.length ? saved.filter((p) => p.active).map(({ title, body, image, from, to, href }) => ({ title, body, image, from, to, href })) : PROMOTIONS;
   const catalog = await loadPublicCatalog();
   const sizeOptions = catalog ? buildSizeOptions(catalog.products) : [];
   const brandOptions = catalog ? listBrands(catalog) : [];
@@ -80,7 +84,7 @@ export default async function LandingPage() {
       <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(landingJsonLd({ faq: FAQ, brands: BRANDS.map((b) => b.name) })) }} />
       <LandingHeader />
 
-      <main className="pb-20 md:pb-0">
+      <main id="main" tabIndex={-1} className="pb-20 outline-none md:pb-0">
         {/* Hero */}
         <section id="hero" className="relative overflow-hidden">
           <div className="lp-grid absolute inset-0" aria-hidden="true" />
@@ -187,7 +191,7 @@ export default async function LandingPage() {
 
         <CategoryBanners />
 
-        <Promotions items={PROMOTIONS} />
+        <Promotions items={promotions} />
 
         {/* Demo */}
         <section className="bg-[var(--lp-bg-2)]/60 px-4 py-16">
@@ -254,14 +258,15 @@ export default async function LandingPage() {
           </div>
         </section>
 
-        {/* Testimonials */}
+        {/* Testimonials: shown only once real dealer quotes exist (see landing-content.ts). */}
+        {publishedTestimonials().length > 0 && (
         <section className="mx-auto max-w-5xl px-4 py-16" aria-labelledby="voice-heading">
           <div data-reveal>
             <p className="text-sm font-semibold text-[var(--lp-accent)]">เสียงจากดีลเลอร์</p>
             <h2 id="voice-heading" className="mt-1 text-2xl font-extrabold tracking-tight sm:text-3xl">ร้านยางทั่วไทยใช้งานจริง</h2>
           </div>
           <ul className="mt-8 grid gap-4 md:grid-cols-3">
-            {TESTIMONIALS.map((t, i) => (
+            {publishedTestimonials().map((t, i) => (
               <li key={t.shop} data-reveal={i * 0.08} className="rounded-2xl border border-[var(--lp-line)] bg-white p-5">
                 <Quote className="size-6 text-[var(--lp-accent)]/50" aria-hidden="true" />
                 <p className="mt-3 text-sm leading-relaxed">{t.quote}</p>
@@ -271,6 +276,7 @@ export default async function LandingPage() {
             ))}
           </ul>
         </section>
+        )}
 
         {/* FAQ */}
         <section id="faq" className="scroll-mt-28 bg-[var(--lp-bg-2)]/60 px-4 py-16" aria-labelledby="faq-heading">

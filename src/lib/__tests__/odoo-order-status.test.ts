@@ -12,7 +12,7 @@ const store = await import('@/lib/shop/store');
 const { refreshOrderStatuses, refreshIfStale } = await import('@/lib/shop/status-sync');
 
 const progress = (p: Partial<OdooProgress>): OdooProgress => ({ saleOrderId: 1, state: 'sale', deliveryStatus: 'pending', invoices: [], ...p });
-const invoice = (paymentState: string) => ({ name: 'INV/2026/001', paymentState, amountResidual: paymentState === 'paid' ? 0 : 100, dueDate: null });
+const invoice = (paymentState: string) => ({ id: 1, name: 'INV/2026/001', paymentState, amountResidual: paymentState === 'paid' ? 0 : 100, dueDate: null });
 
 describe('webStatusFromOdoo', () => {
   it('maps SO, delivery and invoice state to the web status', () => {
@@ -37,7 +37,7 @@ describe('readOdooProgress', () => {
         { id: 3, name: 'RINV/1', move_type: 'out_refund', state: 'posted', payment_state: 'paid', amount_residual: 0, invoice_date_due: false },
       ]);
     const map = await readOdooProgress([7]);
-    expect(map.get(7)).toEqual({ saleOrderId: 7, state: 'sale', deliveryStatus: 'full', invoices: [{ name: 'INV/1', paymentState: 'paid', amountResidual: 0, dueDate: '2026-11-30' }] });
+    expect(map.get(7)).toEqual({ saleOrderId: 7, state: 'sale', deliveryStatus: 'full', invoices: [{ id: 1, name: 'INV/1', paymentState: 'paid', amountResidual: 0, dueDate: '2026-11-30' }] });
   });
 });
 

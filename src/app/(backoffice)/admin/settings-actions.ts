@@ -9,6 +9,8 @@ import { flash } from '@/lib/flash';
 import { clearOdooConnection, getOdooConnection, saveOdooConnection } from '@/lib/odoo/connection';
 import { probeOdooConnection, resetOdooSession } from '@/lib/odoo/rpc';
 import { clearPartnerCache, clearReferenceCache } from '@/lib/shop/catalog';
+import { clearLineConfig, getLineConfig, saveLineConfig } from '@/lib/notify/line-config';
+import { flexCard, linePush } from '@/lib/notify/line';
 
 const PAGE = '/admin/settings';
 
@@ -86,4 +88,54 @@ export async function testOdooConnectionAction() {
     await flash('เชื่อมต่อ Odoo ไม่ได้', { type: 'error', icon: 'cancel', description: error instanceof Error ? error.message : 'ไม่ทราบสาเหตุ' });
   }
   redirect(PAGE);
+}
+
+// ---------- LINE ----------
+
+const lineSchema = z.object({
+  channelAccessToken: z.string().trim().max(400),
+  loginChannelId: z.string().trim().regex(/^\d{0,20}$/, 'Channel ID ของ LINE Login เป็นตัวเลข'),
+  loginChannelSecret: z.string().trim().max(200),
+  adminGroupId: z.string().trim().regex(/^(C[0-9a-f]{32}|U[0-9a-f]{32})?$/i, 'Group ID ขึ้นต้นด้วย C ตามด้วย 32 ตัวอักษร (ดูจาก webhook event หรือ LINE Developers)'),
+  basicId: z.string().trim().max(40).transform((v) => (v && !v.startsWith('@') ? `@${v}` : v)),
+});
+
+/** Saves LINE Messaging API / LINE Login settings (secrets encrypted; blank keeps the current secret). */
+export async function saveLineConfigAction(formData: FormData) {
+  const actor = await requireAdmin();
+  const s = (k: string) => String(formData.get(k) ?? '');
+  const parsed = lineSchema.safeParse({ channelAccessToken: s('channelAccessToken'), loginChannelId: s('loginChannelId'), loginChannelSecret: s('loginChannelSecret'), adminGroupId: s('adminGroupId'), basicId: s('basicId') });
+  if (!parsed.success) fail(parsed.error.issues[0]?.message ?? 'ข้อมูลไม่ถูกต้อง');
+  await saveLineConfig(parsed.data, actor.id);
+  await audit(actor.id, 'settings.line', 'AppSetting', 'line', { loginChannelId: parsed.data.loginChannelId, adminGroupId: parsed.data.adminGroupId, basicId: parsed.data.basicId, tokenChanged: Boolean(parsed.data.channelAccessToken), secretChanged: Boolean(parsed.data.loginChannelSecret) });
+  revalidatePath('/admin', 'layout');
+  revalidatePath('/shop', 'layout');
+  await flash('บันทึกการตั้งค่า LINE แล้ว', { icon: 'save', description: 'กด “ส่งข้อความทดสอบ” เพื่อตรวจว่าถึงกลุ่มทีมงาน' });
+  redirect(`${PAGE}?saved=1#line`);
+}
+
+export async function clearLineConfigAction() {
+  const actor = await requireAdmin();
+  await clearLineConfig();
+  await audit(actor.id, 'settings.line_clear', 'AppSetting', 'line');
+  revalidatePath('/admin', 'layout');
+  await flash('กลับไปใช้ค่า LINE จาก .env แล้ว', { type: 'info', icon: 'sync' });
+  redirect(`${PAGE}#line`);
+}
+
+/** Pushes a test card to the staff group with the config in use. */
+export async function testLinePushAction() {
+  const actor = await requireAdmin();
+  const config = await getLineConfig();
+  if (!config.channelAccessToken) {
+    await flash('ยังไม่ได้ตั้ง channel access token', { type: 'error', icon: 'cancel' });
+    redirect(`${PAGE}#line`);
+  }
+  if (!config.adminGroupId) {
+    await flash('ยังไม่ได้ตั้ง Group ID ของทีมงาน', { type: 'error', icon: 'cancel', description: 'เพิ่ม OA เข้ากลุ่ม แล้วนำ groupId จาก webhook event มาใส่' });
+    redirect(`${PAGE}#line`);
+  }
+  const result = await linePush(config.adminGroupId, [flexCard({ title: 'ทดสอบการแจ้งเตือน', body: `ส่งจากหลังบ้านโดย ${actor.name} · ถ้าเห็นข้อความนี้ แปลว่าตั้งค่า LINE ถูกต้อง`, accent: '#1f2937' })]);
+  await flash(result.ok ? 'ส่งข้อความทดสอบแล้ว' : 'ส่งไม่สำเร็จ', result.ok ? { icon: 'send', description: 'ดูในกลุ่ม LINE ของทีมงาน' } : { type: 'error', icon: 'cancel', description: result.error });
+  redirect(`${PAGE}#line`);
 }

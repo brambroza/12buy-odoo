@@ -43,9 +43,10 @@ export async function createUserWithHash(input: { email: string; name: string; p
 }
 
 /** Patches a user row and bumps `updatedAt`. */
-export async function updateUser(id: string, patch: Partial<Pick<User, 'passwordHash' | 'mustChangePassword' | 'isActive' | 'lastLoginAt' | 'name' | 'phone' | 'avatarFile' | 'role'>>): Promise<void> {
+export async function updateUser(id: string, patch: Partial<Pick<User, 'passwordHash' | 'mustChangePassword' | 'isActive' | 'lastLoginAt' | 'name' | 'phone' | 'avatarFile' | 'role' | 'lineUserId' | 'lineLinkedAt'>>): Promise<void> {
   const data: Record<string, unknown> = { ...patch, updatedAt: new Date().toISOString() };
   if (patch.lastLoginAt) data.lastLoginAt = patch.lastLoginAt.toISOString();
+  if (patch.lineLinkedAt) data.lineLinkedAt = patch.lineLinkedAt.toISOString();
   unwrap(await db().from('User').update(data).eq('id', id));
 }
 

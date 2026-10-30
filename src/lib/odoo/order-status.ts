@@ -20,7 +20,7 @@ export type OdooProgress = {
   state: SaleOrderProgressRead['state'];
   deliveryStatus: SaleOrderProgressRead['delivery_status'];
   /** Posted customer invoices only (drafts and credit notes are ignored). */
-  invoices: { name: string; paymentState: string; amountResidual: number; dueDate: string | null }[];
+  invoices: { id: number; name: string; paymentState: string; amountResidual: number; dueDate: string | null }[];
 };
 
 const PAID_STATES = new Set(['paid', 'in_payment']);
@@ -43,7 +43,7 @@ export async function readOdooProgress(saleOrderIds: number[]): Promise<Map<numb
       invoices: order.invoice_ids
         .map((id) => byId.get(id))
         .filter((inv): inv is InvoiceRead => Boolean(inv && inv.state === 'posted' && inv.move_type === 'out_invoice'))
-        .map((inv) => ({ name: inv.name, paymentState: inv.payment_state, amountResidual: inv.amount_residual, dueDate: inv.invoice_date_due || null })),
+        .map((inv) => ({ id: inv.id, name: inv.name, paymentState: inv.payment_state, amountResidual: inv.amount_residual, dueDate: inv.invoice_date_due || null })),
     });
   }
   return result;

@@ -1,21 +1,38 @@
+import type { Metadata } from 'next';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { ChevronLeft } from 'lucide-react';
 import { PriceBox } from '@/components/shop/price-box';
 import { StockBadge } from '@/components/shop/stock-badge';
+import { FavoriteButton } from '@/components/shop/favorite-button';
+import { ProductImage } from '@/components/shop/product-image';
+import { RecentlyViewedTracker } from '@/components/shop/recently-viewed-tracker';
+import { getSessionId } from '@/lib/shop/session';
+import { getFavorites } from '@/lib/shop/store';
 import { baht, defaultQty, findProduct, getCatalog } from '@/lib/shop/catalog';
 import { cashDiscountPerUnit, cashRuleOf, resolvePrice, vatLabel } from '@/lib/shop/pricing';
 import { canSeeProduct, getDealerProfile } from '@/lib/shop/dealer';
 import { DEALER_TYPE_LABELS } from '@/lib/shop/types';
+
+export async function generateMetadata({ params }: { params: Promise<{ id: string }> }): Promise<Metadata> {
+  const { id } = await params;
+  try {
+    const product = findProduct(await getCatalog(), Number(id));
+    return { title: product ? `${product.size?.label ? `${product.size.label} ` : ''}${product.name}` : 'สินค้า' };
+  } catch {
+    return { title: 'สินค้า' };
+  }
+}
 
 /** Product detail with dealer price and quantity-tier hints. */
 export default async function ProductPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   const productId = Number(id);
   if (!Number.isInteger(productId)) notFound();
-  const [profile, catalog] = await Promise.all([getDealerProfile(), getCatalog()]);
+  const [profile, catalog, sid] = await Promise.all([getDealerProfile(), getCatalog(), getSessionId()]);
   const product = findProduct(catalog, productId);
   if (!product || !canSeeProduct(profile, product)) notFound();
+  const favorite = (await getFavorites(sid)).includes(product.id);
 
   const unit = resolvePrice(catalog, product, profile);
   // Credit dealers see what paying cash takes off one unit (same rule as the cart and checkout).
@@ -32,12 +49,11 @@ export default async function ProductPage({ params }: { params: Promise<{ id: st
       <Link href="/shop/search" className="inline-flex items-center gap-1 text-sm text-muted-foreground"><ChevronLeft className="size-4" /> กลับไปค้นหา</Link>
 
       <div className="space-y-4 md:grid md:grid-cols-2 md:items-start md:gap-8 md:space-y-0">
-      {product.imageUrl ? (
-        // eslint-disable-next-line @next/next/no-img-element
-        <img src={product.imageUrl} alt={product.name} className="aspect-square w-full rounded-2xl bg-muted object-cover md:sticky md:top-24" />
-      ) : (
-        <div className="flex aspect-square w-full items-center justify-center rounded-2xl bg-muted text-muted-foreground">ไม่มีรูป</div>
-      )}
+      <div className="relative md:sticky md:top-24">
+        <ProductImage src={product.imageUrl} alt={product.name} className="aspect-square w-full rounded-2xl" sizes="(min-width: 768px) 50vw, 100vw" priority />
+        <FavoriteButton productId={product.id} active={favorite} className="absolute right-3 top-3 size-10" />
+      </div>
+      <RecentlyViewedTracker productId={product.id} />
 
       <div className="space-y-4">
       <div className="space-y-1">

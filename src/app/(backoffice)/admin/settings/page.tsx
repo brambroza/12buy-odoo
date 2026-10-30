@@ -10,7 +10,10 @@ import { getOdooConnection, maskSecret } from '@/lib/odoo/connection';
 import { odooWritesEnabled } from '@/lib/odoo/rpc';
 import { hasDedicatedSecret } from '@/lib/settings/crypto';
 import { cn } from '@/lib/utils';
-import { clearOdooConnectionAction, saveOdooConnectionAction, testOdooConnectionAction } from '../settings-actions';
+import { clearLineConfigAction, clearOdooConnectionAction, saveLineConfigAction, saveOdooConnectionAction, testLinePushAction, testOdooConnectionAction } from '../settings-actions';
+import { getLineConfig, maskToken } from '@/lib/notify/line-config';
+import { lineCallbackUrl } from '@/lib/notify/line-login';
+import { MessageCircle } from 'lucide-react';
 
 type Search = { error?: string; saved?: string };
 
@@ -44,7 +47,7 @@ function expiryBadge(expiresAt: string | null) {
  */
 export default async function SettingsPage({ searchParams }: { searchParams: Promise<Search> }) {
   const [, params] = await Promise.all([requireAdmin(), searchParams]);
-  const conn = await getOdooConnection();
+  const [conn, line] = await Promise.all([getOdooConnection(), getLineConfig()]);
   const configured = Boolean(conn.url && conn.db && conn.username && conn.apiKey);
   const [updatedBy, apiKeys] = await Promise.all([
     conn.updatedById ? findUserById(conn.updatedById) : null,
@@ -56,8 +59,8 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
   return (
     <div className="space-y-4">
       <div>
-        <h1 className="text-2xl font-bold">ตั้งค่าเชื่อมต่อ Odoo</h1>
-        <p className="text-sm text-muted-foreground">ค่าที่บันทึกจากหน้านี้ถูกเก็บในฐานข้อมูลของเว็บ (API key เข้ารหัส) และใช้แทนค่าใน .env ทันทีโดยไม่ต้อง deploy ใหม่</p>
+        <h1 className="text-2xl font-bold">ตั้งค่าระบบ</h1>
+        <p className="text-sm text-muted-foreground">การเชื่อมต่อ Odoo และ LINE ค่าที่บันทึกจากหน้านี้ถูกเก็บในฐานข้อมูลของเว็บ (ความลับเข้ารหัส) และใช้แทนค่าใน .env ทันทีโดยไม่ต้อง deploy ใหม่</p>
       </div>
       {params.error && <p className="rounded-lg bg-destructive/10 p-3 text-sm text-destructive">{params.error}</p>}
       {conn.savedError && <p className="flex items-start gap-2 rounded-lg bg-amber-500/10 p-3 text-sm text-amber-800"><AlertTriangle className="mt-0.5 size-4 shrink-0" /> {conn.savedError}</p>}
@@ -147,6 +150,49 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
           {!hasDedicatedSecret() && <p className="text-xs text-amber-800 md:col-span-2">แนะนำตั้ง <code>SETTINGS_SECRET</code> ใน .env (ข้อความสุ่มยาว 32 ตัวขึ้นไป) ตอนนี้ใช้คีย์ที่สร้างจาก SUPABASE_SERVICE_ROLE_KEY ในการเข้ารหัส API key ถ้าเปลี่ยน key นั้นจะต้องบันทึก API key ใหม่</p>}
           <div className="md:col-span-2"><Button type="submit" size="sm"><Save /> ทดสอบและบันทึก</Button></div>
         </form>
+      </section>
+
+      <section id="line" className="rounded-xl border border-border bg-card">
+        <h2 className="flex flex-wrap items-center justify-between gap-2 border-b border-border px-4 py-3 text-sm font-semibold">
+          <span className="flex items-center gap-2"><MessageCircle className="size-4 text-[#06c755]" /> LINE แจ้งเตือน</span>
+          <span className="flex items-center gap-2">
+            <Badge variant="outline" className={cn('border-transparent', line.channelAccessToken ? 'bg-emerald-500/15 text-emerald-700' : 'bg-muted text-muted-foreground')}>{line.channelAccessToken ? 'push ดีลเลอร์เปิดอยู่' : 'ยังไม่ได้ตั้ง token'}</Badge>
+            <Badge variant="outline" className={cn('border-transparent', line.source === 'db' ? 'bg-primary/10 text-primary' : 'bg-muted text-muted-foreground')}>{line.source === 'db' ? 'บันทึกจากหน้าเว็บ' : 'จาก .env'}</Badge>
+          </span>
+        </h2>
+        {line.savedError && <p className="m-4 flex items-start gap-2 rounded-lg bg-amber-500/10 p-3 text-sm text-amber-800"><AlertTriangle className="mt-0.5 size-4 shrink-0" /> {line.savedError}</p>}
+        <div className="grid gap-4 p-4 text-sm lg:grid-cols-[1fr_320px]">
+          <form action={saveLineConfigAction} className="grid gap-3 md:grid-cols-2">
+            <label className={cn(label, 'md:col-span-2')}>Messaging API · Channel access token <span className="font-normal text-muted-foreground">(long-lived · เว้นว่าง = ใช้ค่าเดิม)</span>
+              <Input name="channelAccessToken" type="password" autoComplete="new-password" placeholder={line.channelAccessToken ? maskToken(line.channelAccessToken) : 'วาง token จาก LINE Developers → Messaging API'} className={field} />
+            </label>
+            <label className={label}>LINE Login · Channel ID<Input name="loginChannelId" defaultValue={line.loginChannelId} placeholder="1660000000" className={field} /></label>
+            <label className={label}>LINE Login · Channel secret <span className="font-normal text-muted-foreground">(เว้นว่าง = ใช้ค่าเดิม)</span>
+              <Input name="loginChannelSecret" type="password" autoComplete="new-password" placeholder={line.loginChannelSecret ? maskToken(line.loginChannelSecret) : 'channel secret'} className={field} />
+            </label>
+            <label className={label}>Group ID ของทีมงาน <span className="font-normal text-muted-foreground">(แจ้งออเดอร์ใหม่/สลิป/Odoo ล้มเหลว)</span><Input name="adminGroupId" defaultValue={line.adminGroupId} placeholder="Cxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" className={field} /></label>
+            <label className={label}>LINE OA Basic ID <span className="font-normal text-muted-foreground">(ให้ดีลเลอร์เพิ่มเพื่อน)</span><Input name="basicId" defaultValue={line.basicId} placeholder="@12buy" className={field} /></label>
+            <div className="md:col-span-2"><Button type="submit" size="sm"><Save /> บันทึก LINE</Button></div>
+          </form>
+          <div className="space-y-3 rounded-lg border border-dashed border-border p-3 text-xs text-muted-foreground">
+            <p className="font-semibold text-foreground">ขั้นตอนตั้งค่า (ทำครั้งเดียว)</p>
+            <ol className="list-decimal space-y-1 pl-4">
+              <li>LINE Developers → Provider เดียวกัน สร้าง <b>Messaging API channel</b> (= LINE OA) → Issue channel access token (long-lived) วางช่องแรก</li>
+              <li>สร้าง <b>LINE Login channel</b> → ใส่ Callback URL <code className="break-all rounded bg-muted px-1">{lineCallbackUrl()}</code> → เปิด “Link to Messaging API” กับ OA เดียวกัน → คัดลอก Channel ID / secret</li>
+              <li>เพิ่ม OA เข้ากลุ่ม LINE ทีมขาย แล้วนำ <b>groupId</b> (ขึ้นต้น C) มาใส่ · ดูได้จาก webhook event ตอนเชิญเข้ากลุ่ม หรือเครื่องมือของทีม dev</li>
+              <li>ดีลเลอร์กด “เชื่อม LINE” ในหน้าข้อมูลร้าน หนึ่งครั้ง จากนั้นได้รับแจ้งเตือนทุกสถานะออเดอร์</li>
+            </ol>
+            <div className="flex flex-wrap items-center gap-2">
+              <form action={testLinePushAction}><Button type="submit" size="sm" variant="outline" disabled={!line.channelAccessToken || !line.adminGroupId}><CheckCircle2 /> ส่งข้อความทดสอบเข้ากลุ่ม</Button></form>
+              {line.source === 'db' && (
+                <form action={clearLineConfigAction}>
+                  <IconSubmit label="ลบค่า LINE ที่บันทึกไว้ แล้วกลับไปใช้ .env" tone="danger" confirm="ลบการตั้งค่า LINE ที่บันทึกจากหน้าเว็บ แล้วกลับไปใช้ค่า LINE_* ใน .env?" className="w-auto gap-1.5 px-2.5"><RotateCcw /> ใช้ค่าจาก .env</IconSubmit>
+                </form>
+              )}
+            </div>
+            {line.updatedAt && <p>บันทึกล่าสุด {fmt.format(new Date(line.updatedAt))}</p>}
+          </div>
+        </div>
       </section>
     </div>
   );

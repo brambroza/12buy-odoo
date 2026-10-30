@@ -1,3 +1,4 @@
+import type { Metadata } from 'next';
 import Link from 'next/link';
 import { TriangleAlert } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -17,8 +18,11 @@ import { isBackofficeRole, type Role } from '@/lib/auth/roles';
 import { ThaiAddressFields } from '@/components/shop/thai-address-fields';
 import { CartQtyStepper } from '@/components/shop/cart-qty-stepper';
 import { CartUndoToast, ClearCartButton } from '@/components/shop/cart-undo';
+import { ProductImage } from '@/components/shop/product-image';
 import { CheckoutSummary } from '@/components/shop/checkout-summary';
 import { applyCouponAction, changeCartUnitAction, checkoutAction, clearCartAction, removeCouponAction, restoreCartLineAction, updateCartQtyAction } from '../actions';
+
+export const metadata: Metadata = { title: 'ตะกร้าและสั่งซื้อ' };
 
 /** Cart and one-page checkout. */
 export default async function CartPage({ searchParams }: { searchParams: Promise<{ error?: string }> }) {
@@ -75,8 +79,7 @@ export default async function CartPage({ searchParams }: { searchParams: Promise
             <div className="flex items-start gap-3">
               <Link href={`/shop/product/${product.id}`} className="shrink-0">
                 {product.imageUrl ? (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img src={product.imageUrl} alt={product.name} className="size-16 rounded-lg bg-muted object-cover md:size-20" loading="lazy" />
+                  <ProductImage src={product.imageUrl} alt={product.name} className="size-16 rounded-lg md:size-20" sizes="80px" />
                 ) : (
                   <div className="flex size-16 items-center justify-center rounded-lg bg-muted text-[11px] text-muted-foreground md:size-20">ไม่มีรูป</div>
                 )}

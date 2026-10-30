@@ -14,6 +14,7 @@ import { returnUrl } from '@/lib/admin/return-url';
 import { audit } from '@/lib/auth/audit';
 import { requireAdmin, requireBackoffice } from '@/lib/auth/session';
 import { cancelOrderInOdoo, needsOdooCancel } from '@/lib/odoo/cancel';
+import { notifyCreditPaymentReview, notifyOdooFailure, notifyOrderStatus, notifySlipVerified } from '@/lib/notify';
 import { canSyncOrder, syncOrderToOdoo } from '@/lib/shop/odoo-sync';
 import { creditPaymentsToResend, logCreditPaymentToOdoo } from '@/lib/shop/credit-payment-odoo';
 import * as shopStore from '@/lib/shop/store';
@@ -373,7 +374,10 @@ export async function adminAdvanceOrderAction(formData: FormData) {
     redirect(await back('/admin/orders', { error: `${order.ref}: ต้องตรวจสลิปก่อนยืนยันออเดอร์` }));
   }
   const advanced = await shopStore.advanceOrder(null, id, String(formData.get('trackingRef') ?? ''), order.status, { id: user.id, name: user.name });
-  if (advanced && advanced.status !== order.status) await audit(user.id, order.status === 'PENDING' ? 'order.confirm' : 'order.advance', 'ShopOrder', id, { ref: order.ref, from: order.status, to: advanced.status });
+  if (advanced && advanced.status !== order.status) {
+    await audit(user.id, order.status === 'PENDING' ? 'order.confirm' : 'order.advance', 'ShopOrder', id, { ref: order.ref, from: order.status, to: advanced.status });
+    await notifyOrderStatus(advanced);
+  }
   const failure = order.status === 'PENDING' && advanced?.status === 'PREPARING' && canSyncOrder(advanced) ? await pushOrReport(advanced) : null;
   revalidateAdmin();
   if (failure) redirect(await back('/admin/orders', { error: failure }));
@@ -394,7 +398,10 @@ function odooSummary(order: ProtoOrder): string {
 /** Pushes an order to Odoo; returns an error message for the admin, or null on success. */
 async function pushOrReport(order: ProtoOrder): Promise<string | null> {
   const result = await syncOrderToOdoo(order);
-  if (result.status === 'FAILED') return `${order.ref}: ยืนยันในเว็บแล้ว แต่ส่งเข้า Odoo ไม่สำเร็จ — ${result.error}`;
+  if (result.status === 'FAILED') {
+    await notifyOdooFailure(order, 'ส่งออเดอร์เข้า Odoo ', result.error ?? 'unknown');
+    return `${order.ref}: ยืนยันในเว็บแล้ว แต่ส่งเข้า Odoo ไม่สำเร็จ — ${result.error}`;
+  }
   const problems = [
     result.status === 'MISMATCH' ? `ยอด ${result.amountTotal === undefined || result.amountTotal === null ? '-' : formatAmount(result.amountTotal)} ไม่ตรงกับเว็บ ${formatAmount(order.total)} กรุณาตรวจใน Odoo` : '',
     result.invoiceError ? `สร้างใบแจ้งหนี้ร่างไม่สำเร็จ — ${result.invoiceError} (กด “ส่งเข้า Odoo อีกครั้ง” เพื่อลองใหม่)` : '',
@@ -430,6 +437,7 @@ export async function reviewCreditPaymentAction(formData: FormData) {
   const result = await shopStore.reviewCreditPayment(orderId, paymentId, decision, reason);
   if (!result?.payment) redirect(await back('/admin/orders', { error: 'รายการนี้ถูกตรวจไปแล้วหรือไม่พบ' }));
   await audit(user.id, decision === 'VERIFIED' ? 'order.credit_payment.verify' : 'order.credit_payment.reject', 'ShopOrder', orderId, { ref: result.order.ref, paymentId, amount: result.payment.amount, reason: reason || undefined });
+  await notifyCreditPaymentReview(result.order, { amount: result.payment.amount, status: decision, rejectReason: reason || null });
   const log = result.order.odoo?.saleOrderId ? await logCreditPaymentToOdoo(result.order, result.payment, { reviewer: user.name ?? user.email }) : null;
   revalidateAdmin();
   const odooNote = !log ? ' · ยังไม่มี SO ใน Odoo จึงไม่ได้บันทึก' : log.error ? ` · บันทึกเข้า Odoo ไม่สำเร็จ: ${log.error}` : ' · บันทึกเข้า Odoo แล้ว';
@@ -459,7 +467,10 @@ export async function verifySlipAction(formData: FormData) {
   const user = await requireBackoffice();
   const order = await shopStore.verifySlip(String(formData.get('orderId') ?? ''));
   revalidateAdmin();
-  if (order?.payment.verifiedAt) await audit(user.id, 'order.slip.verify', 'ShopOrder', order.id, { ref: order.ref, total: order.total });
+  if (order?.payment.verifiedAt) {
+    await audit(user.id, 'order.slip.verify', 'ShopOrder', order.id, { ref: order.ref, total: order.total });
+    await notifySlipVerified(order);
+  }
   if (order?.payment.verifiedAt) await flash('ตรวจสลิปแล้ว', { icon: 'check', description: `${order.ref} · กดยืนยันออเดอร์ได้แล้ว` });
 }
 
@@ -504,8 +515,12 @@ export async function adminCancelOrderAction(formData: FormData) {
     const outcome = await cancelOrderInOdoo(order);
     await shopStore.setOdooCancel(order.id, outcome);
     odooNote = outcome.ok ? ` · ${outcome.note ?? 'ยกเลิกใน Odoo แล้ว'}` : ` · Odoo: ${outcome.error}`;
+    if (!outcome.ok) await notifyOdooFailure(order, 'ยกเลิก SO ใน Odoo ', outcome.error ?? 'unknown');
   }
-  if (cancelledNow && order) await audit(user.id, 'order.cancel', 'ShopOrder', order.id, { ref: order.ref, from: before?.status, odoo: odooNote || undefined });
+  if (cancelledNow && order) {
+    await audit(user.id, 'order.cancel', 'ShopOrder', order.id, { ref: order.ref, from: before?.status, odoo: odooNote || undefined });
+    await notifyOrderStatus(order, 'CANCELLED');
+  }
   revalidateAdmin();
   if (cancelledNow && order) await flash('ยกเลิกออเดอร์แล้ว', { type: odooNote.includes('Odoo:') ? 'warning' : 'success', icon: 'cancel', description: `${order.ref} · ${order.dealerName}${odooNote}` });
   else if (order) await flash('ยกเลิกไม่ได้', { type: 'error', icon: 'cancel', description: `${order.ref} อยู่ในสถานะ “${ORDER_STATUS_LABELS[order.status]}” แล้ว` });

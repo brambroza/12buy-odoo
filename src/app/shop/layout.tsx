@@ -4,6 +4,7 @@ import { LogOut } from 'lucide-react';
 import { BottomNav, TopNav } from '@/components/shop/bottom-nav';
 import { BrandLogo } from '@/components/landing/brand-logo';
 import { DealerAvatar } from '@/components/shop/dealer-avatar';
+import { ShopNotificationBell } from '@/components/shop/notification-bell';
 import { getDealerProfile } from '@/lib/shop/dealer';
 import { getSessionId } from '@/lib/shop/session';
 import { getCart } from '@/lib/shop/store';
@@ -37,6 +38,7 @@ export default async function ShopLayout({ children }: { children: React.ReactNo
           </Link>
           <TopNav cartCount={cartCount} />
           <div className="flex items-center gap-2">
+            {user.dealerId && <ShopNotificationBell />}
             <Link href="/shop/account" className="flex items-center gap-2 text-right text-xs">
               <span className="leading-tight">
                 <span className="block max-w-[140px] truncate font-medium lg:max-w-[220px]">{profile.name}</span>
@@ -50,7 +52,7 @@ export default async function ShopLayout({ children }: { children: React.ReactNo
           </div>
         </div>
       </header>
-      <main className="mx-auto max-w-lg px-4 py-4 md:max-w-6xl md:px-6 md:py-6">{children}</main>
+      <main id="main" tabIndex={-1} className="mx-auto max-w-lg px-4 py-4 outline-none md:max-w-6xl md:px-6 md:py-6">{children}</main>
       <BottomNav cartCount={cartCount} />
     </div>
   );

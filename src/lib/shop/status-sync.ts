@@ -3,6 +3,7 @@
  * Runs from the cron route, the admin "ดึงสถานะจาก Odoo" button, and lazily when a dealer opens an order.
  */
 import { readOdooProgress, webStatusFromOdoo } from '@/lib/odoo/order-status';
+import { notifyOrderStatus } from '@/lib/notify';
 import * as store from './store';
 import type { ProtoOrder } from './types';
 
@@ -22,7 +23,10 @@ export async function refreshOrderStatuses(orders?: ProtoOrder[]): Promise<{ che
     const p = progress.get(order.odoo!.saleOrderId!);
     if (!p) continue;
     const updated = await store.applyOdooProgress(order, webStatusFromOdoo(p), { deliveryStatus: p.deliveryStatus, invoices: p.invoices, checkedAt });
-    if (updated.status !== order.status) changed += 1;
+    if (updated.status !== order.status) {
+      changed += 1;
+      if (updated.status !== 'PENDING') await notifyOrderStatus(updated);
+    }
   }
   return { checked: targets.length, changed };
 }

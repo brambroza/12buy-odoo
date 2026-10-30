@@ -91,6 +91,9 @@ export type User = {
   dealerId: string | null;
   isActive: boolean;
   mustChangePassword: boolean;
+  /** LINE user id from LINE Login; pushes go here. Null until the user links LINE. */
+  lineUserId?: string | null;
+  lineLinkedAt?: Date | null;
   lastLoginAt: Date | null;
   createdAt: Date;
   updatedAt: Date;

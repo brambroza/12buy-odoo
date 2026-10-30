@@ -1,5 +1,21 @@
 import type { DealerTier, DealerType } from '@/lib/shop/types';
 
+/** Landing-page promotion card managed from /admin/promotions (dates inclusive, ISO yyyy-mm-dd). */
+export type AdminPromotion = {
+  id: string;
+  title: string;
+  body: string;
+  /** Path under /public (e.g. /landing/car-wide.webp) or an absolute https URL. */
+  image: string;
+  from: string;
+  to: string;
+  /** Where the card links (e.g. /tires?type=CAR). */
+  href: string;
+  /** Hidden cards stay saved but are not rendered. */
+  active: boolean;
+  sort: number;
+};
+
 /** Group of provinces that share one price table. */
 export type PriceZone = {
   id: string;

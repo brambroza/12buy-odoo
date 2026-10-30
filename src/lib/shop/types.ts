@@ -201,7 +201,8 @@ export type OdooSync = {
   /** Last read of delivery/invoice progress from Odoo (status sync). */
   progress?: {
     deliveryStatus: 'pending' | 'started' | 'partial' | 'full' | false;
-    invoices: { name: string; paymentState: string; amountResidual: number; dueDate: string | null }[];
+    /** `id` is the Odoo `account.move` id (absent on orders synced before it was stored). */
+    invoices: { id?: number; name: string; paymentState: string; amountResidual: number; dueDate: string | null }[];
     checkedAt: string;
   };
 };

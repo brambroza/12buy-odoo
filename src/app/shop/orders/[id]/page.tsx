@@ -1,6 +1,6 @@
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
-import { ChevronLeft, RotateCcw } from 'lucide-react';
+import { ChevronLeft, FileDown, FileText, RotateCcw } from 'lucide-react';
 import { BankAccounts } from '@/components/shop/bank-accounts';
 import { OrderTimeline } from '@/components/shop/order-timeline';
 import { SlipUpload } from '@/components/shop/slip-upload';
@@ -19,7 +19,7 @@ import { refreshIfStale } from '@/lib/shop/status-sync';
 import { billTotals, uniformCashPercent, withCoupon } from '@/lib/shop/pricing';
 import { CREDIT_PAYMENT_STATUS_LABELS, ORDER_STATUS_FLOW, ORDER_STATUS_LABELS, PAYMENT_METHOD_LABELS, type CreditPaymentStatus } from '@/lib/shop/types';
 import { cn } from '@/lib/utils';
-import { advanceOrderAction, cancelOrderAction, reorderAction, submitCreditPaymentAction, uploadSlipAction } from '../../actions';
+import { advanceOrderAction, cancelOrderAction, reorderAction, requestTaxInvoiceAction, submitCreditPaymentAction, uploadSlipAction } from '../../actions';
 
 const CREDIT_PAYMENT_STYLE: Record<CreditPaymentStatus, string> = {
   PENDING: 'bg-amber-500/15 text-amber-700 dark:text-amber-400',
@@ -148,12 +148,20 @@ export default async function OrderDetailPage({ params, searchParams }: { params
           <p className="mt-3 rounded-lg bg-amber-500/10 px-3 py-2 text-sm text-amber-800 dark:text-amber-300">ส่งของแล้วบางส่วน ที่เหลือกำลังจัดส่ง</p>
         )}
         {order.odoo?.progress?.invoices.map((inv) => (
-          <p key={inv.name} className="mt-2 text-sm text-muted-foreground">
-            ใบแจ้งหนี้ <span className="font-medium text-foreground">{inv.name}</span>
+          <p key={inv.name} className="mt-2 flex flex-wrap items-center gap-x-2 text-sm text-muted-foreground">
+            <span>ใบแจ้งหนี้ <span className="font-medium text-foreground">{inv.name}</span>
             {inv.amountResidual > 0 ? ` · ค้างชำระ ${baht(inv.amountResidual)}` : ' · ชำระครบแล้ว'}
-            {inv.amountResidual > 0 && inv.dueDate ? ` · ครบกำหนด ${new Date(inv.dueDate).toLocaleDateString('th-TH', { dateStyle: 'medium' })}` : ''}
+            {inv.amountResidual > 0 && inv.dueDate ? ` · ครบกำหนด ${new Date(inv.dueDate).toLocaleDateString('th-TH', { dateStyle: 'medium' })}` : ''}</span>
+            {inv.id && <a href={`/api/orders/${order.id}/invoice/${inv.id}`} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-primary underline"><FileText className="size-3.5" /> ใบกำกับภาษี PDF</a>}
           </p>
         ))}
+        {order.odoo?.saleOrderId && order.status !== 'CANCELLED' && (
+          <form action={requestTaxInvoiceAction} className="mt-3 border-t border-border pt-3 text-xs text-muted-foreground">
+            <input type="hidden" name="orderId" value={order.id} />
+            ไม่เห็นไฟล์ใบกำกับภาษี หรือต้องการสำเนา? <button type="submit" className="text-primary underline">ขอใบกำกับภาษีจากบัญชี</button>
+          </form>
+        )}
+        {error && !payCredit && !(order.status === 'PENDING' && order.paymentMethod === 'CASH') && <p className="mt-2 text-xs text-destructive">{error}</p>}
       </section>
 
       <section className="rounded-xl border border-border bg-card p-4">
@@ -204,6 +212,7 @@ export default async function OrderDetailPage({ params, searchParams }: { params
           <input type="hidden" name="orderId" value={order.id} />
           <Button type="submit" variant="outline" className="h-11"><RotateCcw className="size-4" /> สั่งซ้ำ</Button>
         </form>
+        <Button nativeButton={false} render={<a href={`/shop/orders/${order.id}/pdf`} target="_blank" rel="noreferrer" />} variant="outline" className="h-11"><FileDown className="size-4" /> ใบสั่งซื้อ PDF</Button>
         {order.status === 'PENDING' && (
           <CancelOrderButton orderId={order.id} orderRef={order.ref} action={cancelOrderAction} />
         )}

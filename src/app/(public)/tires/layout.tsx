@@ -7,7 +7,7 @@ export default function PublicCatalogLayout({ children }: { children: React.Reac
   return (
     <div className="landing flex min-h-screen flex-col">
       <LandingHeader />
-      <main id="hero" className="mx-auto w-full max-w-5xl flex-1 px-4 pb-24 pt-6 md:pb-12">{children}</main>
+      <main id="hero" className="mx-auto w-full max-w-5xl flex-1 px-4 pb-24 pt-6 md:pb-12"><div id="main" tabIndex={-1} className="outline-none">{children}</div></main>
       <LandingFooter />
       <StickyCta sentinelId="catalog-top" />
     </div>

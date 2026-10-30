@@ -1,5 +1,5 @@
 import Link from 'next/link';
-import { ChevronRight, RotateCcw } from 'lucide-react';
+import { ChevronRight, Clock, Heart, RotateCcw } from 'lucide-react';
 import { SizeSearch } from '@/components/shop/size-search';
 import { ProductCard } from '@/components/shop/product-card';
 import { Button } from '@/components/ui/button';
@@ -7,7 +7,8 @@ import { baht, findProduct, getCatalog } from '@/lib/shop/catalog';
 import { resolvePrice } from '@/lib/shop/pricing';
 import { canSeeProduct, getDealerProfile } from '@/lib/shop/dealer';
 import { getSessionId } from '@/lib/shop/session';
-import { listOrders } from '@/lib/shop/store';
+import { getFavorites, listOrders } from '@/lib/shop/store';
+import { getRecentlyViewed } from '@/lib/shop/recent';
 import { DEALER_TYPE_LABELS, ORDER_STATUS_LABELS, type CatalogProduct } from '@/lib/shop/types';
 import { reorderAction } from './actions';
 
@@ -22,8 +23,13 @@ export default async function ShopHome() {
     console.error('[shop] catalog load failed', error);
     loadError = 'โหลดรายการสินค้าไม่สำเร็จ';
   }
-  const orders = (await listOrders(sid)).filter((o) => o.status !== 'CANCELLED');
+  const [allOrders, favoriteIds, recentIds] = await Promise.all([listOrders(sid), getFavorites(sid), getRecentlyViewed()]);
+  const orders = allOrders.filter((o) => o.status !== 'CANCELLED');
   const lastOrder = orders[0];
+  const visible = (ids: number[], limit: number): CatalogProduct[] => catalog ? ids.map((id) => findProduct(catalog!, id)).filter((p): p is CatalogProduct => Boolean(p) && canSeeProduct(profile, p!)).slice(0, limit) : [];
+  const favorites = visible(favoriteIds, 4);
+  const recent = visible(recentIds.filter((id) => !favoriteIds.includes(id)), 4);
+  const favoriteSet = new Set(favoriteIds);
 
   const frequency = new Map<number, number>();
   for (const order of orders) for (const line of order.lines) frequency.set(line.productId, (frequency.get(line.productId) ?? 0) + line.qty);
@@ -54,7 +60,28 @@ export default async function ShopHome() {
         <section className="space-y-2">
           <h2 className="text-sm font-semibold">สินค้าที่สั่งบ่อย</h2>
           <div className="grid gap-2 md:grid-cols-2">
-            {frequent.map((product) => <ProductCard key={product.id} product={product} price={resolvePrice(catalog!, product, profile)} />)}
+            {frequent.map((product) => <ProductCard key={product.id} product={product} price={resolvePrice(catalog!, product, profile)} favorite={favoriteSet.has(product.id)} />)}
+          </div>
+        </section>
+      )}
+
+      {catalog && favorites.length > 0 && (
+        <section className="space-y-2">
+          <div className="flex items-center justify-between">
+            <h2 className="flex items-center gap-1.5 text-sm font-semibold"><Heart className="size-4 fill-primary text-primary" /> รายการโปรด</h2>
+            <Link href="/shop/favorites" className="text-xs text-primary">ดูทั้งหมด ({favoriteIds.length})</Link>
+          </div>
+          <div className="grid gap-2 md:grid-cols-2">
+            {favorites.map((product) => <ProductCard key={product.id} product={product} price={resolvePrice(catalog!, product, profile)} favorite />)}
+          </div>
+        </section>
+      )}
+
+      {catalog && recent.length > 0 && (
+        <section className="space-y-2">
+          <h2 className="flex items-center gap-1.5 text-sm font-semibold"><Clock className="size-4 text-muted-foreground" /> ดูล่าสุด</h2>
+          <div className="grid gap-2 md:grid-cols-2">
+            {recent.map((product) => <ProductCard key={product.id} product={product} price={resolvePrice(catalog!, product, profile)} favorite={favoriteSet.has(product.id)} />)}
           </div>
         </section>
       )}

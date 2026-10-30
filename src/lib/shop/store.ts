@@ -137,6 +137,26 @@ export async function restoreCartLine(sessionId: string, line: CartItem, index: 
   await setCart(sessionId, items);
 }
 
+// ---------- favourites ----------
+
+const MAX_FAVORITES = 200;
+
+/** Product ids the shop marked as favourites, newest first. */
+export async function getFavorites(scope: string): Promise<number[]> {
+  const row = unwrap(await db().from('ShopCart').select('favorites').eq('scope', scope).maybeSingle()) as { favorites?: unknown } | null;
+  const raw = Array.isArray(row?.favorites) ? row!.favorites : [];
+  return raw.filter((id): id is number => Number.isInteger(id));
+}
+
+/** Adds or removes a favourite; returns the new state of that product. */
+export async function toggleFavorite(scope: string, productId: number): Promise<boolean> {
+  const current = await getFavorites(scope);
+  const has = current.includes(productId);
+  const favorites = (has ? current.filter((id) => id !== productId) : [productId, ...current]).slice(0, MAX_FAVORITES);
+  unwrap(await db().from('ShopCart').upsert({ scope, favorites, updatedAt: nowIso() }, { onConflict: 'scope' }));
+  return !has;
+}
+
 // ---------- orders ----------
 
 export async function listOrders(sessionId: string): Promise<ProtoOrder[]> {

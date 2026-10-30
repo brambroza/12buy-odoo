@@ -37,6 +37,13 @@ const nextConfig: NextConfig = {
   // Slip uploads go through a server action; default limit is 1 MB. Server side still caps files at 5 MB.
   experimental: { serverActions: { bodySizeLimit: '6mb' } },
   poweredByHeader: false,
+  images: {
+    // Product pictures come from Odoo (`/web/image/...`); allow any Odoo Online host plus the configured one.
+    remotePatterns: [
+      { protocol: 'https', hostname: '**.odoo.com' },
+      ...(process.env.ODOO_URL && /^https?:\/\//.test(process.env.ODOO_URL) ? [{ protocol: new URL(process.env.ODOO_URL).protocol.replace(':', '') as 'http' | 'https', hostname: new URL(process.env.ODOO_URL).hostname }] : []),
+    ],
+  },
   async headers() {
     return [{ source: '/:path*', headers: securityHeaders }];
   },
