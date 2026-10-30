@@ -48,7 +48,7 @@ function OdooStatus({ sync }: { sync: OdooSync }) {
   const so = sync.saleOrderName && (base && sync.saleOrderId
     ? <a href={`${base}/odoo/sales/${sync.saleOrderId}`} target="_blank" rel="noreferrer" className="underline">{sync.saleOrderName}</a>
     : sync.saleOrderName);
-  if (sync.status === 'FAILED') return <span className="text-xs text-destructive">ส่ง Odoo ไม่สำเร็จ: {sync.error}</span>;
+  if (sync.status === 'FAILED') return <span className="line-clamp-3 break-words text-xs text-destructive" title={sync.error ?? undefined}>ส่ง Odoo ไม่สำเร็จ: {sync.error}</span>;
   return (
     <span className="flex flex-wrap items-center gap-1">
       {sync.status === 'SYNCED'
@@ -61,7 +61,7 @@ function OdooStatus({ sync }: { sync: OdooSync }) {
 
 /** Draft invoice made with the SO: link to it in Odoo, or why it is missing. Nothing for orders sent before invoices were made. */
 function InvoiceStatus({ sync }: { sync: OdooSync }) {
-  if (sync.invoiceError) return <span className="text-xs text-destructive">ใบแจ้งหนี้ร่างไม่สำเร็จ: {sync.invoiceError}</span>;
+  if (sync.invoiceError) return <span className="line-clamp-3 break-words text-xs text-destructive" title={sync.invoiceError}>ใบแจ้งหนี้ร่างไม่สำเร็จ: {sync.invoiceError}</span>;
   if (!sync.invoice) return null;
   const base = process.env.ODOO_URL;
   const label = sync.invoice.name ?? (sync.invoice.state === 'draft' ? 'ใบแจ้งหนี้ร่าง' : 'ใบแจ้งหนี้');
@@ -93,10 +93,10 @@ function SlipBadge({ order: o }: { order: ProtoOrder }) {
 /** Total with the end-of-bill cash discount and coupon lines underneath. */
 function OrderTotal({ order: o }: { order: ProtoOrder }) {
   return (
-    <span className="font-bold tabular-nums">
+    <span className="block whitespace-nowrap font-bold tabular-nums">
       {baht(o.total)}
-      {o.cashDiscount > 0 && <span className="block text-xs font-normal text-emerald-700">ลดเงินสดท้ายบิล{percentLabel(o.lines)} −{baht(o.cashDiscount)} จาก {baht(o.subtotal)}</span>}
-      {o.coupon && o.couponDiscount > 0 && <span className="block text-xs font-normal text-emerald-700">คูปอง {o.coupon.code} −{baht(o.couponDiscount)}</span>}
+      {o.cashDiscount > 0 && <span className="block whitespace-normal text-xs font-normal text-emerald-700">ลดเงินสด{percentLabel(o.lines)} −{baht(o.cashDiscount)}<span className="hidden xl:inline"> จาก {baht(o.subtotal)}</span></span>}
+      {o.coupon && o.couponDiscount > 0 && <span className="block whitespace-normal text-xs font-normal text-emerald-700">คูปอง {o.coupon.code} −{baht(o.couponDiscount)}</span>}
     </span>
   );
 }
@@ -138,7 +138,7 @@ export default async function AdminOrdersPage({ searchParams }: { searchParams: 
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <h1 className="text-2xl font-bold">ออเดอร์จากเว็บ</h1>
-          <p className="text-sm text-muted-foreground">ยืนยันออเดอร์ (เงินสดหลังตรวจสลิป / เครดิตกดได้ทันที) = สร้างและยืนยันใบสั่งขาย (SO) พร้อมใบแจ้งหนี้ร่างใน Odoo อัตโนมัติ · หลังจากนั้นสถานะจัดส่ง/วางบิล/ชำระเงินตามที่คลังและบัญชีทำใน Odoo (ดึงอัตโนมัติทุกไม่กี่นาที)</p>
+          <p className="hidden max-w-3xl text-sm text-muted-foreground md:block">ยืนยันออเดอร์ (เงินสดหลังตรวจสลิป / เครดิตกดได้ทันที) = สร้างและยืนยันใบสั่งขาย (SO) พร้อมใบแจ้งหนี้ร่างใน Odoo อัตโนมัติ · หลังจากนั้นสถานะจัดส่ง/วางบิล/ชำระเงินตามที่คลังและบัญชีทำใน Odoo (ดึงอัตโนมัติทุกไม่กี่นาที)</p>
         </div>
         <form action={adminRefreshStatusesAction}><Button type="submit" size="sm" variant="outline"><RefreshCw /> ดึงสถานะจาก Odoo ตอนนี้</Button></form>
       </div>
@@ -167,10 +167,10 @@ export default async function AdminOrdersPage({ searchParams }: { searchParams: 
               <TableHead>ออเดอร์</TableHead>
               <TableHead>ร้าน</TableHead>
               <TableHead>สถานะ</TableHead>
-              <TableHead>การจัดส่ง</TableHead>
-              <TableHead>Odoo</TableHead>
+              <TableHead data-priority="low">การจัดส่ง</TableHead>
+              <TableHead data-priority="low">Odoo</TableHead>
               <TableHead className="text-right">ยอด</TableHead>
-              <TableHead><span className="sr-only">จัดการ</span></TableHead>
+              <TableHead className="w-px"><span className="sr-only">จัดการ</span></TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -180,29 +180,33 @@ export default async function AdminOrdersPage({ searchParams }: { searchParams: 
               const { next, cancellable, blocked } = orderFlow(o);
               const openHref = href({ open: o.id });
               return (
-                <TableRow key={o.id} data-state={params.open === o.id ? 'selected' : undefined}>
+                <TableRow key={o.id} data-state={params.open === o.id ? 'selected' : undefined} className="[&>td]:align-top [&>td]:whitespace-normal">
                   <TableCell data-label="ออเดอร์">
                     <Link href={openHref} scroll={false} className="block hover:underline">
                       <span className="block font-medium">{o.ref}</span>
                       <span className="block text-xs text-muted-foreground">{dateTime(o.createdAt)} · {o.lines.length} รายการ</span>
                     </Link>
                   </TableCell>
-                  <TableCell data-label="ร้าน">
-                    <span className="block">{o.dealerName}</span>
+                  <TableCell data-label="ร้าน" className="min-w-32 max-w-56 md:max-w-64">
+                    <span className="block break-words">{o.dealerName}</span>
                     {o.poRef && <span className="block text-xs text-muted-foreground">PO ร้าน: {o.poRef}</span>}
+                    {/* Below xl the delivery column is folded in here. */}
+                    <span className="block text-xs text-muted-foreground xl:hidden">{o.carrier}{o.trackingRef ? ` · เลขพัสดุ ${o.trackingRef}` : ''}</span>
                   </TableCell>
-                  <TableCell data-label="สถานะ">
+                  <TableCell data-label="สถานะ" className="max-w-64">
                     <span className="flex flex-wrap gap-1">
                       <Badge variant="outline" className={cn('border-transparent', STYLE[o.status])}>{ORDER_STATUS_LABELS[o.status]}</Badge>
                       <Badge variant="outline" className={cn('border-transparent', o.paymentMethod === 'CREDIT' ? 'bg-sky-500/15 text-sky-700' : 'bg-muted text-foreground')}>{o.paymentMethod === 'CREDIT' ? 'เครดิต' : 'เงินสด'}</Badge>
                       <SlipBadge order={o} />
                     </span>
+                    {/* Below xl the Odoo column is folded in here. */}
+                    {o.odoo && <span className="mt-1 block xl:hidden"><OdooStatus sync={o.odoo} /></span>}
                   </TableCell>
-                  <TableCell data-label="การจัดส่ง">
+                  <TableCell data-label="การจัดส่ง" data-priority="low" className="max-w-48">
                     <span className="block text-xs">{o.carrier}</span>
                     {o.trackingRef && <span className="block text-xs text-muted-foreground">เลขพัสดุ {o.trackingRef}</span>}
                   </TableCell>
-                  <TableCell data-label="Odoo">{o.odoo ? <OdooStatus sync={o.odoo} /> : <span className="text-xs text-muted-foreground">—</span>}</TableCell>
+                  <TableCell data-label="Odoo" data-priority="low" className="max-w-64">{o.odoo ? <OdooStatus sync={o.odoo} /> : <span className="text-xs text-muted-foreground">—</span>}</TableCell>
                   <TableCell data-label="ยอด" className="text-right"><OrderTotal order={o} /></TableCell>
                   <TableCell data-label="">
                     <span className="flex justify-end gap-1">

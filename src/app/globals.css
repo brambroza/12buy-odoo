@@ -197,3 +197,12 @@
   .rt td:first-child { text-align: left; padding-bottom: 0.25rem; }
   .rt td:first-child::before { content: none; }
 }
+
+/*
+ * Column priority: cells marked `data-priority="low"` only appear on wide screens; narrower layouts fold
+ * their content into another column (as `xl:hidden` sub-lines) so the table never needs a horizontal
+ * scroll. Placed after the card rules above so it also wins over `.rt td { display: block }` on phones.
+ */
+@media (max-width: 1279.98px) {
+  .rt [data-priority="low"] { display: none; }
+}
