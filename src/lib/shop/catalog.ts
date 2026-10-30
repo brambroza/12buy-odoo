@@ -1,4 +1,4 @@
-import { odooSearchRead } from '@/lib/odoo/rpc';
+import { odooBaseUrl, odooSearchRead } from '@/lib/odoo/rpc';
 import { getCarrier, pickDealerCarrier, listPublishedCarriers, type DeliveryCarrier } from '@/lib/odoo/delivery-carrier';
 import { computePrice, fromOdooItem, type PriceContext, type PricelistItem } from './price-engine';
 import { normalizeSizeQuery, parseSize, sizeMatches } from './size';
@@ -62,8 +62,7 @@ export function vatFromTaxes(taxIds: number[], taxes: Map<number, RawTax>): { va
 }
 
 /** Builds a public image URL for published products (Odoo serves these without login). */
-function imageUrlFor(tmplId: number, published: boolean): string | null {
-  const base = process.env.ODOO_URL;
+function imageUrlFor(tmplId: number, published: boolean, base: string): string | null {
   return published && base ? `${base}/web/image/product.template/${tmplId}/image_512` : null;
 }
 
@@ -99,6 +98,7 @@ async function loadCatalog(): Promise<Catalog> {
     itemsByPricelist.set(item.pricelistId, [...(itemsByPricelist.get(item.pricelistId) ?? []), item]);
   }
 
+  const imageBase = await odooBaseUrl();
   const products: CatalogProduct[] = [];
   for (const raw of rawProducts) {
     if (!raw.categ_id) continue;
@@ -116,7 +116,7 @@ async function loadCatalog(): Promise<Catalog> {
       dealerType: classified.dealerType,
       size: parseSize(raw.name),
       qtyAvailable: raw.qty_available,
-      imageUrl: imageUrlFor(raw.product_tmpl_id[0], raw.is_published),
+      imageUrl: imageUrlFor(raw.product_tmpl_id[0], raw.is_published, imageBase),
       baseUnit: baseUnitLabel(classified.dealerType),
       units: unitsForProduct(classified.dealerType, raw.uom_id ? raw.uom_id[0] : 0, raw.uom_ids || [], unitIndex),
       ...vatFromTaxes(raw.taxes_id ?? [], taxIndex),

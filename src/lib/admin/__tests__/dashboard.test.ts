@@ -53,6 +53,13 @@ describe('buildTasks', () => {
 
   it('is empty when nothing waits', () => {
     expect(buildTasks({ ...base, orders: [order()] })).toEqual([]);
+    expect(buildTasks({ ...base, orders: [order()], apiKeyDaysLeft: 90 })).toEqual([]);
+  });
+
+  it('warns admins about an Odoo API key that expires soon, urgent when days are few or it is past', () => {
+    expect(buildTasks({ ...base, orders: [], apiKeyDaysLeft: 10 })).toEqual([expect.objectContaining({ id: 'api-key', priority: 'today', href: '/admin/settings', adminOnly: true })]);
+    expect(buildTasks({ ...base, orders: [], apiKeyDaysLeft: -1 })[0]).toMatchObject({ priority: 'urgent', title: expect.stringContaining('หมดอายุแล้ว') });
+    expect(buildTasks({ ...base, orders: [], apiKeyDaysLeft: null })).toEqual([]);
   });
 
   it('lists order work, linking straight to a single order', () => {

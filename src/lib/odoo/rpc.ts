@@ -54,22 +54,48 @@ const WRITE_FIELDS: Record<string, ReadonlySet<string>> = {
   'ir.attachment.create': new Set(['name', 'mimetype', 'datas', 'raw', 'res_model', 'res_id']),
 };
 
+import { getOdooConnection, invalidateOdooConnection } from './connection';
+
 type RpcConfig = { url: string; db: string; username: string; apiKey: string };
 
 let requestId = 0;
 let cachedUid: number | null = null;
 
-/** Loads Odoo connection settings from environment variables. */
-function getConfig(): RpcConfig {
-  const config = {
-    url: process.env.ODOO_URL ?? '',
-    db: process.env.ODOO_DB ?? '',
-    username: process.env.ODOO_USERNAME ?? '',
-    apiKey: process.env.ODOO_API_KEY ?? '',
-  };
+/** Odoo connection in use: saved back-office settings when present, else the `ODOO_*` env vars. */
+async function getConfig(): Promise<RpcConfig> {
+  const { url, db, username, apiKey } = await getOdooConnection();
+  const config = { url, db, username, apiKey };
   const missing = Object.entries(config).filter(([, value]) => !value).map(([key]) => key);
   if (missing.length) throw new Error(`Missing Odoo config: ${missing.join(', ')}`);
   return config;
+}
+
+/** Base URL of the Odoo in use (for links to records / product images), or '' when not configured. */
+export async function odooBaseUrl(): Promise<string> {
+  return (await getOdooConnection()).url;
+}
+
+/** Forgets the authenticated uid and the cached connection, so the next call uses the newest settings. */
+export function resetOdooSession(): void {
+  cachedUid = null;
+  invalidateOdooConnection();
+}
+
+/** Uid of the configured Odoo user (authenticates once per process). */
+export async function odooUid(): Promise<number> {
+  return authenticate();
+}
+
+/**
+ * Tries a connection without touching the cached one: authenticates with the given credentials and
+ * reads the server version. Throws with Odoo's message when the URL, database, login or key is wrong.
+ */
+export async function probeOdooConnection(conn: RpcConfig): Promise<{ uid: number; serverVersion: string }> {
+  const url = conn.url.replace(/\/+$/, '');
+  const version = await jsonRpcTo<{ server_version?: string }>(url, 'common', 'version', []);
+  const uid = await jsonRpcTo<number | false>(url, 'common', 'authenticate', [conn.db, conn.username, conn.apiKey, {}]);
+  if (!uid) throw new Error('Odoo ไม่ยอมรับชื่อผู้ใช้หรือ API key นี้ (หรือชื่อฐานข้อมูลไม่ถูกต้อง)');
+  return { uid, serverVersion: version?.server_version ?? '?' };
 }
 
 const MAX_ATTEMPTS = 4;
@@ -85,27 +111,29 @@ function sleep(ms: number) {
  * HTTP 429, because Odoo Online rate-limits bursts of parallel calls.
  */
 function jsonRpc<T>(service: string, method: string, args: unknown[]): Promise<T> {
-  const run = async (): Promise<T> => {
-    const { url } = getConfig();
-    for (let attempt = 1; ; attempt++) {
-      const response = await fetch(`${url}/jsonrpc`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ jsonrpc: '2.0', id: ++requestId, method: 'call', params: { service, method, args } }),
-        signal: AbortSignal.timeout(20_000),
-      });
-      if (response.status === 429 && attempt < MAX_ATTEMPTS) {
-        const retryAfter = Number(response.headers.get('retry-after'));
-        await sleep(Number.isFinite(retryAfter) && retryAfter > 0 ? retryAfter * 1000 : 500 * 2 ** attempt);
-        continue;
-      }
-      if (!response.ok) throw new Error(`Odoo HTTP ${response.status}`);
-      return unwrap<T>(await response.json());
-    }
-  };
+  const run = async (): Promise<T> => jsonRpcTo<T>((await getConfig()).url, service, method, args);
   const result = queue.then(run, run);
   queue = result.catch(() => undefined);
   return result;
+}
+
+/** One JSON-RPC call to a given Odoo base URL, with the 429 backoff; used by the queue and by connection probes. */
+async function jsonRpcTo<T>(url: string, service: string, method: string, args: unknown[]): Promise<T> {
+  for (let attempt = 1; ; attempt++) {
+    const response = await fetch(`${url}/jsonrpc`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ jsonrpc: '2.0', id: ++requestId, method: 'call', params: { service, method, args } }),
+      signal: AbortSignal.timeout(20_000),
+    });
+    if (response.status === 429 && attempt < MAX_ATTEMPTS) {
+      const retryAfter = Number(response.headers.get('retry-after'));
+      await sleep(Number.isFinite(retryAfter) && retryAfter > 0 ? retryAfter * 1000 : 500 * 2 ** attempt);
+      continue;
+    }
+    if (!response.ok) throw new Error(`Odoo HTTP ${response.status}`);
+    return unwrap<T>(await response.json());
+  }
 }
 
 /** Extracts the result from a JSON-RPC envelope or throws its error. */
@@ -117,7 +145,7 @@ function unwrap<T>(payload: { result?: T; error?: { message?: string; data?: { m
 /** Authenticates once and caches the user id for the process lifetime. */
 async function authenticate(): Promise<number> {
   if (cachedUid) return cachedUid;
-  const { db, username, apiKey } = getConfig();
+  const { db, username, apiKey } = await getConfig();
   const uid = await jsonRpc<number | false>('common', 'authenticate', [db, username, apiKey, {}]);
   if (!uid) throw new Error('Odoo authentication failed');
   cachedUid = uid;
@@ -129,7 +157,7 @@ async function authenticate(): Promise<number> {
  * login or password is wrong. Never cached; runs with their credentials only for this check.
  */
 export async function odooCheckLogin(login: string, password: string): Promise<number | null> {
-  const { db } = getConfig();
+  const { db } = await getConfig();
   const uid = await jsonRpc<number | false>('common', 'authenticate', [db, login, password, {}]);
   return uid || null;
 }
@@ -143,7 +171,7 @@ export async function odooRead<T>(model: string, method: string, args: unknown[]
   if (!READ_METHODS.has(method)) {
     throw new Error(`Blocked: '${model}.${method}' is not a read-only method`);
   }
-  const { db, apiKey } = getConfig();
+  const { db, apiKey } = await getConfig();
   const uid = await authenticate();
   return jsonRpc<T>('object', 'execute_kw', [db, uid, apiKey, model, method, args, kwargs]);
 }
@@ -179,7 +207,7 @@ export async function odooWrite<T>(model: string, method: string, args: unknown[
     if (blocked.length) throw new Error(`Blocked: '${model}.${method}' may not pass ${blocked.join(', ')}`);
   }
   if (!odooWritesEnabled()) throw new Error('Odoo อยู่ในโหมดอ่านอย่างเดียว (ตั้ง ODOO_READ_ONLY=false เพื่อเปิดการส่งข้อมูล)');
-  const { db, apiKey } = getConfig();
+  const { db, apiKey } = await getConfig();
   const uid = await authenticate();
   return jsonRpc<T>('object', 'execute_kw', [db, uid, apiKey, model, method, args, kwargs]);
 }

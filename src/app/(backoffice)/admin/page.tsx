@@ -10,6 +10,8 @@ import { isAdminRole, type Role } from '@/lib/auth/roles';
 import { requireBackoffice } from '@/lib/auth/session';
 import { listDealers } from '@/lib/dealers/repo';
 import { listLeads } from '@/lib/leads/repo';
+import { daysUntil } from '@/lib/odoo/api-keys';
+import { getOdooConnection } from '@/lib/odoo/connection';
 import { listAllCarriers } from '@/lib/odoo/delivery-carrier';
 import { baht } from '@/lib/shop/catalog';
 import { listAllOrders } from '@/lib/shop/store';
@@ -63,6 +65,7 @@ export default async function AdminDashboardPage() {
   const tasks = buildTasks({
     orders, now, newLeads: leads.length, oldestNewLeadAt: leads.at(-1)?.createdAt ? new Date(leads.at(-1)!.createdAt).toISOString() : null,
     pendingDealers: pendingDealers.length, booksPending, resetRequests: resets.length, publishedCarriers: carriers,
+    apiKeyDaysLeft: isAdmin ? daysUntil((await getOdooConnection()).apiKeyExpiresAt, new Date(now)) : null,
   }).filter((t) => isAdmin || !t.adminOnly);
   const urgent = tasks.filter((t) => t.priority === 'urgent').length;
   const pendingOrders = summary.byStatus.PENDING;

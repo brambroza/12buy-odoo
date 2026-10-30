@@ -164,8 +164,13 @@ export type TaskInput = {
   resetRequests: number;
   /** Delivery methods published on the web; null when Odoo could not be read. */
   publishedCarriers: number | null;
+  /** Days until the Odoo API key in use expires (negative = expired); null when unknown. */
+  apiKeyDaysLeft?: number | null;
   now?: number;
 };
+
+/** Warn about the Odoo API key this many days before it expires. */
+export const API_KEY_WARN_DAYS = 14;
 
 const STALE_MS = 2 * 60 * 60 * 1000;
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -240,6 +245,11 @@ export function buildTasks(input: TaskInput): DashboardTask[] {
   if (input.resetRequests) tasks.push({
     id: 'reset-requests', priority: 'today', count: input.resetRequests, title: 'คำขอรีเซ็ตรหัสผ่าน',
     detail: 'ยืนยันตัวตนแล้วส่งรหัสชั่วคราวทาง LINE', href: '/admin/users', action: 'รีเซ็ตรหัส', adminOnly: true,
+  });
+  if (input.apiKeyDaysLeft !== null && input.apiKeyDaysLeft !== undefined && input.apiKeyDaysLeft <= API_KEY_WARN_DAYS) tasks.push({
+    id: 'api-key', priority: input.apiKeyDaysLeft <= 3 ? 'urgent' : 'today', count: 0,
+    title: input.apiKeyDaysLeft < 0 ? 'API key ของ Odoo หมดอายุแล้ว' : `API key ของ Odoo จะหมดอายุใน ${input.apiKeyDaysLeft} วัน`,
+    detail: 'สร้าง key ใหม่ใน Odoo (Preferences → Account Security) แล้วบันทึกที่หน้าตั้งค่า ไม่งั้นเว็บจะอ่าน/ส่งข้อมูล Odoo ไม่ได้', href: '/admin/settings', action: 'ตั้งค่า', adminOnly: true,
   });
   if (input.publishedCarriers === 0) tasks.push({
     id: 'carriers', priority: 'urgent', count: 0, title: 'ยังไม่มีการจัดส่งที่เปิดบนเว็บ',

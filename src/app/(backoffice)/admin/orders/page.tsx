@@ -1,4 +1,5 @@
 import Link from 'next/link';
+import { odooBaseUrl } from '@/lib/odoo/rpc';
 import type { ReactNode } from 'react';
 import { Ban, CheckCircle2, Eye, FileText, RefreshCw, Truck, UploadCloud, Wallet, XCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -43,8 +44,7 @@ const DUE_FILTERS = { overdue: 'เลยกำหนดชำระ', soon: '�
 type DueFilter = keyof typeof DUE_FILTERS;
 
 /** Odoo push status: SO number linking to Odoo, or what went wrong. */
-function OdooStatus({ sync }: { sync: OdooSync }) {
-  const base = process.env.ODOO_URL;
+function OdooStatus({ sync, base }: { sync: OdooSync; base: string }) {
   const so = sync.saleOrderName && (base && sync.saleOrderId
     ? <a href={`${base}/odoo/sales/${sync.saleOrderId}`} target="_blank" rel="noreferrer" className="underline">{sync.saleOrderName}</a>
     : sync.saleOrderName);
@@ -54,16 +54,15 @@ function OdooStatus({ sync }: { sync: OdooSync }) {
       {sync.status === 'SYNCED'
         ? <Badge variant="outline" className="border-transparent bg-emerald-500/15 text-emerald-700">Odoo {so}</Badge>
         : <Badge variant="outline" className="border-transparent bg-amber-500/15 text-amber-800">Odoo {so} ยอดไม่ตรง ({baht(sync.amountTotal ?? 0)})</Badge>}
-      <InvoiceStatus sync={sync} />
+      <InvoiceStatus sync={sync} base={base} />
     </span>
   );
 }
 
 /** Draft invoice made with the SO: link to it in Odoo, or why it is missing. Nothing for orders sent before invoices were made. */
-function InvoiceStatus({ sync }: { sync: OdooSync }) {
+function InvoiceStatus({ sync, base }: { sync: OdooSync; base: string }) {
   if (sync.invoiceError) return <span className="line-clamp-3 break-words text-xs text-destructive" title={sync.invoiceError}>ใบแจ้งหนี้ร่างไม่สำเร็จ: {sync.invoiceError}</span>;
   if (!sync.invoice) return null;
-  const base = process.env.ODOO_URL;
   const label = sync.invoice.name ?? (sync.invoice.state === 'draft' ? 'ใบแจ้งหนี้ร่าง' : 'ใบแจ้งหนี้');
   return (
     <Badge variant="outline" className="border-transparent bg-sky-500/15 text-sky-700">
@@ -105,7 +104,7 @@ function OrderTotal({ order: o }: { order: ProtoOrder }) {
 export default async function AdminOrdersPage({ searchParams }: { searchParams: Promise<Search> }) {
   const params = await searchParams;
   const status = STATUSES.includes(params.status as OrderStatus) ? (params.status as OrderStatus) : undefined;
-  const [all, pendingOld] = await Promise.all([listAllOrders(), countStalePending(2 * 60 * 60 * 1000)]);
+  const [all, pendingOld, odooBase] = await Promise.all([listAllOrders(), countStalePending(2 * 60 * 60 * 1000), odooBaseUrl()]);
   const counts = Object.fromEntries(STATUSES.map((s) => [s, all.filter((o) => o.status === s).length])) as Record<OrderStatus, number>;
   const due = params.due && params.due in DUE_FILTERS ? (params.due as DueFilter) : undefined;
   const dues = creditDues(all);
@@ -200,13 +199,13 @@ export default async function AdminOrdersPage({ searchParams }: { searchParams: 
                       <SlipBadge order={o} />
                     </span>
                     {/* Below xl the Odoo column is folded in here. */}
-                    {o.odoo && <span className="mt-1 block xl:hidden"><OdooStatus sync={o.odoo} /></span>}
+                    {o.odoo && <span className="mt-1 block xl:hidden"><OdooStatus sync={o.odoo} base={odooBase} /></span>}
                   </TableCell>
                   <TableCell data-label="การจัดส่ง" data-priority="low" className="max-w-48">
                     <span className="block text-xs">{o.carrier}</span>
                     {o.trackingRef && <span className="block text-xs text-muted-foreground">เลขพัสดุ {o.trackingRef}</span>}
                   </TableCell>
-                  <TableCell data-label="Odoo" data-priority="low" className="max-w-64">{o.odoo ? <OdooStatus sync={o.odoo} /> : <span className="text-xs text-muted-foreground">—</span>}</TableCell>
+                  <TableCell data-label="Odoo" data-priority="low" className="max-w-64">{o.odoo ? <OdooStatus sync={o.odoo} base={odooBase} /> : <span className="text-xs text-muted-foreground">—</span>}</TableCell>
                   <TableCell data-label="ยอด" className="text-right"><OrderTotal order={o} /></TableCell>
                   <TableCell data-label="">
                     <span className="flex justify-end gap-1">
@@ -234,13 +233,13 @@ export default async function AdminOrdersPage({ searchParams }: { searchParams: 
       </TableCard>
       <ListPagination page={pageRows} href={(n) => href({ page: String(n) })} unit="ออเดอร์" />
 
-      {openOrder && <OrderDrawer key={openOrder.id} order={openOrder} closeHref={closeHref} notice={notice} />}
+      {openOrder && <OrderDrawer key={openOrder.id} order={openOrder} closeHref={closeHref} notice={notice} odooBase={odooBase} />}
     </div>
   );
 }
 
 /** Drawer with the full order: lines, address, slip check, status / tracking / Odoo forms and history. */
-function OrderDrawer({ order: o, closeHref, notice }: { order: ProtoOrder; closeHref: string; notice: ReactNode }) {
+function OrderDrawer({ order: o, closeHref, notice, odooBase }: { order: ProtoOrder; closeHref: string; notice: ReactNode; odooBase: string }) {
   const { linked, next, cancellable, blocked } = orderFlow(o);
   const progress = o.odoo?.progress;
   return (
@@ -254,7 +253,7 @@ function OrderDrawer({ order: o, closeHref, notice }: { order: ProtoOrder; close
       <div className="flex flex-wrap items-center gap-2 text-sm">
         <Badge variant="outline" className={cn('border-transparent', o.paymentMethod === 'CREDIT' ? 'bg-sky-500/15 text-sky-700' : 'bg-muted text-foreground')}>{o.paymentMethod === 'CREDIT' ? 'เครดิต' : 'เงินสด'}</Badge>
         {o.poRef && <span className="text-xs text-muted-foreground">PO ร้าน: {o.poRef}</span>}
-        {o.odoo && <OdooStatus sync={o.odoo} />}
+        {o.odoo && <OdooStatus sync={o.odoo} base={odooBase} />}
         <span className="ml-auto text-right"><OrderTotal order={o} /></span>
       </div>
 
@@ -320,7 +319,7 @@ function OrderDrawer({ order: o, closeHref, notice }: { order: ProtoOrder; close
         </section>
       )}
 
-      {o.paymentMethod === 'CREDIT' && creditPayments(o).length > 0 && <CreditPaymentsSection order={o} />}
+      {o.paymentMethod === 'CREDIT' && creditPayments(o).length > 0 && <CreditPaymentsSection order={o} odooBase={odooBase} />}
 
       <section className="flex flex-wrap items-center gap-2">
         {next && (
@@ -377,11 +376,10 @@ function OrderDrawer({ order: o, closeHref, notice }: { order: ProtoOrder; close
  * Transfers the dealer reported on a credit order: slip, amount, remark, review buttons for pending ones,
  * and whether the chatter note reached Odoo (with a resend button when it did not).
  */
-function CreditPaymentsSection({ order: o }: { order: ProtoOrder }) {
+function CreditPaymentsSection({ order: o, odooBase: base }: { order: ProtoOrder; odooBase: string }) {
   const payments = [...creditPayments(o)].reverse();
   const outstanding = creditOutstanding(o);
   const toResend = creditPaymentsToResend(o);
-  const base = process.env.ODOO_URL;
   return (
     <section className="rounded-lg border border-sky-500/30">
       <h2 className="flex flex-wrap items-center justify-between gap-2 border-b border-sky-500/20 bg-sky-500/10 px-3 py-2 text-sm font-semibold">
