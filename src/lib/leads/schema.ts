@@ -37,6 +37,8 @@ export const dealerLeadSchema = z.object({
   confirmPassword: z.string(),
   /** Honeypot: real users never fill this. */
   website: z.literal('').optional(),
+  /** PDPA: the applicant must tick the privacy-notice consent box. */
+  consent: z.literal('on', { message: 'กรุณายอมรับนโยบายความเป็นส่วนตัวและเงื่อนไขการใช้งาน' }),
 }).refine((v) => v.password === v.confirmPassword, { message: 'ยืนยันรหัสผ่านไม่ตรงกัน', path: ['confirmPassword'] });
 
 export type DealerLeadInput = z.infer<typeof dealerLeadSchema>;
@@ -54,5 +56,6 @@ export function leadFromFormData(formData: FormData): unknown {
     password: String(formData.get('password') ?? ''),
     confirmPassword: String(formData.get('confirmPassword') ?? ''),
     website: formData.get('website') ?? '',
+    consent: formData.get('consent') ?? '',
   };
 }

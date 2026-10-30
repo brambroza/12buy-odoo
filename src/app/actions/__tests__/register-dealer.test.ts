@@ -22,7 +22,7 @@ function form(overrides: Record<string, string> = {}): FormData {
   const fd = new FormData();
   const values: Record<string, string> = {
     shopName: 'ร้านยางทดสอบ', taxId: '0-1055-56123-45-3', line: '99/1 ม.3', province: 'เชียงใหม่', district: 'กัลยาณิวัฒนา', subdistrict: 'บ้านจันทร์', postalCode: '58130',
-    phone: '0812345678', email: 'shop@example.com', password: 'abc12345', confirmPassword: 'abc12345', ...overrides,
+    phone: '0812345678', email: 'shop@example.com', password: 'abc12345', confirmPassword: 'abc12345', consent: 'on', ...overrides,
   };
   for (const [k, v] of Object.entries(values)) fd.set(k, v);
   fd.append('types', 'CAR');

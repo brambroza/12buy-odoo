@@ -196,6 +196,8 @@ export type OdooSync = {
   /** Why the draft invoice could not be made; the SO itself is in Odoo. */
   invoiceError?: string | null;
   at: string;
+  /** Result of cancelling the SO in Odoo after a web cancel (absent until the admin cancels). */
+  cancel?: { ok: boolean; at: string; note?: string; error?: string } | null;
   /** Last read of delivery/invoice progress from Odoo (status sync). */
   progress?: {
     deliveryStatus: 'pending' | 'started' | 'partial' | 'full' | false;
@@ -203,6 +205,11 @@ export type OdooSync = {
     checkedAt: string;
   };
 };
+
+/** Who performed a status change (null id = system / Odoo). */
+export type OrderActor = { id: string | null; name: string };
+
+export type OrderEvent = { status: OrderStatus; at: string; by?: OrderActor };
 
 export type ProtoOrder = {
   id: string;
@@ -239,7 +246,8 @@ export type ProtoOrder = {
    */
   payment: { slipFile: string | null; slipUploadedAt: string | null; verifiedAt: string | null; credits?: CreditPayment[] };
   createdAt: string;
-  events: { status: OrderStatus; at: string }[];
+  /** Status history. `by` is who moved it: a user, or `{ id: null, name: 'Odoo' }` for the status sync. */
+  events: OrderEvent[];
   /** Last push to Odoo; absent until the order is confirmed. */
   odoo?: OdooSync;
 };

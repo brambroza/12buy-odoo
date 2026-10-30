@@ -5,7 +5,7 @@ import { usePathname } from 'next/navigation';
 import { useRef, useState } from 'react';
 import gsap from 'gsap';
 import { useGSAP } from '@gsap/react';
-import { Gauge, LayoutDashboard, FileText, Users, Package, Menu, PanelLeftClose, PanelLeftOpen, MapPinned, Tags, Store, Inbox, Smartphone, UserPlus, ShieldCheck, LogOut, UsersRound, TicketPercent, BadgePercent, Truck, UserRound, KeyRound, ChevronDown, Plug } from 'lucide-react';
+import { Gauge, LayoutDashboard, Menu, PanelLeftClose, PanelLeftOpen, MapPinned, Tags, Store, Inbox, Smartphone, UserPlus, ShieldCheck, LogOut, UsersRound, TicketPercent, BadgePercent, Truck, UserRound, KeyRound, ChevronDown, Plug } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { SIDEBAR_COOKIE } from '@/lib/backoffice-ui';
 import { AdminMotion } from '@/components/admin/admin-motion';
@@ -32,10 +32,8 @@ const NAV_ITEMS: { href: string; label: string; icon: typeof LayoutDashboard; gr
   { href: '/admin/users', label: 'ผู้ใช้งานระบบ', icon: ShieldCheck, adminOnly: true },
   { href: '/admin/settings', label: 'ตั้งค่าเชื่อมต่อ Odoo', icon: Plug, adminOnly: true },
   { href: '/shop', label: 'เปิดหน้าดีลเลอร์', icon: Smartphone },
-  { href: '/dashboard', label: 'ภาพรวม', icon: LayoutDashboard, group: 'Odoo Sync (เดิม)' },
-  { href: '/sale-orders', label: 'ใบสั่งขาย', icon: FileText },
-  { href: '/customers', label: 'ลูกค้า', icon: Users },
-  { href: '/products', label: 'สินค้า', icon: Package },
+  // Legacy "Odoo Sync (เดิม)" demo (/dashboard, /sale-orders, /customers, /products) is kept reachable by URL
+  // for reference but no longer listed: dealer ordering replaced it.
 ];
 
 function Brand() {

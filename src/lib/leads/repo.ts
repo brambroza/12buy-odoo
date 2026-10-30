@@ -11,6 +11,7 @@ export async function createLead(input: DealerLeadInput, source = 'landing'): Pr
   const row = unwrap(await db().from('DealerLead').insert({
     id: newId(), shopName: input.shopName, taxId: input.taxId, province: input.address.province, types: input.types, phone: input.phone, lineId: input.lineId || null, source,
     email: input.email, passwordHash: hashPassword(input.password), address: input.address,
+    consentAt: new Date().toISOString(),
   }).select('*').single());
   return reviveDates<DealerLead>(row);
 }

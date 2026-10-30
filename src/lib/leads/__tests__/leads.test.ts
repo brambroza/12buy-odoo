@@ -1,12 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dealerLeadSchema, leadFromFormData } from '@/lib/leads/schema';
-import { RATE_LIMIT, allowSubmission, resetRateLimit, toNotification } from '@/lib/leads/store';
+import { toNotification } from '@/lib/leads/store';
 import { verifyTurnstile } from '@/lib/security/turnstile';
 
 const address = { line: '99/1 ม.3', province: 'เชียงใหม่', district: 'กัลยาณิวัฒนา', subdistrict: 'บ้านจันทร์', postalCode: '58130' };
 const valid = {
   shopName: 'ร้านยางทดสอบ', taxId: '0-1055-56123-45-3', address, types: ['CAR'], phone: '081-234-5678', lineId: '@shop',
-  email: ' Shop@Example.com ', password: 'abc12345', confirmPassword: 'abc12345', website: '',
+  email: ' Shop@Example.com ', password: 'abc12345', confirmPassword: 'abc12345', website: '', consent: 'on',
 };
 const issue = (input: unknown) => {
   const r = dealerLeadSchema.safeParse(input);
@@ -45,6 +45,11 @@ describe('dealerLeadSchema', () => {
     expect(issue({ ...valid, confirmPassword: 'abc12346' })).toMatchObject({ path: ['confirmPassword'], message: 'ยืนยันรหัสผ่านไม่ตรงกัน' });
   });
 
+  it('requires the PDPA consent box', () => {
+    expect(issue({ ...valid, consent: '' })).toMatchObject({ path: ['consent'] });
+    expect(issue({ ...valid, consent: undefined })).toMatchObject({ path: ['consent'] });
+  });
+
   it('rejects empty types, bad phone and a filled honeypot', () => {
     expect(issue({ ...valid, types: [] })).not.toBeNull();
     expect(issue({ ...valid, phone: '12345' })).not.toBeNull();
@@ -62,6 +67,7 @@ describe('dealerLeadSchema', () => {
     fd.set('email', 'a1@example.com');
     fd.set('password', 'abc12345');
     fd.set('confirmPassword', 'abc12345');
+    fd.set('consent', 'on');
     const parsed = dealerLeadSchema.safeParse(leadFromFormData(fd));
     expect(parsed.success).toBe(true);
     if (parsed.success) {
@@ -75,18 +81,6 @@ describe('dealerLeadSchema', () => {
     const n = toNotification(r, { id: 'L1', createdAt: '2026-10-29', source: 'landing' });
     expect(JSON.stringify(n)).not.toContain('abc12345');
     expect(n).toMatchObject({ province: 'เชียงใหม่', email: 'shop@example.com', id: 'L1' });
-  });
-});
-
-describe('lead rate limit', () => {
-  beforeEach(() => resetRateLimit());
-
-  it('limits submissions per key inside the window', () => {
-    const t0 = 1_000_000;
-    for (let i = 0; i < RATE_LIMIT.max; i++) expect(allowSubmission('ip-1', t0 + i)).toBe(true);
-    expect(allowSubmission('ip-1', t0 + 10)).toBe(false);
-    expect(allowSubmission('ip-2', t0 + 10)).toBe(true);
-    expect(allowSubmission('ip-1', t0 + RATE_LIMIT.windowMs + 1)).toBe(true);
   });
 });
 

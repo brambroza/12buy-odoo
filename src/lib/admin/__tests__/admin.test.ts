@@ -48,17 +48,25 @@ describe('price books', () => {
   });
 });
 
+const KING = { id: 'u-king', name: 'กิ่ง' };
+const BOSS = { id: 'u-boss', name: 'บอส' };
+
 describe('approval workflow', () => {
   it('requires a dry run before submit, and a different approver', async () => {
     const b = (await store.ensureBook('default', 'S', 1));
-    expect((await store.submitBook(b.id, 'กิ่ง'))).toMatchObject({ ok: false });
+    expect((await store.submitBook(b.id, KING))).toMatchObject({ ok: false });
     await store.updateBook(b.id, { entries: { '1': 100 } });
     await store.updateBook(b.id, { lastDryRun: { at: '', pricelistName: 'x', targetPricelistId: null, create: [], update: [], unlink: [], unchanged: 0 } });
-    expect((await store.submitBook(b.id, 'กิ่ง'))).toMatchObject({ ok: true });
+    expect((await store.submitBook(b.id, KING))).toMatchObject({ ok: true });
     expect((await store.getBook(b.id))?.status).toBe('PENDING_APPROVAL');
-    expect((await store.approveBook(b.id, 'กิ่ง'))).toMatchObject({ ok: false, reason: expect.stringContaining('คนเดียว') });
-    expect((await store.approveBook(b.id, 'บอส'))).toMatchObject({ ok: true });
-    expect((await store.getBook(b.id))).toMatchObject({ status: 'PUBLISHED', submittedBy: 'กิ่ง', approvedBy: 'บอส' });
+    expect((await store.approveBook(b.id, KING))).toMatchObject({ ok: false, reason: expect.stringContaining('คนเดียว') });
+    // Same display name on a different login is a different person.
+    expect((await store.approveBook(b.id, { id: 'u-other', name: 'กิ่ง' }))).toMatchObject({ ok: true });
+    await store.setEntry(b.id, 1, 99);
+    await store.updateBook(b.id, { lastDryRun: { at: '', pricelistName: 'x', targetPricelistId: null, create: [], update: [], unlink: [], unchanged: 0 } });
+    await store.submitBook(b.id, KING);
+    expect((await store.approveBook(b.id, BOSS))).toMatchObject({ ok: true });
+    expect((await store.getBook(b.id))).toMatchObject({ status: 'PUBLISHED', submittedBy: 'กิ่ง', submittedById: 'u-king', approvedBy: 'บอส' });
     await store.setEntry(b.id, 1, 120);
     expect((await store.getBook(b.id))).toMatchObject({ status: 'DRAFT', submittedBy: null, approvedBy: null });
   });
@@ -66,7 +74,7 @@ describe('approval workflow', () => {
   it('reject returns to draft', async () => {
     const b = (await store.ensureBook('default', 'L', 1));
     await store.updateBook(b.id, { entries: { '1': 1 }, lastDryRun: { at: '', pricelistName: 'x', targetPricelistId: null, create: [], update: [], unlink: [], unchanged: 0 } });
-    await store.submitBook(b.id, 'a');
+    await store.submitBook(b.id, KING);
     expect((await store.rejectBook(b.id))?.status).toBe('DRAFT');
   });
 });

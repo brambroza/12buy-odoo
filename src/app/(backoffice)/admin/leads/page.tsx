@@ -137,6 +137,8 @@ function LeadDrawer({ lead, canApprove, closeHref }: { lead: LeadWithDealer; can
         )}
         {address && <><dt className="text-muted-foreground">ที่อยู่</dt><dd>{formatThaiAddress(address)}</dd></>}
         {lead.note && <><dt className="text-muted-foreground">หมายเหตุ</dt><dd>{lead.note}</dd></>}
+        <dt className="text-muted-foreground">PDPA</dt>
+        <dd className="text-xs">{lead.consentAt ? `ยอมรับนโยบายความเป็นส่วนตัวเมื่อ ${fmt.format(new Date(lead.consentAt))}` : 'สมัครก่อนมีช่องยินยอม (ขอความยินยอมเมื่อติดต่อกลับ)'}</dd>
       </dl>
       {lead.dealer && <p className="text-sm"><Link href={`/admin/dealers?open=${lead.dealer.id}`} className="text-primary underline">เปิดร้าน {lead.dealer.name}</Link></p>}
 

@@ -33,6 +33,7 @@ function builder(table: string) {
 vi.mock('@/lib/db/client', () => ({ db: () => ({ from: builder }) }));
 vi.mock('@/lib/auth/users', () => ({ findUserByEmail: db.findUserByEmail }));
 vi.mock('@/lib/auth/audit', () => ({ audit: db.audit }));
+vi.mock('@/lib/security/rate-limit', () => ({ RATE_LIMITS: { reset: { max: 5, windowMs: 3_600_000 } }, hitRateLimit: vi.fn(async () => ({ ok: true, count: 1, retryAfterMs: 0 })) }));
 
 const op = (kind: Call['op']) => db.calls.filter((c) => c.op === kind);
 /** Pending lookup returns `existing`; insert returns `{ id: 'r1' }`. */
@@ -42,29 +43,15 @@ const respondWith = (existing: unknown) => db.respond.mockImplementation((c: Cal
   return { data: [], error: null };
 });
 
-import { RESET_RATE_LIMIT, allowResetRequest, requestPasswordReset, resetResetRateLimit, resolveResetRequests } from '@/lib/auth/reset-requests';
+import { requestPasswordReset, resolveResetRequests } from '@/lib/auth/reset-requests';
 
 const activeUser = { id: 'u1', email: 'shop@example.com', name: 'ร้านทดสอบ', isActive: true, dealer: { name: 'ร้าน A' } };
 
 beforeEach(() => {
   vi.clearAllMocks();
   db.calls = [];
-  resetResetRateLimit();
   delete process.env.LEAD_WEBHOOK_URL;
   vi.spyOn(console, 'info').mockImplementation(() => {});
-});
-
-describe('allowResetRequest', () => {
-  it('allows up to the limit per key, then blocks', () => {
-    for (let i = 0; i < RESET_RATE_LIMIT.max; i++) expect(allowResetRequest('1.1.1.1', 1000)).toBe(true);
-    expect(allowResetRequest('1.1.1.1', 1000)).toBe(false);
-    expect(allowResetRequest('2.2.2.2', 1000)).toBe(true);
-  });
-
-  it('frees the slot once the window passes', () => {
-    for (let i = 0; i < RESET_RATE_LIMIT.max; i++) allowResetRequest('ip', 0);
-    expect(allowResetRequest('ip', RESET_RATE_LIMIT.windowMs + 1)).toBe(true);
-  });
 });
 
 describe('requestPasswordReset', () => {

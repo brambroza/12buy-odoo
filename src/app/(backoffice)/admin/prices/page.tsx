@@ -8,6 +8,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { EmptyRow, FilterChip, ListPagination, ListSearch, TableCard } from '@/components/admin/list-kit';
 import { IconSubmit } from '@/components/admin/icon-submit';
 import { UrlDrawer } from '@/components/admin/url-drawer';
+import { requireAdmin } from '@/lib/auth/session';
 import * as admin from '@/lib/admin/store';
 import type { CashPair, CashPercent, PriceBook, PriceZone } from '@/lib/admin/types';
 import { pricelistNameFor } from '@/lib/admin/dry-run';
@@ -38,6 +39,7 @@ const TYPES = Object.keys(DEALER_TYPE_LABELS) as DealerType[];
  * the price grid, dry-run diff and publish; credit ↔ cash pricelist pairs open in their own drawer (`?pairs=`).
  */
 export default async function PricesPage({ searchParams }: { searchParams: Promise<Params> }) {
+  await requireAdmin();
   const params = await searchParams;
   const [catalog, zones, books, pairs, percents] = [await getCatalog(), await admin.listZones(), await admin.listBooks(), await admin.listCashPairs(), await admin.listCashPercents()];
   const book = params.book ? books.find((b) => b.id === params.book) : undefined;
@@ -319,8 +321,8 @@ function BookEditor({ book, zone, catalog, type, query, params }: {
           {book.status === 'DRAFT' && (
             <form action={submitBookAction} className="flex flex-wrap items-center gap-2">
               <input type="hidden" name="bookId" value={book.id} />
-              <Input name="person" placeholder="ชื่อผู้ส่งอนุมัติ" aria-label="ชื่อผู้ส่งอนุมัติ" className="h-9 w-44" required />
-              <Button type="submit" variant="outline">ส่งอนุมัติ</Button>
+              <Button type="submit" variant="outline">ส่งอนุมัติในชื่อฉัน</Button>
+              <span className="text-xs text-muted-foreground">ระบบบันทึกชื่อผู้ใช้ที่เข้าสู่ระบบอยู่เป็นผู้ส่ง</span>
             </form>
           )}
           {book.status === 'PENDING_APPROVAL' && (
@@ -329,8 +331,8 @@ function BookEditor({ book, zone, catalog, type, query, params }: {
               <div className="flex flex-wrap items-center gap-2">
                 <form action={approveBookAction} className="flex flex-wrap items-center gap-2">
                   <input type="hidden" name="bookId" value={book.id} />
-                  <Input name="person" placeholder="ชื่อผู้อนุมัติ (ต้องไม่ใช่ผู้ส่ง)" aria-label="ชื่อผู้อนุมัติ" className="h-9 w-56" required />
                   <Button type="submit">อนุมัติและเผยแพร่</Button>
+                  <span className="text-xs text-muted-foreground">ต้องเป็นคนละบัญชีกับผู้ส่ง</span>
                 </form>
                 <form action={rejectBookAction}>
                   <input type="hidden" name="bookId" value={book.id} />

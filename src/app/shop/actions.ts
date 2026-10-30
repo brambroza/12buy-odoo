@@ -288,8 +288,9 @@ export async function advanceOrderAction(formData: FormData) {
 
 export async function cancelOrderAction(formData: FormData) {
   const id = String(formData.get('orderId') ?? '');
-  const sid = await ensureSessionId();
-  const order = await store.cancelOrder(sid, id);
+  const [sid, user] = await Promise.all([ensureSessionId(), requireDealerAccess()]);
+  const order = await store.cancelOrder(sid, id, { id: user.id, name: user.name });
+  if (order?.status === 'CANCELLED') await audit(user.id, 'order.cancel', 'ShopOrder', order.id, { ref: order.ref, by: 'dealer' });
   revalidatePath(`/shop/orders/${id}`);
   if (order?.status === 'CANCELLED') await flash('ยกเลิกคำสั่งซื้อแล้ว', { icon: 'cancel', description: order.ref });
   else if (order) await flash('ยกเลิกไม่ได้', { type: 'error', icon: 'cancel', description: `${order.ref} อยู่ในสถานะ “${ORDER_STATUS_LABELS[order.status]}” แล้ว ติดต่อฝ่ายขาย` });

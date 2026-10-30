@@ -55,6 +55,8 @@ export function LandingFooter() {
             <li><Link href="/login" className="hover:text-[var(--lp-fg)]">เข้าสู่ระบบดีลเลอร์</Link></li>
             <li><Link href="/#register" className="hover:text-[var(--lp-fg)]">สมัครเป็นดีลเลอร์</Link></li>
             <li><Link href="/#features" className="hover:text-[var(--lp-fg)]">ฟีเจอร์</Link></li>
+            <li><Link href="/privacy" className="hover:text-[var(--lp-fg)]">นโยบายความเป็นส่วนตัว</Link></li>
+            <li><Link href="/terms" className="hover:text-[var(--lp-fg)]">เงื่อนไขการใช้งาน</Link></li>
           </ul>
         </div>
       </div>

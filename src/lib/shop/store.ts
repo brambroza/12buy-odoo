@@ -7,7 +7,7 @@ import { randomUUID } from 'node:crypto';
 import { db } from '@/lib/db/client';
 import { DbError, parseTimestamp, quoteFilterValue, unwrap } from '@/lib/db/rows';
 import { canPayCredit } from './credit-payment';
-import type { CartItem, CreditPayment, CreditPaymentOdooLog, OdooSync, OrderStatus, ProtoOrder } from './types';
+import type { CartItem, CreditPayment, CreditPaymentOdooLog, OdooSync, OrderActor, OrderStatus, ProtoOrder } from './types';
 import { ORDER_STATUS_FLOW } from './types';
 
 type OrderRow = {
@@ -265,16 +265,20 @@ export async function verifySlip(id: string): Promise<ProtoOrder | undefined> {
   return updateIfStatus(order, order.status, { payment: { ...order.payment, verifiedAt: nowIso() } });
 }
 
+/** Actor recorded on timeline events written by the Odoo status sync. */
+export const ODOO_ACTOR: OrderActor = { id: null, name: 'Odoo' };
+
 /**
  * Moves an order to the next status in the flow. `sessionId` null = admin (any dealer).
  * `expected` (when given) must match the current status, otherwise nothing changes.
+ * `actor` is recorded on the timeline event.
  */
-export async function advanceOrder(sessionId: string | null, id: string, trackingRef?: string, expected?: OrderStatus): Promise<ProtoOrder | undefined> {
+export async function advanceOrder(sessionId: string | null, id: string, trackingRef?: string, expected?: OrderStatus, actor?: OrderActor): Promise<ProtoOrder | undefined> {
   const order = await getOrder(sessionId, id);
   if (!order || order.status === 'CANCELLED' || (expected && order.status !== expected)) return order;
   const next: OrderStatus | undefined = ORDER_STATUS_FLOW[ORDER_STATUS_FLOW.indexOf(order.status) + 1];
   if (!next) return order;
-  const change: Record<string, unknown> = { status: next, events: [...order.events, { status: next, at: nowIso() }] };
+  const change: Record<string, unknown> = { status: next, events: [...order.events, { status: next, at: nowIso(), ...(actor ? { by: actor } : {}) }] };
   if (next === 'SHIPPED') change.trackingRef = trackingRef?.trim() || null;
   return updateIfStatus(order, order.status, change);
 }
@@ -292,9 +296,9 @@ export async function applyOdooProgress(order: ProtoOrder, target: OrderStatus, 
   const to = ORDER_STATUS_FLOW.indexOf(target);
   let change: Record<string, unknown> = { odoo };
   if (target === 'CANCELLED' && order.status !== 'CANCELLED' && order.status !== 'PAID') {
-    change = { ...change, status: 'CANCELLED', events: [...order.events, { status: 'CANCELLED', at }] };
+    change = { ...change, status: 'CANCELLED', events: [...order.events, { status: 'CANCELLED', at, by: ODOO_ACTOR }] };
   } else if (from >= 0 && to > from) {
-    const steps = ORDER_STATUS_FLOW.slice(from + 1, to + 1).map((status) => ({ status, at }));
+    const steps = ORDER_STATUS_FLOW.slice(from + 1, to + 1).map((status) => ({ status, at, by: ODOO_ACTOR }));
     change = { ...change, status: target, events: [...order.events, ...steps] };
   }
   return updateIfStatus(order, order.status, change);
@@ -313,9 +317,16 @@ export async function setOdooSync(id: string, sync: OdooSync): Promise<ProtoOrde
 }
 
 /** Cancels a pending order. `sessionId` null = admin; admin may also cancel while preparing. */
-export async function cancelOrder(sessionId: string | null, id: string): Promise<ProtoOrder | undefined> {
+export async function cancelOrder(sessionId: string | null, id: string, actor?: OrderActor): Promise<ProtoOrder | undefined> {
   const order = await getOrder(sessionId, id);
   const cancellable: OrderStatus[] = sessionId === null ? ['PENDING', 'PREPARING'] : ['PENDING'];
   if (!order || !cancellable.includes(order.status)) return order;
-  return updateIfStatus(order, order.status, { status: 'CANCELLED', events: [...order.events, { status: 'CANCELLED', at: nowIso() }] });
+  return updateIfStatus(order, order.status, { status: 'CANCELLED', events: [...order.events, { status: 'CANCELLED', at: nowIso(), ...(actor ? { by: actor } : {}) }] });
+}
+
+/** Stores the outcome of cancelling the SO in Odoo on the order's sync record. */
+export async function setOdooCancel(id: string, cancel: NonNullable<OdooSync['cancel']>): Promise<ProtoOrder | undefined> {
+  const order = await getOrder(null, id);
+  if (!order?.odoo) return order;
+  return setOdooSync(id, { ...order.odoo, cancel });
 }

@@ -14,6 +14,7 @@ import { deleteDealer, findDealerByPartnerId } from '@/lib/dealers/repo';
 import { findClaimablePartner, normalizeTaxId } from '@/lib/odoo/partner-claim';
 import { normalizeThaiPhone } from '@/lib/shop/shipping';
 import { DEALER_TYPE_LABELS, type DealerType } from '@/lib/shop/types';
+import { RATE_LIMITS, clientIp, hitRateLimit, retryHint } from '@/lib/security/rate-limit';
 import { verifyTurnstile } from '@/lib/security/turnstile';
 
 export type ActivateResult = { ok: false; message: string; field?: string; attempt: number } | null;
@@ -32,15 +33,6 @@ const schema = z.object({
   confirmPassword: z.string(),
 }).refine((v) => v.password === v.confirmPassword, { message: 'ยืนยันรหัสผ่านไม่ตรงกัน', path: ['confirmPassword'] });
 
-/** Verification attempts per IP: tax id + phone is guessable, so keep tries low. In-memory, per server instance. */
-const ACTIVATE_RATE_LIMIT = { max: 5, windowMs: 60 * 60 * 1000 } as const;
-const attempts = new Map<string, number[]>();
-
-function allowAttempt(key: string, now = Date.now()): boolean {
-  const recent = (attempts.get(key) ?? []).filter((t) => now - t < ACTIVATE_RATE_LIMIT.windowMs);
-  attempts.set(key, recent.length >= ACTIVATE_RATE_LIMIT.max ? recent : [...recent, now]);
-  return recent.length < ACTIVATE_RATE_LIMIT.max;
-}
 
 const NOT_FOUND = 'ไม่พบร้านที่เลขผู้เสียภาษีและเบอร์โทรตรงกับข้อมูลลูกค้าของเรา ตรวจสอบอีกครั้ง หรือทัก LINE ให้ทีมงานช่วย';
 
@@ -53,8 +45,7 @@ export async function activateOdooDealerAction(prev: ActivateResult, formData: F
   const attempt = (prev?.attempt ?? 0) + 1;
   const fail = (message: string, field?: string): ActivateResult => ({ ok: false, message, field, attempt });
 
-  const h = await headers();
-  const ip = h.get('cf-connecting-ip') || h.get('x-forwarded-for')?.split(',')[0]?.trim() || h.get('x-real-ip') || 'unknown';
+  const ip = clientIp(await headers());
   const bot = await verifyTurnstile(String(formData.get('cf-turnstile-response') ?? ''), ip);
   if (!bot.ok) return fail(bot.reason, 'turnstile');
 
@@ -67,7 +58,9 @@ export async function activateOdooDealerAction(prev: ActivateResult, formData: F
     return fail(issue?.message ?? 'ข้อมูลไม่ครบ', String(issue?.path[0] ?? ''));
   }
   const input = parsed.data;
-  if (!allowAttempt(ip)) return fail('ลองบ่อยเกินไป กรุณาลองใหม่ภายหลัง หรือทัก LINE ได้เลย');
+  // Tax id + phone is guessable, so verification tries per IP stay low.
+  const limit = await hitRateLimit('activate', ip, RATE_LIMITS.activate);
+  if (!limit.ok) return fail(`ลองบ่อยเกินไป ${retryHint(limit.retryAfterMs)} หรือทัก LINE ได้เลย`);
   if (await findUserByEmail(input.email)) return fail('อีเมลนี้มีบัญชีอยู่แล้ว เข้าสู่ระบบ หรือกด "ลืมรหัสผ่าน"', 'email');
 
   let partner;

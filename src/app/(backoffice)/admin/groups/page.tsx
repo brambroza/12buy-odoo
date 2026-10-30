@@ -8,6 +8,7 @@ import { IconSubmit } from '@/components/admin/icon-submit';
 import { EmptyRow, IconLink, ListPagination, ListSearch, TableCard } from '@/components/admin/list-kit';
 import { UrlDrawer } from '@/components/admin/url-drawer';
 import { listHref, matchesSearch, paginate, searchText } from '@/lib/admin/list';
+import { requireAdmin } from '@/lib/auth/session';
 import * as admin from '@/lib/admin/store';
 import type { CustomerGroup } from '@/lib/admin/types';
 import { getCatalog } from '@/lib/shop/catalog';
@@ -28,6 +29,7 @@ function visibleCount(products: CatalogProduct[], group: CustomerGroup): number 
 
 /** Customer groups: pick which brands / categories / products each group of dealers can see and order. */
 export default async function GroupsPage({ searchParams }: { searchParams: Promise<Search> }) {
+  await requireAdmin();
   const params = await searchParams;
   const [catalog, groups, members, editing] = await Promise.all([
     getCatalog(), admin.listGroups(), admin.groupMemberCounts(), params.group ? admin.getGroup(params.group) : Promise.resolve(undefined),

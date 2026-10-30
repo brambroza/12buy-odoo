@@ -8,6 +8,7 @@ import { IconSubmit } from '@/components/admin/icon-submit';
 import { EmptyRow, IconLink, ListPagination, ListSearch, TableCard } from '@/components/admin/list-kit';
 import { UrlDrawer } from '@/components/admin/url-drawer';
 import { listHref, matchesSearch, paginate, searchText } from '@/lib/admin/list';
+import { requireAdmin } from '@/lib/auth/session';
 import * as admin from '@/lib/admin/store';
 import type { PriceZone } from '@/lib/admin/types';
 import { getReferenceData, shortProvince } from '@/lib/shop/catalog';
@@ -22,6 +23,7 @@ type Province = Awaited<ReturnType<typeof getReferenceData>>['provinces'][number
 
 /** Zone management: group provinces into price zones. */
 export default async function ZonesPage({ searchParams }: { searchParams: Promise<Search> }) {
+  await requireAdmin();
   const params = await searchParams;
   const [{ provinces }, zones, allBooks] = await Promise.all([getReferenceData(), admin.listZones(), admin.listBooks()]);
   const assigned = new Map<string, string>();

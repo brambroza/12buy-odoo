@@ -11,7 +11,9 @@ import { publishBookToOdoo } from '@/lib/odoo/pricelist-publish';
 import type { OdooPublishResult, PriceBook } from '@/lib/admin/types';
 import { flash } from '@/lib/flash';
 import { returnUrl } from '@/lib/admin/return-url';
+import { audit } from '@/lib/auth/audit';
 import { requireAdmin, requireBackoffice } from '@/lib/auth/session';
+import { cancelOrderInOdoo, needsOdooCancel } from '@/lib/odoo/cancel';
 import { canSyncOrder, syncOrderToOdoo } from '@/lib/shop/odoo-sync';
 import { creditPaymentsToResend, logCreditPaymentToOdoo } from '@/lib/shop/credit-payment-odoo';
 import * as shopStore from '@/lib/shop/store';
@@ -225,17 +227,16 @@ export async function dryRunAction(formData: FormData) {
   redirect(await back('/admin/prices', { book: bookId, dryrun: '1' }));
 }
 
-const personSchema = z.string().trim().min(1, 'ใส่ชื่อผู้ดำเนินการ').max(60);
-
-/** Editor submits the book for approval (2-step publish). */
+/** Editor submits the book for approval (2-step publish). The submitter is the signed-in user. */
 export async function submitBookAction(formData: FormData) {
-  await requireAdmin();
+  const user = await requireAdmin();
   const bookId = String(formData.get('bookId') ?? '');
-  const person = personSchema.safeParse(formData.get('person'));
-  if (!person.success) redirect(await back('/admin/prices', { book: bookId, error: person.error.issues[0].message }));
-  const result = await admin.submitBook(bookId, person.data);
+  const result = await admin.submitBook(bookId, { id: user.id, name: user.name });
   revalidateAdmin();
-  if (result.ok) await flash('ส่งขออนุมัติแล้ว', { icon: 'send', description: `ผู้ส่ง ${person.data} · ผู้อนุมัติต้องเป็นคนละคน` });
+  if (result.ok) {
+    await audit(user.id, 'pricebook.submit', 'PriceBook', bookId, { zoneId: result.book.zoneId, tier: result.book.tier, entries: Object.keys(result.book.entries).length });
+    await flash('ส่งขออนุมัติแล้ว', { icon: 'send', description: `ผู้ส่ง ${user.name} · ผู้อนุมัติต้องเป็นคนละบัญชี` });
+  }
   redirect(await back('/admin/prices', { book: bookId, ...(result.ok ? { submitted: '1' } : { error: result.reason }) }));
 }
 
@@ -260,33 +261,38 @@ async function flashOdooPublish(title: string, outcome: OdooPublishResult | null
   else await flash(title, { icon: 'publish', description: 'ร้านเห็นราคาใหม่บนเว็บ และอัปเดต pricelist ใน Odoo แล้ว' });
 }
 
-/** Approver (must differ from submitter) publishes the book for the web shop, then writes it into Odoo. */
+/** Approver (a different login than the submitter) publishes the book for the web shop, then writes it into Odoo. */
 export async function approveBookAction(formData: FormData) {
-  await requireAdmin();
+  const user = await requireAdmin();
   const bookId = String(formData.get('bookId') ?? '');
-  const person = personSchema.safeParse(formData.get('person'));
-  if (!person.success) redirect(await back('/admin/prices', { book: bookId, error: person.error.issues[0].message }));
-  const result = await admin.approveBook(bookId, person.data);
-  if (result.ok) await flashOdooPublish('อนุมัติและเผยแพร่ราคาแล้ว', await pushBookToOdoo(result.book));
+  const result = await admin.approveBook(bookId, { id: user.id, name: user.name });
+  if (result.ok) {
+    const outcome = await pushBookToOdoo(result.book);
+    await audit(user.id, 'pricebook.approve', 'PriceBook', bookId, { zoneId: result.book.zoneId, tier: result.book.tier, submittedBy: result.book.submittedBy, odoo: outcome?.status ?? null, pricelistId: outcome?.pricelistId ?? null });
+    await flashOdooPublish('อนุมัติและเผยแพร่ราคาแล้ว', outcome);
+  }
   revalidateAdmin();
   redirect(await back('/admin/prices', { book: bookId, ...(result.ok ? { published: '1' } : { error: result.reason }) }));
 }
 
 /** Re-sends a published book to Odoo (after a failure, or once writes are switched on). */
 export async function republishBookAction(formData: FormData) {
-  await requireAdmin();
+  const user = await requireAdmin();
   const bookId = String(formData.get('bookId') ?? '');
   const book = await admin.getBook(bookId);
   if (!book || book.status !== 'PUBLISHED') redirect(await back('/admin/prices', { book: bookId }));
-  await flashOdooPublish('ส่งตารางราคาเข้า Odoo อีกครั้งแล้ว', await pushBookToOdoo(book));
+  const outcome = await pushBookToOdoo(book);
+  await audit(user.id, 'pricebook.republish', 'PriceBook', bookId, { odoo: outcome?.status ?? null });
+  await flashOdooPublish('ส่งตารางราคาเข้า Odoo อีกครั้งแล้ว', outcome);
   revalidateAdmin();
   redirect(await back('/admin/prices', { book: bookId }));
 }
 
 export async function rejectBookAction(formData: FormData) {
-  await requireAdmin();
+  const user = await requireAdmin();
   const bookId = String(formData.get('bookId') ?? '');
   await admin.rejectBook(bookId);
+  await audit(user.id, 'pricebook.reject', 'PriceBook', bookId);
   revalidateAdmin();
   await flash('ตีกลับตารางราคาแล้ว', { type: 'info', icon: 'reject', description: 'กลับเป็นฉบับร่าง แก้ไขแล้วส่งขออนุมัติใหม่' });
   redirect(await back('/admin/prices', { book: bookId, rejected: '1' }));
@@ -357,7 +363,7 @@ export async function saveCashPairsAction(formData: FormData) {
  * invoice, for cash and credit alike; a failed push keeps the web confirmation and shows a retry button.
  */
 export async function adminAdvanceOrderAction(formData: FormData) {
-  await requireBackoffice();
+  const user = await requireBackoffice();
   const id = String(formData.get('orderId') ?? '');
   const order = await shopStore.getOrder(null, id);
   // The form posts the status it was rendered with; a stale/double submit must not skip a step.
@@ -366,7 +372,8 @@ export async function adminAdvanceOrderAction(formData: FormData) {
   if (order.status === 'PENDING' && !shopStore.isPaymentReady(order)) {
     redirect(await back('/admin/orders', { error: `${order.ref}: ต้องตรวจสลิปก่อนยืนยันออเดอร์` }));
   }
-  const advanced = await shopStore.advanceOrder(null, id, String(formData.get('trackingRef') ?? ''), order.status);
+  const advanced = await shopStore.advanceOrder(null, id, String(formData.get('trackingRef') ?? ''), order.status, { id: user.id, name: user.name });
+  if (advanced && advanced.status !== order.status) await audit(user.id, order.status === 'PENDING' ? 'order.confirm' : 'order.advance', 'ShopOrder', id, { ref: order.ref, from: order.status, to: advanced.status });
   const failure = order.status === 'PENDING' && advanced?.status === 'PREPARING' && canSyncOrder(advanced) ? await pushOrReport(advanced) : null;
   revalidateAdmin();
   if (failure) redirect(await back('/admin/orders', { error: failure }));
@@ -397,10 +404,11 @@ async function pushOrReport(order: ProtoOrder): Promise<string | null> {
 
 /** Re-sends a confirmed order to Odoo (after a failure, or for orders confirmed before the Odoo link existed). */
 export async function adminSyncOrderAction(formData: FormData) {
-  await requireBackoffice();
+  const user = await requireBackoffice();
   const order = await shopStore.getOrder(null, String(formData.get('orderId') ?? ''));
   if (!order || !canSyncOrder(order)) redirect(await back('/admin/orders'));
   const failure = await pushOrReport(order);
+  await audit(user.id, 'order.odoo_resend', 'ShopOrder', order.id, { ref: order.ref, ok: !failure });
   revalidateAdmin();
   if (failure) redirect(await back('/admin/orders', { error: failure }));
   const sent = await shopStore.getOrder(null, order.id);
@@ -421,6 +429,7 @@ export async function reviewCreditPaymentAction(formData: FormData) {
   if (decision === 'REJECTED' && !reason) redirect(await back('/admin/orders', { error: 'ระบุเหตุผลที่สลิปไม่ผ่าน เพื่อให้ร้านแก้ไขได้' }));
   const result = await shopStore.reviewCreditPayment(orderId, paymentId, decision, reason);
   if (!result?.payment) redirect(await back('/admin/orders', { error: 'รายการนี้ถูกตรวจไปแล้วหรือไม่พบ' }));
+  await audit(user.id, decision === 'VERIFIED' ? 'order.credit_payment.verify' : 'order.credit_payment.reject', 'ShopOrder', orderId, { ref: result.order.ref, paymentId, amount: result.payment.amount, reason: reason || undefined });
   const log = result.order.odoo?.saleOrderId ? await logCreditPaymentToOdoo(result.order, result.payment, { reviewer: user.name ?? user.email }) : null;
   revalidateAdmin();
   const odooNote = !log ? ' · ยังไม่มี SO ใน Odoo จึงไม่ได้บันทึก' : log.error ? ` · บันทึกเข้า Odoo ไม่สำเร็จ: ${log.error}` : ' · บันทึกเข้า Odoo แล้ว';
@@ -447,9 +456,10 @@ export async function resendCreditPaymentLogAction(formData: FormData) {
 }
 
 export async function verifySlipAction(formData: FormData) {
-  await requireBackoffice();
+  const user = await requireBackoffice();
   const order = await shopStore.verifySlip(String(formData.get('orderId') ?? ''));
   revalidateAdmin();
+  if (order?.payment.verifiedAt) await audit(user.id, 'order.slip.verify', 'ShopOrder', order.id, { ref: order.ref, total: order.total });
   if (order?.payment.verifiedAt) await flash('ตรวจสลิปแล้ว', { icon: 'check', description: `${order.ref} · กดยืนยันออเดอร์ได้แล้ว` });
 }
 
@@ -471,17 +481,45 @@ export async function adminRefreshStatusesAction() {
 
 /** Saves the parcel tracking number the warehouse got from the carrier. */
 export async function adminSetTrackingAction(formData: FormData) {
-  await requireBackoffice();
+  const user = await requireBackoffice();
   const trackingRef = String(formData.get('trackingRef') ?? '');
   const order = await shopStore.setTrackingRef(String(formData.get('orderId') ?? ''), trackingRef);
+  if (order) await audit(user.id, 'order.tracking', 'ShopOrder', order.id, { ref: order.ref, trackingRef: trackingRef.trim() || null });
   revalidateAdmin();
   if (order) await flash(trackingRef.trim() ? 'บันทึกเลขพัสดุแล้ว' : 'ลบเลขพัสดุแล้ว', { icon: 'truck', description: `${order.ref}${trackingRef.trim() ? ` · ${trackingRef.trim()}` : ''}` });
 }
 
+/**
+ * Admin cancels a web order. When the order already has an SO in Odoo, the SO (and its draft invoice)
+ * is cancelled there too; a posted invoice blocks that part and the admin is told what accounting must do.
+ */
 export async function adminCancelOrderAction(formData: FormData) {
-  await requireBackoffice();
-  const order = await shopStore.cancelOrder(null, String(formData.get('orderId') ?? ''));
+  const user = await requireBackoffice();
+  const id = String(formData.get('orderId') ?? '');
+  const before = await shopStore.getOrder(null, id);
+  const order = await shopStore.cancelOrder(null, id, { id: user.id, name: user.name });
+  const cancelledNow = Boolean(before && before.status !== 'CANCELLED' && order?.status === 'CANCELLED');
+  let odooNote = '';
+  if (cancelledNow && order && needsOdooCancel(order)) {
+    const outcome = await cancelOrderInOdoo(order);
+    await shopStore.setOdooCancel(order.id, outcome);
+    odooNote = outcome.ok ? ` · ${outcome.note ?? 'ยกเลิกใน Odoo แล้ว'}` : ` · Odoo: ${outcome.error}`;
+  }
+  if (cancelledNow && order) await audit(user.id, 'order.cancel', 'ShopOrder', order.id, { ref: order.ref, from: before?.status, odoo: odooNote || undefined });
   revalidateAdmin();
-  if (order?.status === 'CANCELLED') await flash('ยกเลิกออเดอร์แล้ว', { icon: 'cancel', description: `${order.ref} · ${order.dealerName}` });
+  if (cancelledNow && order) await flash('ยกเลิกออเดอร์แล้ว', { type: odooNote.includes('Odoo:') ? 'warning' : 'success', icon: 'cancel', description: `${order.ref} · ${order.dealerName}${odooNote}` });
   else if (order) await flash('ยกเลิกไม่ได้', { type: 'error', icon: 'cancel', description: `${order.ref} อยู่ในสถานะ “${ORDER_STATUS_LABELS[order.status]}” แล้ว` });
+}
+
+/** Retries the Odoo side of a cancel that failed (e.g. after accounting credit-noted the invoice). */
+export async function adminRetryOdooCancelAction(formData: FormData) {
+  const user = await requireBackoffice();
+  const order = await shopStore.getOrder(null, String(formData.get('orderId') ?? ''));
+  if (!order || order.status !== 'CANCELLED' || !needsOdooCancel(order)) redirect(await back('/admin/orders'));
+  const outcome = await cancelOrderInOdoo(order);
+  await shopStore.setOdooCancel(order.id, outcome);
+  await audit(user.id, 'order.odoo_cancel_retry', 'ShopOrder', order.id, { ref: order.ref, ok: outcome.ok, error: outcome.error });
+  revalidateAdmin();
+  if (outcome.ok) await flash('ยกเลิก SO ใน Odoo แล้ว', { icon: 'cancel', description: `${order.ref} · ${outcome.note ?? ''}` });
+  else redirect(await back('/admin/orders', { error: `${order.ref}: ${outcome.error}` }));
 }

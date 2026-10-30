@@ -18,3 +18,4 @@ docs/screenshots/payment/
 docs/*.docx
 docs/*.pdf
 docs/~$*
+coverage/

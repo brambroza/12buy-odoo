@@ -12,7 +12,7 @@ export const metadata: Metadata = {
   robots: { index: false, follow: false },
 };
 
-/** Public login page for dealers (prototype, no real auth yet). */
+/** Public login page for dealers and staff (email + password; Odoo portal users are provisioned on first sign-in). */
 export default function LoginPage() {
   return (
     <div className="landing flex min-h-screen flex-col">

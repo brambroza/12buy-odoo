@@ -160,6 +160,8 @@ export type DealerLead = {
   address: unknown;
   /** Thai tax id, 13 digits; the key used to spot an applicant that is already a dealer or Odoo customer. */
   taxId: string | null;
+  /** When the applicant accepted the privacy notice (PDPA); null on leads from before the checkbox existed. */
+  consentAt?: Date | null;
 };
 
 export type PasswordResetRequest = {

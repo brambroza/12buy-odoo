@@ -3,6 +3,7 @@
 import { headers } from 'next/headers';
 import { z } from 'zod';
 import { allowResetRequest, requestPasswordReset } from '@/lib/auth/reset-requests';
+import { clientIp } from '@/lib/security/rate-limit';
 import { flash } from '@/lib/flash';
 
 export type ForgotPasswordResult = { ok: true; message: string } | { ok: false; message: string } | null;
@@ -20,9 +21,8 @@ export async function forgotPasswordAction(_prev: ForgotPasswordResult, formData
   const parsed = schema.safeParse({ email: formData.get('email') ?? '', contact: formData.get('contact') ?? '' });
   if (!parsed.success) return { ok: false, message: parsed.error.issues[0]?.message ?? 'ข้อมูลไม่ครบ' };
 
-  const h = await headers();
-  const ip = h.get('x-forwarded-for')?.split(',')[0]?.trim() || h.get('x-real-ip') || 'unknown';
-  if (!allowResetRequest(ip)) return { ok: false, message: 'ส่งคำขอบ่อยเกินไป กรุณาลองใหม่ภายหลัง หรือทัก LINE ได้เลย' };
+  const ip = clientIp(await headers());
+  if (!(await allowResetRequest(ip))) return { ok: false, message: 'ส่งคำขอบ่อยเกินไป กรุณาลองใหม่ภายหลัง หรือทัก LINE ได้เลย' };
 
   try {
     await requestPasswordReset({ email: parsed.data.email, contact: parsed.data.contact, ip: ip.slice(0, 64) });

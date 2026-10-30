@@ -24,7 +24,8 @@ function getConfig(): OdooConfig {
     username: process.env.ODOO_USERNAME ?? '',
     apiKey: process.env.ODOO_API_KEY ?? '',
     autoConfirm: process.env.ODOO_AUTO_CONFIRM === 'true',
-    mock: process.env.ODOO_MOCK !== 'false',
+    // Mock data only when asked for, and never on production (a missing variable used to turn it on).
+    mock: process.env.ODOO_MOCK === 'true' && process.env.NODE_ENV !== 'production',
     useCustomExternalCode: process.env.ODOO_USE_CUSTOM_EXTERNAL_CODE === 'true',
   };
 }

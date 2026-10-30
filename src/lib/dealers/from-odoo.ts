@@ -8,6 +8,7 @@ import type { Dealer, DealerType, User } from '@/lib/db/types';
 import { odooCheckLogin } from '@/lib/odoo/rpc';
 import { findPortalAccount, normalizeTaxId, partnerAddress, phoneKey, type ClaimablePartner } from '@/lib/odoo/partner-claim';
 import { PROVINCES } from '@/lib/provinces';
+import { RATE_LIMITS, hitRateLimit } from '@/lib/security/rate-limit';
 import { shortProvince } from '@/lib/shop/catalog';
 import { normalizeThaiPhone } from '@/lib/shop/shipping';
 import { DEALER_TYPE_LABELS } from '@/lib/shop/types';
@@ -43,20 +44,9 @@ export async function createDealerFromPartner(partner: ClaimablePartner, extra: 
   }
 }
 
-/** Odoo sign-in checks per IP: each one is a password guess against Odoo. In-memory, per server instance. */
-const ODOO_LOGIN_LIMIT = { max: 10, windowMs: 60 * 60 * 1000 } as const;
-const attempts = new Map<string, number[]>();
-
-/** Returns true when `key` may try another Odoo sign-in right now. */
-export function allowOdooLogin(key: string, now = Date.now()): boolean {
-  const recent = (attempts.get(key) ?? []).filter((t) => now - t < ODOO_LOGIN_LIMIT.windowMs);
-  attempts.set(key, recent.length >= ODOO_LOGIN_LIMIT.max ? recent : [...recent, now]);
-  return recent.length < ODOO_LOGIN_LIMIT.max;
-}
-
-/** Test helper. */
-export function resetOdooLoginLimit() {
-  attempts.clear();
+/** Returns true when `key` (an IP) may forward another sign-in to Odoo right now: each one is a password guess against Odoo. */
+export async function allowOdooLogin(key: string): Promise<boolean> {
+  return (await hitRateLimit('odoo-login', key, RATE_LIMITS.odooLogin)).ok;
 }
 
 export type OdooLoginOutcome =

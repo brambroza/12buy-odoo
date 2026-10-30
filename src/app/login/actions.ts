@@ -11,6 +11,7 @@ import { findUserByEmail, updateUser } from '@/lib/auth/users';
 import { allowOdooLogin, provisionFromOdooLogin } from '@/lib/dealers/from-odoo';
 import { findOpenLeadByEmail } from '@/lib/leads/repo';
 import { safeNext } from '@/lib/safe-next';
+import { RATE_LIMITS, clientIp, hitRateLimit, retryHint } from '@/lib/security/rate-limit';
 import { flash } from '@/lib/flash';
 
 export type LoginResult = { ok: false; message: string } | null;
@@ -28,6 +29,16 @@ const GENERIC = 'อีเมลหรือรหัสผ่านไม่ถ
 export async function loginAction(_prev: LoginResult, formData: FormData): Promise<LoginResult> {
   const parsed = schema.safeParse({ email: formData.get('email'), password: formData.get('password'), next: formData.get('next') ?? undefined, remember: formData.get('remember') === 'on' });
   if (!parsed.success) return { ok: false, message: parsed.error.issues[0]?.message ?? 'ข้อมูลไม่ครบ' };
+
+  // Brute-force guard: a wide window per IP (shared office NAT) and a tight one per email.
+  const ip = clientIp(await headers());
+  const email = parsed.data.email.toLowerCase();
+  const [byIp, byEmail] = await Promise.all([hitRateLimit('login-ip', ip, RATE_LIMITS.loginIp), hitRateLimit('login-email', email, RATE_LIMITS.loginEmail)]);
+  if (!byIp.ok || !byEmail.ok) {
+    const blocked = byEmail.ok ? byIp : byEmail;
+    await audit(null, 'login.rate_limited', 'User', email, { ip: ip.slice(0, 64), scope: byEmail.ok ? 'ip' : 'email', count: blocked.count });
+    return { ok: false, message: `พยายามเข้าสู่ระบบบ่อยเกินไป ${retryHint(blocked.retryAfterMs)} หรือกด "ลืมรหัสผ่าน"` };
+  }
 
   let user = await findUserByEmail(parsed.data.email);
   if (!user) {
@@ -62,9 +73,8 @@ export async function loginAction(_prev: LoginResult, formData: FormData): Promi
  * through to the generic "wrong email or password".
  */
 async function tryOdooLogin(email: string, password: string): Promise<Awaited<ReturnType<typeof findUserByEmail>> | { ok: false; message: string } | null> {
-  const h = await headers();
-  const ip = h.get('cf-connecting-ip') || h.get('x-forwarded-for')?.split(',')[0]?.trim() || h.get('x-real-ip') || 'unknown';
-  if (!allowOdooLogin(ip)) return null;
+  const ip = clientIp(await headers());
+  if (!(await allowOdooLogin(ip))) return null;
   try {
     const outcome = await provisionFromOdooLogin(email, password);
     if (outcome.kind === 'invalid') return null;

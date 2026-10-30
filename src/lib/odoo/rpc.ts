@@ -27,7 +27,8 @@ const READ_METHODS = new Set([
  */
 const WRITE_METHODS: Record<string, ReadonlySet<string>> = {
   'res.partner': new Set(['create', 'write']),
-  'sale.order': new Set(['create', 'action_confirm', 'message_post']),
+  // `action_cancel`: admin cancels a web order whose SO already exists (web and Odoo stay in step).
+  'sale.order': new Set(['create', 'action_confirm', 'action_cancel', 'message_post']),
   'sale.loyalty.coupon.wizard': new Set(['create', 'action_apply']),
   'sale.advance.payment.inv': new Set(['create', 'create_invoices']),
   'product.pricelist': new Set(['create']),
@@ -37,7 +38,8 @@ const WRITE_METHODS: Record<string, ReadonlySet<string>> = {
   'delivery.carrier': new Set(['create', 'write']),
   // Chatter notes for dealer credit payments: slip as an attachment, internal note on the SO and its invoice.
   'ir.attachment': new Set(['create']),
-  'account.move': new Set(['message_post']),
+  // `button_cancel`: the draft invoice of a cancelled web order.
+  'account.move': new Set(['message_post', 'button_cancel']),
 };
 
 /** Keyword arguments allowed per `model.method` (others are refused before any request). */
@@ -55,6 +57,11 @@ const WRITE_FIELDS: Record<string, ReadonlySet<string>> = {
 };
 
 import { getOdooConnection, invalidateOdooConnection } from './connection';
+import { logger } from '@/lib/logger';
+
+const log = logger('odoo');
+/** Calls slower than this are logged at warn level even when debug logging is off. */
+const SLOW_MS = 3000;
 
 type RpcConfig = { url: string; db: string; username: string; apiKey: string };
 
@@ -79,6 +86,13 @@ export async function odooBaseUrl(): Promise<string> {
 export function resetOdooSession(): void {
   cachedUid = null;
   invalidateOdooConnection();
+}
+
+/** Round trip to Odoo (`common.version`) for health checks; resolves with the latency in ms. */
+export async function odooPing(): Promise<number> {
+  const started = Date.now();
+  await jsonRpc('common', 'version', []);
+  return Date.now() - started;
 }
 
 /** Uid of the configured Odoo user (authenticates once per process). */
@@ -111,7 +125,21 @@ function sleep(ms: number) {
  * HTTP 429, because Odoo Online rate-limits bursts of parallel calls.
  */
 function jsonRpc<T>(service: string, method: string, args: unknown[]): Promise<T> {
-  const run = async (): Promise<T> => jsonRpcTo<T>((await getConfig()).url, service, method, args);
+  const run = async (): Promise<T> => {
+    // Never log `args`: for `execute_kw` they carry the API key. Model + method are enough to trace.
+    const label = service === 'object' ? `${String(args[3])}.${String(args[4])}` : `${service}.${method}`;
+    const started = Date.now();
+    try {
+      const value = await jsonRpcTo<T>((await getConfig()).url, service, method, args);
+      const ms = Date.now() - started;
+      if (ms >= SLOW_MS) log.warn('slow call', { call: label, ms });
+      else log.debug('call', { call: label, ms });
+      return value;
+    } catch (error) {
+      log.error('call failed', { call: label, ms: Date.now() - started, error });
+      throw error;
+    }
+  };
   const result = queue.then(run, run);
   queue = result.catch(() => undefined);
   return result;

@@ -11,6 +11,8 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
   return [
     { url: absoluteUrl('/'), lastModified: now, changeFrequency: 'weekly', priority: 1 },
     { url: absoluteUrl('/tires'), lastModified: now, changeFrequency: 'daily', priority: 0.9 },
+    { url: absoluteUrl('/privacy'), lastModified: now, changeFrequency: 'yearly', priority: 0.2 },
+    { url: absoluteUrl('/terms'), lastModified: now, changeFrequency: 'yearly', priority: 0.2 },
     ...SEO_SIZES.map((size) => ({ url: absoluteUrl(`/tires/size/${sizeSlug(size)}`), lastModified: now, changeFrequency: 'daily' as const, priority: 0.8 })),
     ...brands.map((b) => ({ url: absoluteUrl(`/tires/brand/${encodeURIComponent(b.brand.toLowerCase())}`), lastModified: now, changeFrequency: 'weekly' as const, priority: 0.7 })),
   ];

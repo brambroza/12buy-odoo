@@ -14,6 +14,7 @@ import { creditDues } from '@/lib/admin/dashboard';
 import { uniformCashPercent } from '@/lib/shop/pricing';
 import { baht } from '@/lib/shop/catalog';
 import { canSyncOrder } from '@/lib/shop/odoo-sync';
+import { needsOdooCancel } from '@/lib/odoo/cancel';
 import { getPendingOrderCredit } from '@/lib/shop/credit-line';
 import { creditOutstanding, creditPayments, pendingCreditPayments } from '@/lib/shop/credit-payment';
 import { creditPaymentsToResend } from '@/lib/shop/credit-payment-odoo';
@@ -22,7 +23,7 @@ import type { OrderCreditView } from '@/lib/shop/credit';
 import { countStalePending, isPaymentReady, listAllOrders } from '@/lib/shop/store';
 import { CREDIT_PAYMENT_STATUS_LABELS, ORDER_STATUS_FLOW, ORDER_STATUS_LABELS, type CreditPayment, type CreditPaymentStatus, type OdooSync, type OrderStatus, type ProtoOrder } from '@/lib/shop/types';
 import { cn } from '@/lib/utils';
-import { adminAdvanceOrderAction, adminCancelOrderAction, adminRefreshStatusesAction, adminSetTrackingAction, adminSyncOrderAction, resendCreditPaymentLogAction, reviewCreditPaymentAction, verifySlipAction } from '../actions';
+import { adminAdvanceOrderAction, adminCancelOrderAction, adminRefreshStatusesAction, adminRetryOdooCancelAction, adminSetTrackingAction, adminSyncOrderAction, resendCreditPaymentLogAction, reviewCreditPaymentAction, verifySlipAction } from '../actions';
 
 const STYLE: Record<OrderStatus, string> = {
   PENDING: 'bg-amber-500/15 text-amber-700', PREPARING: 'bg-blue-500/15 text-blue-700', SHIPPED: 'bg-violet-500/15 text-violet-700',
@@ -49,6 +50,11 @@ function OdooStatus({ sync, base }: { sync: OdooSync; base: string }) {
     ? <a href={`${base}/odoo/sales/${sync.saleOrderId}`} target="_blank" rel="noreferrer" className="underline">{sync.saleOrderName}</a>
     : sync.saleOrderName);
   if (sync.status === 'FAILED') return <span className="line-clamp-3 break-words text-xs text-destructive" title={sync.error ?? undefined}>ส่ง Odoo ไม่สำเร็จ: {sync.error}</span>;
+  if (sync.cancel) {
+    return sync.cancel.ok
+      ? <Badge variant="outline" className="border-transparent bg-muted text-muted-foreground">Odoo {so} ยกเลิกแล้ว</Badge>
+      : <span className="line-clamp-3 break-words text-xs text-destructive" title={sync.cancel.error}>ยกเลิกใน Odoo ไม่สำเร็จ: {sync.cancel.error}</span>;
+  }
   return (
     <span className="flex flex-wrap items-center gap-1">
       {sync.status === 'SYNCED'
@@ -346,6 +352,9 @@ function OrderDrawer({ order: o, closeHref, notice, odooBase }: { order: ProtoOr
         {canSyncOrder(o) && (
           <form action={adminSyncOrderAction}><input type="hidden" name="orderId" value={o.id} /><Button type="submit" size="sm" variant="outline">{o.odoo?.invoiceError ? 'สร้างใบแจ้งหนี้ร่างอีกครั้ง' : o.odoo ? 'ส่งเข้า Odoo อีกครั้ง' : 'ส่งเข้า Odoo'}</Button></form>
         )}
+        {o.status === 'CANCELLED' && needsOdooCancel(o) && (
+          <form action={adminRetryOdooCancelAction}><input type="hidden" name="orderId" value={o.id} /><Button type="submit" size="sm" variant="outline">ยกเลิก SO ใน Odoo อีกครั้ง</Button></form>
+        )}
       </section>
       {progress && (
         <p className="text-xs text-muted-foreground">
@@ -361,7 +370,7 @@ function OrderDrawer({ order: o, closeHref, notice, odooBase }: { order: ProtoOr
           <ul className="divide-y divide-border text-xs">
             {o.events.map((e, i) => (
               <li key={`${e.status}-${i}`} className="flex items-center justify-between gap-2 px-3 py-2">
-                <span>{ORDER_STATUS_LABELS[e.status]}</span>
+                <span>{ORDER_STATUS_LABELS[e.status]}{e.by && <span className="text-muted-foreground"> · โดย {e.by.name}</span>}</span>
                 <span className="text-muted-foreground">{dateTime(e.at)}</span>
               </li>
             ))}

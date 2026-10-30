@@ -38,7 +38,12 @@ describe('odooWrite guard', () => {
     await expect(odooWrite('loyalty.rule', 'write', [[1], {}])).rejects.toThrow('not an allowed write');
     await expect(odooWrite('sale.advance.payment.inv', 'unlink', [[1]])).rejects.toThrow('not an allowed write');
     await expect(odooWrite('account.move', 'action_post', [[1]])).rejects.toThrow('not an allowed write');
-    expect(fetchSpy).not.toHaveBeenCalled();
+    // Cancelling a web order's SO and its draft invoice is allowed; deleting or posting is not.
+    await expect(odooWrite('sale.order', 'action_cancel', [[1]])).rejects.not.toThrow('not an allowed write');
+    await expect(odooWrite('account.move', 'button_cancel', [[1]])).rejects.not.toThrow('not an allowed write');
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+    await expect(odooWrite('account.move', 'button_draft', [[1]])).rejects.toThrow('not an allowed write');
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
   });
 
   it('lets res.partner.write touch only pricelist and credit limit fields', async () => {

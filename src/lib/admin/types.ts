@@ -21,7 +21,9 @@ export type PriceBook = {
   typePercent: Partial<Record<DealerType, number>>;
   /** DRAFT → PENDING_APPROVAL (submitted) → PUBLISHED (approved by a different person). Any edit returns to DRAFT. */
   status: 'DRAFT' | 'PENDING_APPROVAL' | 'PUBLISHED';
+  /** Display name of the staff member who submitted / approved; `submittedById` is the login used for the "different person" rule. */
   submittedBy: string | null;
+  submittedById?: string | null;
   approvedBy: string | null;
   updatedAt: string;
   publishedAt: string | null;

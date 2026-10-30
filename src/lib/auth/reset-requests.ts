@@ -1,27 +1,13 @@
 import { db } from '@/lib/db/client';
 import { newId, rowOrNull, rows, unwrap } from '@/lib/db/rows';
 import type { Dealer, PasswordResetRequest, User } from '@/lib/db/types';
+import { RATE_LIMITS, hitRateLimit } from '@/lib/security/rate-limit';
 import { audit } from './audit';
 import { findUserByEmail } from './users';
 
-const attempts = new Map<string, number[]>();
-
-export const RESET_RATE_LIMIT = { max: 5, windowMs: 60 * 60 * 1000 } as const;
-
-/** Returns true when `key` (usually an IP) may submit another reset request right now. In-memory, per server instance. */
-export function allowResetRequest(key: string, now = Date.now()): boolean {
-  const recent = (attempts.get(key) ?? []).filter((t) => now - t < RESET_RATE_LIMIT.windowMs);
-  if (recent.length >= RESET_RATE_LIMIT.max) {
-    attempts.set(key, recent);
-    return false;
-  }
-  attempts.set(key, [...recent, now]);
-  return true;
-}
-
-/** Test helper. */
-export function resetResetRateLimit() {
-  attempts.clear();
+/** Returns true when `key` (usually an IP) may submit another reset request right now (shared limiter). */
+export async function allowResetRequest(key: string): Promise<boolean> {
+  return (await hitRateLimit('reset', key, RATE_LIMITS.reset)).ok;
 }
 
 /**

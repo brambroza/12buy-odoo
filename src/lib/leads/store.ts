@@ -1,32 +1,18 @@
+import { RATE_LIMITS, hitRateLimit } from '@/lib/security/rate-limit';
 import type { DealerLeadInput } from './schema';
 
 /** Lead shape passed to the notifier. Never contains the password (see `toNotification`). */
-export type LeadNotification = Omit<DealerLeadInput, 'password' | 'confirmPassword' | 'website'> & { province: string; id: string; createdAt: string | Date; source: string };
+export type LeadNotification = Omit<DealerLeadInput, 'password' | 'confirmPassword' | 'website' | 'consent'> & { province: string; id: string; createdAt: string | Date; source: string };
 
 /** Builds the webhook payload from a validated lead, dropping the password fields. */
 export function toNotification(input: DealerLeadInput, meta: { id: string; createdAt: string | Date; source: string }): LeadNotification {
-  const { password: _p, confirmPassword: _c, website: _w, ...safe } = input;
+  const { password: _p, confirmPassword: _c, website: _w, consent: _k, ...safe } = input;
   return { ...safe, province: input.address.province, ...meta };
 }
 
-const attempts = new Map<string, number[]>();
-
-export const RATE_LIMIT = { max: 3, windowMs: 60 * 60 * 1000 } as const;
-
-/** Returns true when `key` (usually an IP) may submit another lead right now. In-memory, per server instance. */
-export function allowSubmission(key: string, now = Date.now()): boolean {
-  const recent = (attempts.get(key) ?? []).filter((t) => now - t < RATE_LIMIT.windowMs);
-  if (recent.length >= RATE_LIMIT.max) {
-    attempts.set(key, recent);
-    return false;
-  }
-  attempts.set(key, [...recent, now]);
-  return true;
-}
-
-/** Test helper. */
-export function resetRateLimit() {
-  attempts.clear();
+/** Returns true when `key` (usually an IP) may submit another lead right now (shared limiter, see `rate-limit.ts`). */
+export async function allowSubmission(key: string): Promise<boolean> {
+  return (await hitRateLimit('lead', key, RATE_LIMITS.lead)).ok;
 }
 
 /**

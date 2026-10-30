@@ -170,7 +170,7 @@ export function ensureBook(zoneId: string, tier: DealerTier, basePricelistId: nu
   });
 }
 
-type BookPatch = Partial<Pick<PriceBook, 'basePricelistId' | 'entries' | 'typePercent' | 'status' | 'publishedAt' | 'lastDryRun' | 'submittedBy' | 'approvedBy' | 'odooPricelistId' | 'odooPublish'>>;
+type BookPatch = Partial<Pick<PriceBook, 'basePricelistId' | 'entries' | 'typePercent' | 'status' | 'publishedAt' | 'lastDryRun' | 'submittedBy' | 'submittedById' | 'approvedBy' | 'odooPricelistId' | 'odooPublish'>>;
 
 /** Pure: applies a patch; price changes send the book back to DRAFT. */
 function patchBook(book: PriceBook, patch: BookPatch) {
@@ -178,6 +178,7 @@ function patchBook(book: PriceBook, patch: BookPatch) {
   if (patch.entries || patch.typePercent || patch.basePricelistId !== undefined) {
     book.status = 'DRAFT';
     book.submittedBy = null;
+    book.submittedById = null;
     book.approvedBy = null;
   }
 }
@@ -193,32 +194,36 @@ export function updateBook(id: string, patch: BookPatch): Promise<PriceBook | un
 
 type BookResult = { ok: true; book: PriceBook } | { ok: false; reason: string };
 
+/** Who submits / approves a book: the signed-in staff member. */
+export type BookActor = { id: string; name: string };
+
 /** Editor submits a book for approval. Requires a dry run so the reviewer sees the Odoo diff. */
-export function submitBook(id: string, submittedBy: string): Promise<BookResult> {
+export function submitBook(id: string, submitter: BookActor): Promise<BookResult> {
   return mutate((data): BookResult => {
     const book = data.books.find((b) => b.id === id);
     if (!book) return { ok: false, reason: 'ไม่พบตารางราคา' };
     if (!book.lastDryRun) return { ok: false, reason: 'กด "คำนวณ diff" ก่อนส่งอนุมัติ เพื่อให้ผู้อนุมัติเห็นสิ่งที่จะเปลี่ยนใน Odoo' };
     if (!Object.keys(book.entries).length && !Object.keys(book.typePercent).length) return { ok: false, reason: 'ตารางยังว่าง นำเข้าราคาหรือกรอกก่อน' };
-    patchBook(book, { status: 'PENDING_APPROVAL', submittedBy });
+    patchBook(book, { status: 'PENDING_APPROVAL', submittedBy: submitter.name, submittedById: submitter.id });
     return { ok: true, book };
   });
 }
 
-/** A different person approves → published. */
-export function approveBook(id: string, approvedBy: string): Promise<BookResult> {
+/** A different person (by login, not by typed name) approves → published. */
+export function approveBook(id: string, approver: BookActor): Promise<BookResult> {
   return mutate((data): BookResult => {
     const book = data.books.find((b) => b.id === id);
     if (!book) return { ok: false, reason: 'ไม่พบตารางราคา' };
     if (book.status !== 'PENDING_APPROVAL') return { ok: false, reason: 'ตารางนี้ยังไม่ได้ส่งอนุมัติ' };
-    if (book.submittedBy && book.submittedBy.trim().toLowerCase() === approvedBy.trim().toLowerCase()) return { ok: false, reason: 'ผู้อนุมัติต้องไม่ใช่คนเดียวกับผู้ส่ง' };
-    patchBook(book, { status: 'PUBLISHED', approvedBy, publishedAt: new Date().toISOString() });
+    const sameLogin = book.submittedById ? book.submittedById === approver.id : (book.submittedBy ?? '').trim().toLowerCase() === approver.name.trim().toLowerCase();
+    if (sameLogin) return { ok: false, reason: 'ผู้อนุมัติต้องไม่ใช่คนเดียวกับผู้ส่ง (ให้แอดมินอีกคนเข้าสู่ระบบแล้วกดอนุมัติ)' };
+    patchBook(book, { status: 'PUBLISHED', approvedBy: approver.name, publishedAt: new Date().toISOString() });
     return { ok: true, book };
   });
 }
 
 export function rejectBook(id: string): Promise<PriceBook | undefined> {
-  return updateBook(id, { status: 'DRAFT', submittedBy: null, approvedBy: null });
+  return updateBook(id, { status: 'DRAFT', submittedBy: null, submittedById: null, approvedBy: null });
 }
 
 /** Sets or clears one product price in a book. */

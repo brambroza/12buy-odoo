@@ -8,7 +8,9 @@ vi.mock('@/lib/dealers/repo', () => repo);
 vi.mock('@/lib/auth/users', () => users);
 vi.mock('@/lib/shop/catalog', () => ({ shortProvince: (n: string) => n.replace(/^จังหวัด/, '') }));
 
-const { allowOdooLogin, createDealerFromPartner, provisionFromOdooLogin, resetOdooLoginLimit } = await import('@/lib/dealers/from-odoo');
+vi.mock('@/lib/security/rate-limit', () => ({ RATE_LIMITS: { odooLogin: { max: 10, windowMs: 3_600_000 } }, hitRateLimit: vi.fn(async () => ({ ok: true, count: 1, retryAfterMs: 0 })) }));
+
+const { createDealerFromPartner, provisionFromOdooLogin } = await import('@/lib/dealers/from-odoo');
 
 const company = { id: 40, name: 'บจก. ยางดี', vat: 'TH0105556123456', phone: '+66 2 123 4567', street: '9 ถ.พระราม 2', street2: false, city: false, zip: '10150', state_id: [1, 'จังหวัดสมุทรสาคร'] };
 
@@ -101,13 +103,3 @@ describe('provisionFromOdooLogin', () => {
   });
 });
 
-describe('allowOdooLogin', () => {
-  beforeEach(() => resetOdooLoginLimit());
-
-  it('allows 10 tries per hour per key', () => {
-    for (let i = 0; i < 10; i++) expect(allowOdooLogin('ip', 1000)).toBe(true);
-    expect(allowOdooLogin('ip', 1000)).toBe(false);
-    expect(allowOdooLogin('other', 1000)).toBe(true);
-    expect(allowOdooLogin('ip', 1000 + 60 * 60 * 1000 + 1)).toBe(true);
-  });
-});

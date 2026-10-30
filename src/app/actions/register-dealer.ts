@@ -8,6 +8,7 @@ import { allowSubmission, notifyLead, toNotification } from '@/lib/leads/store';
 import { findDealerByTaxId } from '@/lib/dealers/repo';
 import { findUserByEmail } from '@/lib/auth/users';
 import { findPartnersByTaxId } from '@/lib/odoo/partner-claim';
+import { clientIp } from '@/lib/security/rate-limit';
 import { verifyTurnstile } from '@/lib/security/turnstile';
 
 /** What the user typed (never the password), sent back so the form can be refilled after an error. */
@@ -52,8 +53,7 @@ async function duplicateTaxId(taxId: string): Promise<{ message: string; hint?: 
 }
 
 async function register(formData: FormData): Promise<RegisterResult> {
-  const h = await headers();
-  const ip = h.get('cf-connecting-ip') || h.get('x-forwarded-for')?.split(',')[0]?.trim() || h.get('x-real-ip') || 'unknown';
+  const ip = clientIp(await headers());
   const bot = await verifyTurnstile(String(formData.get('cf-turnstile-response') ?? ''), ip);
   if (!bot.ok) return { ok: false, message: bot.reason, field: 'turnstile' };
 
@@ -63,7 +63,7 @@ async function register(formData: FormData): Promise<RegisterResult> {
     const path = issue?.path ?? [];
     return { ok: false, message: issue?.message ?? 'ข้อมูลไม่ครบ', field: String(path[0] === 'address' ? path[1] ?? 'line' : path[0] ?? '') };
   }
-  if (!allowSubmission(ip)) return { ok: false, message: 'ส่งข้อมูลบ่อยเกินไป กรุณาลองใหม่ภายหลัง หรือทัก LINE ได้เลย' };
+  if (!(await allowSubmission(ip))) return { ok: false, message: 'ส่งข้อมูลบ่อยเกินไป กรุณาลองใหม่ภายหลัง หรือทัก LINE ได้เลย' };
   const duplicate = await duplicateTaxId(parsed.data.taxId);
   if (duplicate) return { ok: false, message: duplicate.message, hint: duplicate.hint, field: 'taxId' };
   if (await findUserByEmail(parsed.data.email)) return { ok: false, message: 'อีเมลนี้มีบัญชีอยู่แล้ว เข้าสู่ระบบ หรือกด "ลืมรหัสผ่าน"', field: 'email' };

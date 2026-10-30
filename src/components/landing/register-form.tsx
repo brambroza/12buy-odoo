@@ -102,6 +102,12 @@ export function RegisterForm() {
         <label htmlFor="website">Website</label>
         <input id="website" name="website" tabIndex={-1} autoComplete="off" />
       </div>
+      <label className="flex items-start gap-3 rounded-xl border border-[var(--lp-line)] bg-white p-3 text-sm sm:col-span-2 has-[:checked]:border-[var(--lp-accent)]">
+        <input type="checkbox" name="consent" required className="mt-0.5 size-4 shrink-0 accent-[var(--lp-accent)]" aria-invalid={invalid('consent')} />
+        <span>
+          ข้าพเจ้าได้อ่านและยอมรับ <Link href="/privacy" target="_blank" className="text-[var(--lp-accent)] underline">นโยบายความเป็นส่วนตัว</Link> และ <Link href="/terms" target="_blank" className="text-[var(--lp-accent)] underline">เงื่อนไขการใช้งาน</Link> และยินยอมให้บริษัทใช้ข้อมูลข้างต้นเพื่อพิจารณาเปิดบัญชีดีลเลอร์และติดต่อกลับ
+        </span>
+      </label>
       <div className="sm:col-span-2">
         <TurnstileWidget resetKey={failed?.attempt ?? 0} />
       </div>
