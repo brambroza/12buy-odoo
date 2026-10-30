@@ -19,3 +19,4 @@ docs/*.docx
 docs/*.pdf
 docs/~$*
 coverage/
+.artifact-ui/
