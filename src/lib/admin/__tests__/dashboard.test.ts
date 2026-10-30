@@ -128,6 +128,28 @@ describe('creditDues', () => {
   });
 });
 
+describe('buildTasks credit payments reported by dealers', () => {
+  const credits = (uploadedAt: string, status: 'PENDING' | 'VERIFIED' = 'PENDING') => ({ slipFile: null, slipUploadedAt: null, verifiedAt: null, credits: [{ id: 'p', slipFile: 'x-1.jpg', amount: 1500, note: '', uploadedAt, status, reviewedAt: null }] });
+
+  it('lists unchecked transfers as today work, linking to the single order', () => {
+    const tasks = buildTasks({ ...baseTasks, orders: [order({ id: 'k1', ref: 'WEB-K', status: 'INVOICED', payment: credits('2026-10-29T02:30:00Z') })] });
+    const task = tasks.find((t) => t.id === 'credit-payment');
+    expect(task).toMatchObject({ priority: 'today', count: 1, href: '/admin/orders?open=k1' });
+    expect(task?.detail).toContain('WEB-K');
+    expect(task?.detail).toContain('1,500');
+  });
+
+  it('is urgent after 2 hours, counts every pending transfer and ignores checked, cancelled ones', () => {
+    const tasks = buildTasks({ ...baseTasks, orders: [
+      order({ id: 'k1', status: 'INVOICED', payment: credits('2026-10-28T20:00:00Z') }),
+      order({ id: 'k2', status: 'SHIPPED', payment: credits('2026-10-29T02:30:00Z') }),
+      order({ id: 'k3', status: 'INVOICED', payment: credits('2026-10-29T02:30:00Z', 'VERIFIED') }),
+      order({ id: 'k4', status: 'CANCELLED', payment: credits('2026-10-29T02:30:00Z') }),
+    ] });
+    expect(tasks.find((t) => t.id === 'credit-payment')).toMatchObject({ priority: 'urgent', count: 2, href: '/admin/orders?pay=pending' });
+  });
+});
+
 describe('buildTasks credit reminders', () => {
   it('adds an urgent overdue task and a due-soon task linking to the filtered orders', () => {
     const tasks = buildTasks({ ...baseTasks, orders: [

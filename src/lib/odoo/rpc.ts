@@ -21,12 +21,13 @@ const READ_METHODS = new Set([
  * The only writes the web may send: link dealers as partners, set a customer's pricelist,
  * credit limit and delivery method, push confirmed orders (with a coupon code through Odoo's coupon wizard)
  * and make their draft invoice through Odoo's "Create invoice" wizard, publish
- * approved price books as pricelists, create / archive discount-code and coupon programs, and
- * add / rename / publish / archive delivery methods.
+ * approved price books as pricelists, create / archive discount-code and coupon programs,
+ * add / rename / publish / archive delivery methods, and post internal chatter notes (with the
+ * dealer's slip attached) on sale orders and invoices when a credit payment is reported / checked.
  */
 const WRITE_METHODS: Record<string, ReadonlySet<string>> = {
   'res.partner': new Set(['create', 'write']),
-  'sale.order': new Set(['create', 'action_confirm']),
+  'sale.order': new Set(['create', 'action_confirm', 'message_post']),
   'sale.loyalty.coupon.wizard': new Set(['create', 'action_apply']),
   'sale.advance.payment.inv': new Set(['create', 'create_invoices']),
   'product.pricelist': new Set(['create']),
@@ -34,12 +35,22 @@ const WRITE_METHODS: Record<string, ReadonlySet<string>> = {
   'loyalty.program': new Set(['create', 'write']),
   'loyalty.card': new Set(['create']),
   'delivery.carrier': new Set(['create', 'write']),
+  // Chatter notes for dealer credit payments: slip as an attachment, internal note on the SO and its invoice.
+  'ir.attachment': new Set(['create']),
+  'account.move': new Set(['message_post']),
+};
+
+/** Keyword arguments allowed per `model.method` (others are refused before any request). */
+const WRITE_KWARGS: Record<string, ReadonlySet<string>> = {
+  'sale.order.message_post': new Set(['body', 'message_type', 'subtype_xmlid', 'attachment_ids']),
+  'account.move.message_post': new Set(['body', 'message_type', 'subtype_xmlid', 'attachment_ids']),
 };
 
 /** Writes limited to these fields (`model.method` → fields allowed in the values dict, `args[1]`). */
 const WRITE_FIELDS: Record<string, ReadonlySet<string>> = {
   'res.partner.write': new Set(['property_product_pricelist', 'credit_limit', 'use_partner_credit_limit', 'property_delivery_carrier_id']),
   'delivery.carrier.write': new Set(['name', 'sequence', 'is_published', 'active']),
+  'ir.attachment.create': new Set(['name', 'mimetype', 'datas', 'res_model', 'res_id']),
 };
 
 type RpcConfig = { url: string; db: string; username: string; apiKey: string };
@@ -154,10 +165,17 @@ export async function odooWrite<T>(model: string, method: string, args: unknown[
   if (!WRITE_METHODS[model]?.has(method)) throw new Error(`Blocked: '${model}.${method}' is not an allowed write`);
   const allowedFields = WRITE_FIELDS[`${model}.${method}`];
   if (allowedFields) {
-    const values = args[1];
-    const fields = values && typeof values === 'object' ? Object.keys(values) : [];
+    // `write(ids, values)` carries the values second; `create(values | [values])` first.
+    const raw = method === 'create' ? args[0] : args[1];
+    const dicts = (Array.isArray(raw) ? raw : [raw]).filter((v): v is Record<string, unknown> => Boolean(v) && typeof v === 'object');
+    const fields = dicts.flatMap((v) => Object.keys(v));
     const blocked = fields.filter((f) => !allowedFields.has(f));
     if (!fields.length || blocked.length) throw new Error(`Blocked: '${model}.${method}' may not write ${blocked.join(', ') || 'these values'}`);
+  }
+  const allowedKwargs = WRITE_KWARGS[`${model}.${method}`];
+  if (allowedKwargs) {
+    const blocked = Object.keys(kwargs).filter((k) => !allowedKwargs.has(k));
+    if (blocked.length) throw new Error(`Blocked: '${model}.${method}' may not pass ${blocked.join(', ')}`);
   }
   if (!odooWritesEnabled()) throw new Error('Odoo อยู่ในโหมดอ่านอย่างเดียว (ตั้ง ODOO_READ_ONLY=false เพื่อเปิดการส่งข้อมูล)');
   const { db, apiKey } = getConfig();

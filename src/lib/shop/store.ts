@@ -6,7 +6,8 @@
 import { randomUUID } from 'node:crypto';
 import { db } from '@/lib/db/client';
 import { DbError, parseTimestamp, quoteFilterValue, unwrap } from '@/lib/db/rows';
-import type { CartItem, OdooSync, OrderStatus, ProtoOrder } from './types';
+import { canPayCredit } from './credit-payment';
+import type { CartItem, CreditPayment, CreditPaymentOdooLog, OdooSync, OrderStatus, ProtoOrder } from './types';
 import { ORDER_STATUS_FLOW } from './types';
 
 type OrderRow = {
@@ -211,7 +212,45 @@ async function updateIfStatus(order: ProtoOrder, expected: OrderStatus, change: 
 export async function attachSlip(sessionId: string, id: string, slipFile: string): Promise<ProtoOrder | undefined> {
   const order = await getOrder(sessionId, id);
   if (!order || order.status !== 'PENDING' || order.paymentMethod === 'CREDIT') return order;
-  return updateIfStatus(order, 'PENDING', { payment: { slipFile, slipUploadedAt: nowIso(), verifiedAt: null } });
+  return updateIfStatus(order, 'PENDING', { payment: { ...order.payment, slipFile, slipUploadedAt: nowIso(), verifiedAt: null } });
+}
+
+// ---------- credit payments (dealer reports a transfer on a confirmed credit order) ----------
+
+/**
+ * Appends a dealer-reported transfer to a confirmed CREDIT order (slip already stored).
+ * Returns the order with the new payment, or the unchanged order when it cannot be paid (wrong
+ * method/status, or the status moved meanwhile). `sessionId` null = admin on behalf of the dealer.
+ */
+export async function addCreditPayment(sessionId: string | null, id: string, input: { slipFile: string; amount: number; note: string }): Promise<{ order: ProtoOrder; payment: CreditPayment | null } | undefined> {
+  const order = await getOrder(sessionId, id);
+  if (!order) return undefined;
+  if (!canPayCredit(order)) return { order, payment: null };
+  const payment: CreditPayment = { id: randomUUID().replace(/-/g, '').slice(0, 16), slipFile: input.slipFile, amount: input.amount, note: input.note.trim().slice(0, 300), uploadedAt: nowIso(), status: 'PENDING', reviewedAt: null };
+  const updated = await updateIfStatus(order, order.status, { payment: { ...order.payment, credits: [...(order.payment.credits ?? []), payment] } });
+  const stored = updated.payment.credits?.find((p) => p.id === payment.id) ?? null;
+  return { order: updated, payment: stored };
+}
+
+/** Admin marks a reported credit payment as checked (VERIFIED) or not acceptable (REJECTED, with a reason). */
+export async function reviewCreditPayment(id: string, paymentId: string, status: 'VERIFIED' | 'REJECTED', rejectReason = ''): Promise<{ order: ProtoOrder; payment: CreditPayment | null } | undefined> {
+  const order = await getOrder(null, id);
+  if (!order) return undefined;
+  const current = order.payment.credits?.find((p) => p.id === paymentId);
+  if (!current || current.status !== 'PENDING') return { order, payment: null };
+  const reviewed: CreditPayment = { ...current, status, reviewedAt: nowIso(), rejectReason: status === 'REJECTED' ? rejectReason.trim().slice(0, 300) || null : null };
+  const updated = await updateIfStatus(order, order.status, { payment: { ...order.payment, credits: order.payment.credits!.map((p) => (p.id === paymentId ? reviewed : p)) } });
+  const stored = updated.payment.credits?.find((p) => p.id === paymentId) ?? null;
+  return { order: updated, payment: stored && stored.status === status ? stored : null };
+}
+
+/** Records the result of posting the chatter note for a credit payment (success or error) on that payment. */
+export async function setCreditPaymentOdooLog(id: string, paymentId: string, log: CreditPaymentOdooLog): Promise<ProtoOrder | undefined> {
+  const order = await getOrder(null, id);
+  if (!order?.payment.credits?.some((p) => p.id === paymentId)) return order;
+  const credits = order.payment.credits.map((p) => (p.id === paymentId ? { ...p, odoo: log } : p));
+  const row = unwrap(await db().from('ShopOrder').update({ payment: { ...order.payment, credits }, updatedAt: nowIso() }).eq('id', id).select('*').maybeSingle()) as OrderRow | null;
+  return row ? toOrder(row) : order;
 }
 
 /** Credit orders skip the slip; cash orders need a verified slip before confirmation. */

@@ -152,6 +152,38 @@ export type OrderLine = {
 
 export type OrderCoupon = { code: string; programId: number; programName: string; label: string; discount: number };
 
+export type CreditPaymentStatus = 'PENDING' | 'VERIFIED' | 'REJECTED';
+
+export const CREDIT_PAYMENT_STATUS_LABELS: Record<CreditPaymentStatus, string> = { PENDING: 'รอตรวจ', VERIFIED: 'ตรวจแล้ว', REJECTED: 'ไม่ผ่าน' };
+
+/** Note posted to Odoo's chatter (SO and invoice) for one credit payment event; `error` set when it could not be posted. */
+export type CreditPaymentOdooLog = {
+  /** `mail.message` id on the sale order, null when posting failed. */
+  messageId: number | null;
+  /** `mail.message` id on the customer invoice, null when there is no invoice or posting failed. */
+  invoiceMessageId: number | null;
+  error: string | null;
+  at: string;
+};
+
+/**
+ * A transfer the dealer reports against a confirmed CREDIT order (per-order payment from the dealer screen).
+ * Admin checks it; accounting still registers the payment in Odoo, which is what moves the order to PAID.
+ */
+export type CreditPayment = {
+  id: string;
+  slipFile: string;
+  /** Amount the dealer says was transferred (baht). */
+  amount: number;
+  note: string;
+  uploadedAt: string;
+  status: CreditPaymentStatus;
+  reviewedAt: string | null;
+  rejectReason?: string | null;
+  /** Last chatter note for this payment (submitted / verified / rejected). */
+  odoo?: CreditPaymentOdooLog | null;
+};
+
 /** Result of pushing an order to Odoo. MISMATCH = SO created but its total differs from the web total. */
 export type OdooSync = {
   status: 'SYNCED' | 'MISMATCH' | 'FAILED';
@@ -201,8 +233,11 @@ export type ProtoOrder = {
   /** Dealer's own purchase-order number, optional (older orders have none). */
   poRef?: string;
   trackingRef: string | null;
-  /** Bank-transfer slip attached by the dealer and verified by admin before confirmation. */
-  payment: { slipFile: string | null; slipUploadedAt: string | null; verifiedAt: string | null };
+  /**
+   * Bank-transfer slip attached by the dealer and verified by admin before confirmation (cash orders).
+   * `credits`: transfers reported against a confirmed credit order, newest last.
+   */
+  payment: { slipFile: string | null; slipUploadedAt: string | null; verifiedAt: string | null; credits?: CreditPayment[] };
   createdAt: string;
   events: { status: OrderStatus; at: string }[];
   /** Last push to Odoo; absent until the order is confirmed. */

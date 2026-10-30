@@ -2,6 +2,7 @@
  * Numbers and the "to do today" list for the back-office dashboard. Pure functions over data the page
  * loads, so they are easy to test. Dates are bucketed by Thai calendar day (Asia/Bangkok).
  */
+import { pendingCreditPayments } from '@/lib/shop/credit-payment';
 import type { OrderStatus, ProtoOrder } from '@/lib/shop/types';
 
 export const TIME_ZONE = 'Asia/Bangkok';
@@ -172,7 +173,7 @@ const PRIORITY_ORDER: Record<TaskPriority, number> = { urgent: 0, today: 1, soon
 
 /**
  * Builds today's to-do list from what is waiting: slips to check, orders to confirm, Odoo push failures,
- * sign-ups and dealers to approve, price books to approve, password resets, and setup gaps.
+ * credit payments dealers reported, sign-ups and dealers to approve, price books to approve, password resets, and setup gaps.
  * Most urgent first; empty when nothing is waiting.
  */
 export function buildTasks(input: TaskInput): DashboardTask[] {
@@ -183,6 +184,10 @@ export function buildTasks(input: TaskInput): DashboardTask[] {
   const waitingSlip = pending.filter((o) => o.paymentMethod === 'CASH' && !o.payment.slipFile);
   const stale = pending.filter((o) => now - new Date(o.createdAt).getTime() > STALE_MS);
   const odooProblems = input.orders.filter((o) => o.status !== 'CANCELLED' && (o.odoo?.status === 'FAILED' || o.odoo?.status === 'MISMATCH'));
+  // Transfers dealers reported on credit orders (from the order page) that nobody has checked yet.
+  const creditPays = input.orders.filter((o) => o.status !== 'CANCELLED' && pendingCreditPayments(o).length > 0);
+  const creditPayStale = creditPays.some((o) => pendingCreditPayments(o).some((p) => now - new Date(p.uploadedAt).getTime() > STALE_MS));
+  const creditPayTotal = creditPays.reduce((sum, o) => sum + pendingCreditPayments(o).reduce((s, p) => s + p.amount, 0), 0);
   const tasks: DashboardTask[] = [];
   const refs = (list: readonly OrderLike[]) => list.slice(0, 3).map((o) => o.ref).join(', ') + (list.length > 3 ? ` และอีก ${list.length - 3}` : '');
   const one = (list: readonly OrderLike[], fallback: string) => (list.length === 1 ? `/admin/orders?open=${encodeURIComponent(list[0].id)}` : fallback);
@@ -198,6 +203,10 @@ export function buildTasks(input: TaskInput): DashboardTask[] {
   if (readyToConfirm.length) tasks.push({
     id: 'confirm-orders', priority: stale.some((o) => readyToConfirm.includes(o)) ? 'urgent' : 'today', count: readyToConfirm.length, title: 'ยืนยันออเดอร์ (สร้างใบสั่งขายใน Odoo)',
     detail: `${refs(readyToConfirm)} · เครดิตหรือตรวจสลิปแล้ว พร้อมยืนยัน`, href: one(readyToConfirm, '/admin/orders?status=PENDING'), action: 'ยืนยัน',
+  });
+  if (creditPays.length) tasks.push({
+    id: 'credit-payment', priority: creditPayStale ? 'urgent' : 'today', count: creditPays.reduce((n, o) => n + pendingCreditPayments(o).length, 0), title: 'ลูกค้าเครดิตแจ้งโอนชำระ · ตรวจสลิป',
+    detail: `${refs(creditPays)} · รวม ${bahtText.format(creditPayTotal)} · ตรวจเงินเข้าแล้วกด “ตรวจแล้ว” และลงรับชำระใน Odoo`, href: one(creditPays, '/admin/orders?pay=pending'), action: 'ตรวจสลิป',
   });
   const dues = creditDues(input.orders, now);
   const overdue = dues.filter((d) => d.daysLeft < 0);

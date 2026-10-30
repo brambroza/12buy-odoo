@@ -1,6 +1,6 @@
 import Link from 'next/link';
 import type { ReactNode } from 'react';
-import { Ban, CheckCircle2, Eye, FileText, RefreshCw, Truck, UploadCloud, Wallet } from 'lucide-react';
+import { Ban, CheckCircle2, Eye, FileText, RefreshCw, Truck, UploadCloud, Wallet, XCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
@@ -14,11 +14,14 @@ import { uniformCashPercent } from '@/lib/shop/pricing';
 import { baht } from '@/lib/shop/catalog';
 import { canSyncOrder } from '@/lib/shop/odoo-sync';
 import { getPendingOrderCredit } from '@/lib/shop/credit-line';
+import { creditOutstanding, creditPayments, pendingCreditPayments } from '@/lib/shop/credit-payment';
+import { creditPaymentsToResend } from '@/lib/shop/credit-payment-odoo';
+import { formatAmount } from '@/lib/money';
 import type { OrderCreditView } from '@/lib/shop/credit';
 import { countStalePending, isPaymentReady, listAllOrders } from '@/lib/shop/store';
-import { ORDER_STATUS_FLOW, ORDER_STATUS_LABELS, type OdooSync, type OrderStatus, type ProtoOrder } from '@/lib/shop/types';
+import { CREDIT_PAYMENT_STATUS_LABELS, ORDER_STATUS_FLOW, ORDER_STATUS_LABELS, type CreditPayment, type CreditPaymentStatus, type OdooSync, type OrderStatus, type ProtoOrder } from '@/lib/shop/types';
 import { cn } from '@/lib/utils';
-import { adminAdvanceOrderAction, adminCancelOrderAction, adminRefreshStatusesAction, adminSetTrackingAction, adminSyncOrderAction, verifySlipAction } from '../actions';
+import { adminAdvanceOrderAction, adminCancelOrderAction, adminRefreshStatusesAction, adminSetTrackingAction, adminSyncOrderAction, resendCreditPaymentLogAction, reviewCreditPaymentAction, verifySlipAction } from '../actions';
 
 const STYLE: Record<OrderStatus, string> = {
   PENDING: 'bg-amber-500/15 text-amber-700', PREPARING: 'bg-blue-500/15 text-blue-700', SHIPPED: 'bg-violet-500/15 text-violet-700',
@@ -31,7 +34,9 @@ const STATUSES = ['PENDING', ...ORDER_STATUS_FLOW.slice(1), 'CANCELLED'] as Orde
 const CANCEL_CONFIRM = 'ยืนยันยกเลิกออเดอร์นี้? ยกเลิกแล้วย้อนกลับไม่ได้';
 const dateTime = (iso: string) => new Date(iso).toLocaleString('th-TH', { dateStyle: 'short', timeStyle: 'short' });
 
-type Search = { q?: string; status?: string; page?: string; open?: string; error?: string; info?: string; due?: string };
+type Search = { q?: string; status?: string; page?: string; open?: string; error?: string; info?: string; due?: string; pay?: string };
+
+const CREDIT_PAYMENT_STYLE: Record<CreditPaymentStatus, string> = { PENDING: 'bg-amber-500/15 text-amber-700', VERIFIED: 'bg-emerald-500/15 text-emerald-700', REJECTED: 'bg-destructive/15 text-destructive' };
 
 /** `?due=` filter: credit orders with an unpaid invoice overdue, due soon, or either. */
 const DUE_FILTERS = { overdue: 'เลยกำหนดชำระ', soon: 'ใกล้ครบกำหนด', all: 'ครบกำหนดทั้งหมด' } as const;
@@ -75,8 +80,10 @@ function orderFlow(o: ProtoOrder) {
   return { linked, next, cancellable: o.status === 'PENDING' || o.status === 'PREPARING', blocked: o.status === 'PENDING' && !isPaymentReady(o) };
 }
 
-/** Slip state of a pending cash order as a short badge, or null when not relevant. */
+/** Slip state of a pending cash order, or of transfers reported on a credit order, as a short badge; null when not relevant. */
 function SlipBadge({ order: o }: { order: ProtoOrder }) {
+  const creditPending = pendingCreditPayments(o).length;
+  if (creditPending) return <Badge variant="outline" className="border-transparent bg-amber-500/15 text-amber-700">แจ้งโอน {creditPending} รายการ รอตรวจ</Badge>;
   if (o.status !== 'PENDING' || o.paymentMethod !== 'CASH') return null;
   if (!o.payment.slipFile) return <Badge variant="outline" className="border-transparent bg-muted text-muted-foreground">รอสลิป</Badge>;
   if (!o.payment.verifiedAt) return <Badge variant="outline" className="border-transparent bg-amber-500/15 text-amber-700">รอตรวจสลิป</Badge>;
@@ -104,14 +111,17 @@ export default async function AdminOrdersPage({ searchParams }: { searchParams: 
   const dues = creditDues(all);
   const dueIds = (filter: DueFilter) => new Set(dues.filter((d) => filter === 'all' || (filter === 'overdue') === (d.daysLeft < 0)).map((d) => d.orderId));
   const dueMatch = due ? dueIds(due) : null;
+  // `?pay=pending`: credit orders with a dealer-reported transfer nobody has checked yet.
+  const payPending = params.pay === 'pending';
+  const payPendingCount = all.filter((o) => o.status !== 'CANCELLED' && pendingCreditPayments(o).length > 0).length;
   const q = searchText(params.q);
-  const orders = all.filter((o) => (!status || o.status === status) && (!dueMatch || dueMatch.has(o.id))
+  const orders = all.filter((o) => (!status || o.status === status) && (!dueMatch || dueMatch.has(o.id)) && (!payPending || pendingCreditPayments(o).length > 0)
     && matchesSearch(q, o.ref, o.dealerName, o.poRef, o.carrier, o.trackingRef, o.odoo?.saleOrderName, ...o.lines.flatMap((l) => [l.code, l.size, l.name])));
   const pageRows = paginate(orders, params.page);
 
   /** List URL with the current filters; `changes` overrides params such as `status`, `open` or `page`. */
   const href = (changes: Record<string, string | undefined> = {}) =>
-    listHref('/admin/orders', { q: params.q, status, due, page: params.page }, changes);
+    listHref('/admin/orders', { q: params.q, status, due, pay: payPending ? 'pending' : undefined, page: params.page }, changes);
   const filterHref = (next: OrderStatus | undefined) => href({ status: next, page: undefined });
   const closeHref = href();
   const openOrder = params.open ? all.find((o) => o.id === params.open) : undefined;
@@ -143,9 +153,10 @@ export default async function AdminOrdersPage({ searchParams }: { searchParams: 
           return (n > 0 || due === f) && <FilterChip key={f} href={href({ due: due === f ? undefined : f, page: undefined })} active={due === f}>{DUE_FILTERS[f]} {n}</FilterChip>;
         })}
         {due === 'all' && <FilterChip href={href({ due: undefined, page: undefined })} active>{DUE_FILTERS.all} {dueIds('all').size}</FilterChip>}
+        {(payPendingCount > 0 || payPending) && <FilterChip href={href({ pay: payPending ? undefined : 'pending', page: undefined })} active={payPending}>แจ้งโอนเครดิต รอตรวจ {payPendingCount}</FilterChip>}
         <div className="w-full sm:ml-auto sm:w-auto">
           <ListSearch action="/admin/orders" q={params.q} placeholder="ค้นเลขออเดอร์ / ร้าน / PO / ขนาดยาง / SO" keep={{ status, due }}
-            clearHref={params.q ? listHref('/admin/orders', { status }) : undefined} />
+            clearHref={params.q ? listHref('/admin/orders', { status, due, pay: payPending ? 'pending' : undefined }) : undefined} />
         </div>
       </div>
 
@@ -301,10 +312,11 @@ function OrderDrawer({ order: o, closeHref, notice }: { order: ProtoOrder; close
 
       {o.status === 'PENDING' && o.paymentMethod === 'CREDIT' && (
         <section className="space-y-3 rounded-lg bg-sky-500/10 p-3 text-xs text-sky-900">
-         
           <CreditPanel order={o} />
         </section>
       )}
+
+      {o.paymentMethod === 'CREDIT' && creditPayments(o).length > 0 && <CreditPaymentsSection order={o} />}
 
       <section className="flex flex-wrap items-center gap-2">
         {next && (
@@ -354,6 +366,83 @@ function OrderDrawer({ order: o, closeHref, notice }: { order: ProtoOrder; close
         </section>
       )}
     </UrlDrawer>
+  );
+}
+
+/**
+ * Transfers the dealer reported on a credit order: slip, amount, remark, review buttons for pending ones,
+ * and whether the chatter note reached Odoo (with a resend button when it did not).
+ */
+function CreditPaymentsSection({ order: o }: { order: ProtoOrder }) {
+  const payments = [...creditPayments(o)].reverse();
+  const outstanding = creditOutstanding(o);
+  const toResend = creditPaymentsToResend(o);
+  const base = process.env.ODOO_URL;
+  return (
+    <section className="rounded-lg border border-sky-500/30">
+      <h2 className="flex flex-wrap items-center justify-between gap-2 border-b border-sky-500/20 bg-sky-500/10 px-3 py-2 text-sm font-semibold">
+        <span>ดีลเลอร์แจ้งโอนชำระ (เครดิต)</span>
+        <span className="text-xs font-normal text-muted-foreground">ค้างชำระ {o.status === 'PAID' ? '0' : formatAmount(outstanding)} บาท{o.odoo?.progress?.invoices.length ? ' (จากใบแจ้งหนี้ Odoo)' : ''}</span>
+      </h2>
+      <ul className="divide-y divide-border">
+        {payments.map((p) => <CreditPaymentRow key={p.id} order={o} payment={p} odooBase={base} />)}
+      </ul>
+      {toResend.length > 0 && (
+        <form action={resendCreditPaymentLogAction} className="flex flex-wrap items-center justify-between gap-2 border-t border-border bg-amber-500/10 px-3 py-2 text-xs text-amber-800">
+          <input type="hidden" name="orderId" value={o.id} />
+          <span>{toResend.length} รายการยังไม่ได้บันทึกเข้า Odoo chatter</span>
+          <Button type="submit" size="sm" variant="outline"><UploadCloud /> ส่ง log เข้า Odoo อีกครั้ง</Button>
+        </form>
+      )}
+      {!o.odoo?.saleOrderId && <p className="border-t border-border px-3 py-2 text-xs text-muted-foreground">ออเดอร์นี้ยังไม่มี SO ใน Odoo จึงบันทึก chatter ไม่ได้</p>}
+    </section>
+  );
+}
+
+/** One reported transfer with its slip, amount check against what is owed, review forms and Odoo note state. */
+function CreditPaymentRow({ order: o, payment: p, odooBase }: { order: ProtoOrder; payment: CreditPayment; odooBase?: string }) {
+  const outstanding = creditOutstanding(o);
+  const over = p.status === 'PENDING' && outstanding > 0 && p.amount > outstanding + 0.005;
+  return (
+    <li className="flex flex-wrap items-start gap-3 p-3 text-xs">
+      <a href={`/api/proto/uploads/${p.slipFile}`} target="_blank" rel="noreferrer" className="shrink-0">
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img src={`/api/proto/uploads/${p.slipFile}`} alt="สลิป" className="h-32 rounded border border-border object-contain" />
+      </a>
+      <div className="min-w-0 flex-1 space-y-1.5">
+        <p className="flex flex-wrap items-center gap-2">
+          <b className="text-sm">{formatAmount(p.amount)} บาท</b>
+          <Badge variant="outline" className={cn('border-transparent', CREDIT_PAYMENT_STYLE[p.status])}>{CREDIT_PAYMENT_STATUS_LABELS[p.status]}</Badge>
+          {over && <span className="text-amber-700">ยอดแจ้งมากกว่ายอดค้าง {formatAmount(outstanding)} บาท</span>}
+        </p>
+        <p className="text-muted-foreground">แจ้งเมื่อ {dateTime(p.uploadedAt)}{p.reviewedAt ? ` · ตรวจเมื่อ ${dateTime(p.reviewedAt)}` : ''}</p>
+        {p.note && <p>หมายเหตุจากร้าน: {p.note}</p>}
+        {p.status === 'REJECTED' && p.rejectReason && <p className="text-destructive">เหตุผล: {p.rejectReason}</p>}
+        <p className={cn(p.odoo?.error ? 'text-destructive' : 'text-muted-foreground')}>
+          {!p.odoo ? 'ยังไม่ได้บันทึกเข้า Odoo' : p.odoo.error ? `บันทึกเข้า Odoo ไม่สำเร็จ: ${p.odoo.error}` : (
+            <>บันทึกเข้า Odoo chatter แล้ว {dateTime(p.odoo.at)}{odooBase && o.odoo?.saleOrderId ? <> · <a href={`${odooBase}/odoo/sales/${o.odoo.saleOrderId}`} target="_blank" rel="noreferrer" className="underline">เปิด SO</a></> : null}{p.odoo.invoiceMessageId && odooBase && o.odoo?.invoice ? <> · <a href={`${odooBase}/odoo/account.move/${o.odoo.invoice.id}`} target="_blank" rel="noreferrer" className="underline">ใบแจ้งหนี้</a></> : null}</>
+          )}
+        </p>
+        {p.status === 'PENDING' && (
+          <div className="flex flex-wrap items-center gap-2 pt-1">
+            <form action={reviewCreditPaymentAction}>
+              <input type="hidden" name="orderId" value={o.id} />
+              <input type="hidden" name="paymentId" value={p.id} />
+              <input type="hidden" name="decision" value="VERIFIED" />
+              <Button type="submit" size="sm"><CheckCircle2 /> ตรวจแล้ว เงินเข้าถูกต้อง</Button>
+            </form>
+            <form action={reviewCreditPaymentAction} className="flex items-center gap-1">
+              <input type="hidden" name="orderId" value={o.id} />
+              <input type="hidden" name="paymentId" value={p.id} />
+              <input type="hidden" name="decision" value="REJECTED" />
+              <Input name="reason" placeholder="เหตุผลที่ไม่ผ่าน (จำเป็น)" required className="h-8 w-44" />
+              <IconSubmit label="ปฏิเสธสลิป" tone="danger" confirm={`${o.ref}: ปฏิเสธสลิปรายการนี้? ร้านจะต้องส่งใหม่`}><XCircle /></IconSubmit>
+            </form>
+          </div>
+        )}
+        {p.status === 'VERIFIED' && o.status !== 'PAID' && <p className="text-emerald-700">บัญชีลงรับชำระ (Register Payment) ในใบแจ้งหนี้ Odoo แล้วสถานะจะเป็น “ชำระแล้ว” อัตโนมัติ</p>}
+      </div>
+    </li>
   );
 }
 

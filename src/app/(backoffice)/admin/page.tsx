@@ -23,7 +23,7 @@ const PRIORITY: Record<TaskPriority, { label: string; dot: string; badge: string
 };
 const TASK_ICON: Record<string, typeof Inbox> = {
   'odoo-sync': AlertTriangle, 'check-slip': Wallet, 'confirm-orders': CheckCircle2, leads: UserPlus, dealers: Store,
-  'price-books': Tags, 'reset-requests': Clock, carriers: AlertTriangle, 'waiting-slip': Clock, 'credit-overdue': CalendarClock, 'credit-due-soon': CalendarClock,
+  'price-books': Tags, 'reset-requests': Clock, carriers: AlertTriangle, 'waiting-slip': Clock, 'credit-overdue': CalendarClock, 'credit-due-soon': CalendarClock, 'credit-payment': Wallet,
 };
 const STATUS_FLOW: OrderStatus[] = ['PENDING', 'PREPARING', 'SHIPPED', 'INVOICED', 'PAID', 'CANCELLED'];
 const STATUS_BAR: Record<OrderStatus, string> = {

@@ -3,6 +3,7 @@ import { ChevronRight } from 'lucide-react';
 import { baht } from '@/lib/shop/catalog';
 import { getSessionId } from '@/lib/shop/session';
 import { listOrders } from '@/lib/shop/store';
+import { canPayCredit, creditPayments, pendingCreditPayments } from '@/lib/shop/credit-payment';
 import { ORDER_STATUS_LABELS } from '@/lib/shop/types';
 import { cn } from '@/lib/utils';
 
@@ -34,6 +35,11 @@ export default async function OrdersPage({ searchParams }: { searchParams: Promi
                 <span className="font-semibold">{order.ref}</span>
                 <span className={cn('rounded-full px-2 py-0.5 text-xs font-medium', STATUS_STYLE[order.status])}>{ORDER_STATUS_LABELS[order.status]}</span>
                 {order.status === 'PENDING' && order.paymentMethod === 'CASH' && !order.payment.slipFile && <span className="rounded-full bg-destructive/10 px-2 py-0.5 text-xs font-medium text-destructive">รอแนบสลิป</span>}
+                {pendingCreditPayments(order).length > 0
+                  ? <span className="rounded-full bg-amber-500/15 px-2 py-0.5 text-xs font-medium text-amber-700 dark:text-amber-400">แจ้งโอนแล้ว รอตรวจ</span>
+                  : creditPayments(order).some((p) => p.status === 'REJECTED') && canPayCredit(order)
+                    ? <span className="rounded-full bg-destructive/10 px-2 py-0.5 text-xs font-medium text-destructive">สลิปไม่ผ่าน ส่งใหม่</span>
+                    : canPayCredit(order) && <span className="rounded-full bg-sky-500/15 px-2 py-0.5 text-xs font-medium text-sky-700 dark:text-sky-400">ชำระได้</span>}
               </div>
               <p className="text-xs text-muted-foreground">
                 {new Date(order.createdAt).toLocaleDateString('th-TH', { dateStyle: 'medium' })} · {order.lines.reduce((s, l) => s + l.qty, 0)} เส้น · {baht(order.total)}

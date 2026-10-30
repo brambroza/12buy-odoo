@@ -49,6 +49,17 @@ describe('odooWrite guard', () => {
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
+  it('limits chatter notes to internal message_post kwargs and attachment fields', async () => {
+    vi.stubEnv('ODOO_READ_ONLY', 'false');
+    await expect(odooWrite('sale.order', 'message_post', [[1]], { body: 'x', partner_ids: [2] })).rejects.toThrow('may not pass partner_ids');
+    await expect(odooWrite('account.move', 'message_post', [[1]], { body: 'x', subtype_xmlid: 'mail.mt_comment', email_from: 'a@b' })).rejects.toThrow('may not pass email_from');
+    await expect(odooWrite('ir.attachment', 'create', [[{ name: 'a', datas: 'b', res_model: 'sale.order', res_id: 1, public: true }]])).rejects.toThrow('may not write public');
+    await expect(odooWrite('ir.attachment', 'write', [[1], { name: 'a' }])).rejects.toThrow('not an allowed write');
+    await expect(odooWrite('ir.attachment', 'unlink', [[1]])).rejects.toThrow('not an allowed write');
+    await expect(odooWrite('account.move', 'write', [[1], { name: 'a' }])).rejects.toThrow('not an allowed write');
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
   it('lets delivery.carrier.write touch only name, order, publish and active, and never unlink', async () => {
     vi.stubEnv('ODOO_READ_ONLY', 'false');
     await expect(odooWrite('delivery.carrier', 'write', [[1], { fixed_price: 50 }])).rejects.toThrow('may not write fixed_price');

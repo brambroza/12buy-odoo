@@ -4,6 +4,9 @@ import { ChevronLeft, RotateCcw } from 'lucide-react';
 import { BankAccounts } from '@/components/shop/bank-accounts';
 import { OrderTimeline } from '@/components/shop/order-timeline';
 import { SlipUpload } from '@/components/shop/slip-upload';
+import { CreditPaymentForm } from '@/components/shop/credit-payment-form';
+import { Badge } from '@/components/ui/badge';
+import { canPayCredit, creditOutstanding, creditPayments, creditPendingAmount } from '@/lib/shop/credit-payment';
 import { CancelOrderButton } from '@/components/shop/cancel-order-button';
 import { getCurrentUser } from '@/lib/auth/session';
 import { isBackofficeRole, type Role } from '@/lib/auth/roles';
@@ -14,18 +17,31 @@ import { getSessionId } from '@/lib/shop/session';
 import { getOrder } from '@/lib/shop/store';
 import { refreshIfStale } from '@/lib/shop/status-sync';
 import { billTotals, uniformCashPercent, withCoupon } from '@/lib/shop/pricing';
-import { ORDER_STATUS_FLOW, ORDER_STATUS_LABELS, PAYMENT_METHOD_LABELS } from '@/lib/shop/types';
-import { advanceOrderAction, cancelOrderAction, reorderAction, uploadSlipAction } from '../../actions';
+import { CREDIT_PAYMENT_STATUS_LABELS, ORDER_STATUS_FLOW, ORDER_STATUS_LABELS, PAYMENT_METHOD_LABELS, type CreditPaymentStatus } from '@/lib/shop/types';
+import { cn } from '@/lib/utils';
+import { advanceOrderAction, cancelOrderAction, reorderAction, submitCreditPaymentAction, uploadSlipAction } from '../../actions';
+
+const CREDIT_PAYMENT_STYLE: Record<CreditPaymentStatus, string> = {
+  PENDING: 'bg-amber-500/15 text-amber-700 dark:text-amber-400',
+  VERIFIED: 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-400',
+  REJECTED: 'bg-destructive/15 text-destructive',
+};
+const dateTime = (iso: string) => new Date(iso).toLocaleString('th-TH', { dateStyle: 'short', timeStyle: 'short' });
 
 /** Order detail with status timeline, lines, and demo controls. */
-export default async function OrderDetailPage({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: Promise<{ placed?: string; slip?: string; error?: string }> }) {
-  const [{ id }, { placed, slip, error }] = await Promise.all([params, searchParams]);
+export default async function OrderDetailPage({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: Promise<{ placed?: string; slip?: string; paid?: string; error?: string }> }) {
+  const [{ id }, { placed, slip, paid, error }] = await Promise.all([params, searchParams]);
   const sid = await getSessionId();
   const found = await getOrder(sid, id);
   if (!found) notFound();
   // Delivery/invoice/payment status comes from Odoo; refresh it when the last check is a few minutes old.
   const order = await refreshIfStale(found);
-  const bank = order.status === 'PENDING' && order.paymentMethod === 'CASH' && !order.payment.verifiedAt ? await getWireTransferAccounts() : null;
+  // Credit dealers pay per order from this page once sales confirmed it; cash orders show the bank list until the slip is checked.
+  const payCredit = canPayCredit(order);
+  const bank = (order.status === 'PENDING' && order.paymentMethod === 'CASH' && !order.payment.verifiedAt) || payCredit ? await getWireTransferAccounts() : null;
+  const payments = creditPayments(order);
+  const outstanding = payCredit ? creditOutstanding(order) : 0;
+  const pendingAmount = creditPendingAmount(order);
   const nextStatus = ORDER_STATUS_FLOW[ORDER_STATUS_FLOW.indexOf(order.status) + 1];
   // Demo status buttons: back-office users only, and never unless SHOP_DEMO_CONTROLS=true.
   // Orders from before per-product VAT carry no rate: their prices were VAT-included 7% (Odoo tax "7% (Inc)").
@@ -69,6 +85,54 @@ export default async function OrderDetailPage({ params, searchParams }: { params
           )}
           {slip && <p className="mt-2 text-xs text-emerald-700">แนบสลิปเรียบร้อย</p>}
           {error && <p className="mt-2 text-xs text-destructive">{error}</p>}
+        </section>
+      )}
+
+      {(payCredit || payments.length > 0) && (
+        <section id="credit-payment" className="rounded-xl border border-sky-500/30 bg-sky-500/5 p-4">
+          <h2 className="text-sm font-semibold">ชำระเงิน (ออเดอร์เครดิต)</h2>
+          {payCredit ? (
+            <p className="mt-1 text-sm text-muted-foreground">
+              ยอดค้างชำระ <span className="font-bold text-foreground">{baht(outstanding)}</span>
+              {pendingAmount > 0 && <> · แจ้งโอนแล้ว รอตรวจ <span className="font-medium text-amber-700 dark:text-amber-400">{baht(pendingAmount)}</span></>}
+              {order.odoo?.progress?.invoices.some((inv) => inv.amountResidual > 0 && inv.dueDate) && (
+                <> · ครบกำหนด {new Date(order.odoo.progress.invoices.find((inv) => inv.amountResidual > 0 && inv.dueDate)!.dueDate!).toLocaleDateString('th-TH', { dateStyle: 'medium' })}</>
+              )}
+            </p>
+          ) : (
+            <p className="mt-1 text-sm text-muted-foreground">{order.status === 'PAID' ? 'ชำระครบแล้ว ขอบคุณค่ะ' : 'ประวัติการแจ้งโอนของออเดอร์นี้'}</p>
+          )}
+          {paid && <p className="mt-2 rounded-lg bg-emerald-500/10 px-3 py-2 text-sm text-emerald-700 dark:text-emerald-400">แจ้งโอนเรียบร้อย ฝ่ายบัญชีตรวจเงินเข้าแล้วจะอัปเดตสถานะเป็น “ชำระแล้ว”</p>}
+          {error && !payCredit && <p className="mt-2 text-xs text-destructive">{error}</p>}
+          {payments.length > 0 && (
+            <ul className="mt-3 divide-y divide-border rounded-lg border border-border bg-card">
+              {[...payments].reverse().map((p) => (
+                <li key={p.id} className="flex items-start gap-3 p-3 text-sm">
+                  <a href={`/api/proto/uploads/${p.slipFile}`} target="_blank" rel="noreferrer" className="shrink-0">
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img src={`/api/proto/uploads/${p.slipFile}`} alt="สลิป" className="h-16 w-12 rounded border border-border object-cover" />
+                  </a>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="font-semibold">{baht(p.amount)}</span>
+                      <Badge variant="outline" className={cn('border-transparent', CREDIT_PAYMENT_STYLE[p.status])}>{CREDIT_PAYMENT_STATUS_LABELS[p.status]}</Badge>
+                    </div>
+                    <p className="text-xs text-muted-foreground">แจ้งเมื่อ {dateTime(p.uploadedAt)}{p.reviewedAt ? ` · ตรวจเมื่อ ${dateTime(p.reviewedAt)}` : ''}</p>
+                    {p.note && <p className="text-xs text-muted-foreground">หมายเหตุ: {p.note}</p>}
+                    {p.status === 'REJECTED' && <p className="text-xs text-destructive">ไม่ผ่าน{p.rejectReason ? `: ${p.rejectReason}` : ''} · ส่งสลิปใหม่ด้านล่าง</p>}
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
+          {payCredit && (
+            <div className="mt-3 border-t border-sky-500/20 pt-3">
+              {bank && <BankAccounts accounts={bank.accounts} error={bank.error} />}
+              <h3 className="mb-2 mt-3 text-sm font-semibold">แจ้งโอนชำระ</h3>
+              <CreditPaymentForm orderId={order.id} outstanding={outstanding} action={submitCreditPaymentAction} />
+              {error && <p className="mt-2 text-xs text-destructive">{error}</p>}
+            </div>
+          )}
         </section>
       )}
 

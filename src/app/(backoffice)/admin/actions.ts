@@ -13,6 +13,7 @@ import { flash } from '@/lib/flash';
 import { returnUrl } from '@/lib/admin/return-url';
 import { requireAdmin, requireBackoffice } from '@/lib/auth/session';
 import { canSyncOrder, syncOrderToOdoo } from '@/lib/shop/odoo-sync';
+import { creditPaymentsToResend, logCreditPaymentToOdoo } from '@/lib/shop/credit-payment-odoo';
 import * as shopStore from '@/lib/shop/store';
 import { refreshOrderStatuses } from '@/lib/shop/status-sync';
 import { formatAmount } from '@/lib/money';
@@ -404,6 +405,45 @@ export async function adminSyncOrderAction(formData: FormData) {
   if (failure) redirect(await back('/admin/orders', { error: failure }));
   const sent = await shopStore.getOrder(null, order.id);
   await flash('ส่งออเดอร์เข้า Odoo สำเร็จ', { icon: 'sync', description: `${order.ref}${sent ? odooSummary(sent) : ''}` });
+}
+
+/**
+ * Admin checks a transfer a dealer reported on a credit order: VERIFIED (money arrived, amount right) or
+ * REJECTED with a reason (the dealer sees it and sends a new slip). Either way a note goes to the Odoo chatter.
+ * Verifying does not mark the order PAID: accounting registers the payment in Odoo and the status sync follows.
+ */
+export async function reviewCreditPaymentAction(formData: FormData) {
+  const user = await requireBackoffice();
+  const parsed = z.object({ orderId: z.string().min(1), paymentId: z.string().min(1), decision: z.enum(['VERIFIED', 'REJECTED']), reason: z.string().trim().max(300).optional().default('') })
+    .safeParse({ orderId: formData.get('orderId'), paymentId: formData.get('paymentId'), decision: formData.get('decision'), reason: formData.get('reason') ?? '' });
+  if (!parsed.success) redirect(await back('/admin/orders', { error: 'ข้อมูลไม่ครบ' }));
+  const { orderId, paymentId, decision, reason } = parsed.data;
+  if (decision === 'REJECTED' && !reason) redirect(await back('/admin/orders', { error: 'ระบุเหตุผลที่สลิปไม่ผ่าน เพื่อให้ร้านแก้ไขได้' }));
+  const result = await shopStore.reviewCreditPayment(orderId, paymentId, decision, reason);
+  if (!result?.payment) redirect(await back('/admin/orders', { error: 'รายการนี้ถูกตรวจไปแล้วหรือไม่พบ' }));
+  const log = result.order.odoo?.saleOrderId ? await logCreditPaymentToOdoo(result.order, result.payment, { reviewer: user.name ?? user.email }) : null;
+  revalidateAdmin();
+  const odooNote = !log ? ' · ยังไม่มี SO ใน Odoo จึงไม่ได้บันทึก' : log.error ? ` · บันทึกเข้า Odoo ไม่สำเร็จ: ${log.error}` : ' · บันทึกเข้า Odoo แล้ว';
+  await flash(decision === 'VERIFIED' ? 'ตรวจสลิปชำระเครดิตแล้ว' : 'ปฏิเสธสลิปแล้ว', {
+    type: log?.error ? 'warning' : decision === 'VERIFIED' ? 'success' : 'warning', icon: decision === 'VERIFIED' ? 'check' : 'reject',
+    description: `${result.order.ref} · ${formatAmount(result.payment.amount)} บาท${decision === 'VERIFIED' ? ' · บัญชีลงรับชำระในใบแจ้งหนี้ Odoo' : ''}${odooNote}`,
+  });
+}
+
+/** Resends the chatter note for every credit payment of an order whose last note failed. */
+export async function resendCreditPaymentLogAction(formData: FormData) {
+  await requireBackoffice();
+  const order = await shopStore.getOrder(null, String(formData.get('orderId') ?? ''));
+  if (!order) redirect(await back('/admin/orders'));
+  const targets = creditPaymentsToResend(order);
+  const errors: string[] = [];
+  for (const payment of targets) {
+    const log = await logCreditPaymentToOdoo(order, payment);
+    if (log.error) errors.push(log.error);
+  }
+  revalidateAdmin();
+  if (errors.length) redirect(await back('/admin/orders', { error: `${order.ref}: บันทึกเข้า Odoo ไม่สำเร็จ · ${errors[0]}` }));
+  await flash('บันทึกการชำระเข้า Odoo แล้ว', { icon: 'sync', description: `${order.ref} · ${targets.length} รายการ` });
 }
 
 export async function verifySlipAction(formData: FormData) {

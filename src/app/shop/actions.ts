@@ -20,6 +20,8 @@ import { createUser, isUniqueViolation } from '@/lib/auth/users';
 import { generateTempPassword } from '@/lib/auth/password';
 import { audit } from '@/lib/auth/audit';
 import { deleteAvatar, deleteSlip, saveAvatar, saveSlip } from '@/lib/shop/uploads';
+import { canPayCredit, creditOutstanding, parseCreditAmount } from '@/lib/shop/credit-payment';
+import { logCreditPaymentToOdoo } from '@/lib/shop/credit-payment-odoo';
 import { addressFromForm, shippingSchema, thaiAddressSchema } from '@/lib/shop/shipping';
 import { formatThaiAddress } from '@/lib/thai-address';
 import { updateDealer } from '@/lib/dealers/repo';
@@ -372,6 +374,41 @@ export async function uploadSlipAction(formData: FormData) {
   revalidatePath('/admin/orders');
   await flash('แนบสลิปเรียบร้อย', { icon: 'upload', description: `${order.ref} · รอแอดมินตรวจสอบการโอน` });
   redirect(`/shop/orders/${id}?slip=1`);
+}
+
+/**
+ * Dealer reports a transfer against a confirmed credit order: stores the slip, appends the payment,
+ * then posts a chatter note (slip attached) on the SO and invoice in Odoo. The admin gets it as a to-do.
+ * The Odoo note failing (read-only / down) does not fail the report; the admin can resend it.
+ */
+export async function submitCreditPaymentAction(formData: FormData) {
+  const id = String(formData.get('orderId') ?? '');
+  const sid = await ensureSessionId();
+  const order = await store.getOrder(sid, id);
+  if (!order) redirect('/shop/orders');
+  const failUrl = (message: string) => `/shop/orders/${id}?error=${encodeURIComponent(message)}`;
+  if (!canPayCredit(order)) redirect(failUrl('ออเดอร์นี้แจ้งโอนไม่ได้ (ต้องเป็นออเดอร์เครดิตที่ยืนยันแล้วและยังไม่ชำระ)'));
+  const amount = parseCreditAmount(formData.get('amount'));
+  if (!amount.ok) redirect(failUrl(amount.reason));
+  const note = String(formData.get('note') ?? '').trim().slice(0, 300);
+  const file = formData.get('slip');
+  if (!(file instanceof File) || file.size === 0) redirect(failUrl('แนบสลิปโอนเงินก่อนแจ้งโอน'));
+  const saved = await saveSlip(id, file);
+  if (!saved.ok) redirect(failUrl(`สลิป: ${saved.reason}`));
+  const outstanding = creditOutstanding(order);
+  const added = await store.addCreditPayment(sid, id, { slipFile: saved.name, amount: amount.amount, note });
+  if (!added?.payment) {
+    await deleteSlip(saved.name);
+    redirect(failUrl('ออเดอร์นี้แจ้งโอนไม่ได้แล้ว (สถานะเปลี่ยนไป) ติดต่อฝ่ายขาย'));
+  }
+  const log = await logCreditPaymentToOdoo(added.order, added.payment, { outstanding });
+  revalidatePath(`/shop/orders/${id}`);
+  revalidatePath('/admin', 'layout');
+  await flash('แจ้งโอนชำระแล้ว', {
+    icon: 'upload',
+    description: `${order.ref} · ${baht(amount.amount)} · ฝ่ายบัญชีตรวจเงินเข้าแล้วจะอัปเดตสถานะ${log.error ? '' : ' · บันทึกเข้า Odoo แล้ว'}`,
+  });
+  redirect(`/shop/orders/${id}?paid=1`);
 }
 
 export type StaffResult = { ok: true; message: string; email: string; tempPassword: string } | { ok: false; message: string } | null;

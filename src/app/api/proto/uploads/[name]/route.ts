@@ -4,10 +4,11 @@ import { getCurrentUser } from '@/lib/auth/session';
 import { isBackofficeRole, type Role } from '@/lib/auth/roles';
 import { dealerScopeKey } from '@/lib/shop/dealer';
 import * as store from '@/lib/shop/store';
+import { orderSlipFiles } from '@/lib/shop/credit-payment';
 
 /**
  * Serves prototype slip images to back-office staff, or to the dealer whose order
- * the slip is attached to. File names are strictly validated in `readSlip`.
+ * the slip is attached to (cash slip or a credit payment slip). File names are strictly validated in `readSlip`.
  */
 export async function GET(_request: Request, { params }: { params: Promise<{ name: string }> }) {
   const { name } = await params;
@@ -16,7 +17,7 @@ export async function GET(_request: Request, { params }: { params: Promise<{ nam
   if (!isBackofficeRole(user.role as Role)) {
     const scope = await dealerScopeKey();
     const order = scope ? await store.getOrder(scope, name.split('-')[0]) : undefined;
-    if (order?.payment.slipFile !== name) return new NextResponse('not found', { status: 404 });
+    if (!order || !orderSlipFiles(order).includes(name)) return new NextResponse('not found', { status: 404 });
   }
   const slip = await readSlip(name);
   if (!slip) return new NextResponse('not found', { status: 404 });

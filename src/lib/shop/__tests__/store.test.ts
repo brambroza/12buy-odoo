@@ -149,6 +149,34 @@ describe('orders', () => {
     expect(store.isPaymentReady((await store.verifySlip(cash.id))!)).toBe(true);
   });
 
+  it('records dealer-reported credit payments on confirmed credit orders and lets the admin review them once', async () => {
+    const credit = await placeOrder({ ...orderInput(), paymentMethod: 'CREDIT' as never });
+    // Not confirmed yet: nothing is added.
+    expect((await store.addCreditPayment('A', credit.id, { slipFile: 'abc-1.jpg', amount: 1000, note: '' }))?.payment).toBeNull();
+    await store.advanceOrder(null, credit.id);
+    const added = await store.addCreditPayment('A', credit.id, { slipFile: 'abc-1.jpg', amount: 1000, note: ' งวดแรก ' });
+    expect(added?.payment).toMatchObject({ slipFile: 'abc-1.jpg', amount: 1000, note: 'งวดแรก', status: 'PENDING', reviewedAt: null });
+    const second = await store.addCreditPayment('A', credit.id, { slipFile: 'abc-2.jpg', amount: 500, note: '' });
+    expect(second?.order.payment.credits?.map((p) => p.slipFile)).toEqual(['abc-1.jpg', 'abc-2.jpg']);
+    expect(await store.addCreditPayment('B', credit.id, { slipFile: 'x-1.jpg', amount: 1, note: '' })).toBeUndefined();
+
+    const id = added!.payment!.id;
+    const log = { messageId: 11, invoiceMessageId: null, error: null, at: '2026-10-30T00:00:00.000Z' };
+    expect((await store.setCreditPaymentOdooLog(credit.id, id, log))?.payment.credits?.[0].odoo).toEqual(log);
+    const verified = await store.reviewCreditPayment(credit.id, id, 'VERIFIED');
+    expect(verified?.payment).toMatchObject({ id, status: 'VERIFIED', rejectReason: null, odoo: log });
+    expect(verified?.payment?.reviewedAt).toBeTruthy();
+    // Already reviewed: no second decision.
+    expect((await store.reviewCreditPayment(credit.id, id, 'REJECTED', 'x'))?.payment).toBeNull();
+    const rejected = await store.reviewCreditPayment(credit.id, second!.payment!.id, 'REJECTED', 'ยอดไม่ตรง');
+    expect(rejected?.payment).toMatchObject({ status: 'REJECTED', rejectReason: 'ยอดไม่ตรง' });
+    expect((await store.reviewCreditPayment(credit.id, 'nope', 'VERIFIED'))?.payment).toBeNull();
+
+    const cash = await placeOrder();
+    await store.advanceOrder(null, cash.id);
+    expect((await store.addCreditPayment('A', cash.id, { slipFile: 'abc-3.jpg', amount: 1, note: '' }))?.payment).toBeNull();
+  });
+
   it('only cancels pending orders', async () => {
     const order = await placeOrder();
     await store.advanceOrder('A', order.id);
