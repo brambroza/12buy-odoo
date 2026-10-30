@@ -36,6 +36,8 @@ describe('odooWrite guard', () => {
     await expect(odooWrite('loyalty.card', 'unlink', [[1]])).rejects.toThrow('not an allowed write');
     await expect(odooWrite('loyalty.program', 'unlink', [[1]])).rejects.toThrow('not an allowed write');
     await expect(odooWrite('loyalty.rule', 'write', [[1], {}])).rejects.toThrow('not an allowed write');
+    await expect(odooWrite('sale.advance.payment.inv', 'unlink', [[1]])).rejects.toThrow('not an allowed write');
+    await expect(odooWrite('account.move', 'action_post', [[1]])).rejects.toThrow('not an allowed write');
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 

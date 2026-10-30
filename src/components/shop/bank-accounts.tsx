@@ -28,7 +28,17 @@ function CopyButton({ value }: { value: string }) {
 }
 
 /** "โอนเงินผ่านธนาคาร" list: a table on desktop, stacked cards on phones. */
-export function BankAccounts({ accounts }: { accounts: BankAccount[] }) {
+export function BankAccounts({ accounts, error = false }: { accounts: BankAccount[]; error?: boolean }) {
+  if (!accounts.length) {
+    return (
+      <div>
+        <h3 className="mb-2 text-sm font-semibold">โอนเงินผ่านธนาคาร</h3>
+        <p role="alert" className="rounded-lg bg-amber-500/10 px-3 py-2 text-xs text-amber-800 dark:text-amber-300">
+          {error ? 'โหลดเลขบัญชีจาก Odoo ไม่ได้ในขณะนี้' : 'ยังไม่ได้ตั้งบัญชีโอนเงินใน Odoo (Wire Transfer)'} · ติดต่อฝ่ายขายเพื่อขอเลขบัญชีก่อนโอน
+        </p>
+      </div>
+    );
+  }
   return (
     <div>
       <h3 className="mb-2 text-sm font-semibold">โอนเงินผ่านธนาคาร</h3>
@@ -43,21 +53,21 @@ export function BankAccounts({ accounts }: { accounts: BankAccount[] }) {
               <div className="space-y-1">
                 {/* eslint-disable-next-line @next/next/no-img-element */}
                 <img src={a.logo} alt={a.bankName} width={160} height={80} className="h-auto w-36 rounded-md bg-white" />
-                <p className="text-xs text-muted-foreground">สาขา {a.branch}</p>
+                {a.branch && <p className="text-xs text-muted-foreground">สาขา {a.branch}</p>}
               </div>
             ) : (
               <div className="flex items-start gap-3">
                 <span className="flex size-10 shrink-0 items-center justify-center rounded-full text-[10px] font-bold text-white" style={{ backgroundColor: a.color }} aria-hidden>{a.code}</span>
                 <div>
                   <p className="font-medium" style={{ color: a.color }}>{a.bankName}</p>
-                  <p className="text-xs text-muted-foreground">สาขา {a.branch}</p>
+                  {a.branch && <p className="text-xs text-muted-foreground">สาขา {a.branch}</p>}
                 </div>
               </div>
             )}
             <dl className="space-y-0.5">
               <div className="flex flex-wrap items-center gap-2"><dt className="font-semibold">เลขที่บัญชี</dt><dd className="font-mono text-base">{a.accountNo}</dd><CopyButton value={a.accountNo} /></div>
-              <div className="flex flex-wrap gap-2"><dt className="font-semibold">ชื่อ</dt><dd>{a.accountName}</dd></div>
-              <div className="flex flex-wrap gap-2"><dt className="font-semibold">ประเภทบัญชี</dt><dd>{a.accountType}</dd></div>
+              {a.accountName && <div className="flex flex-wrap gap-2"><dt className="font-semibold">ชื่อ</dt><dd>{a.accountName}</dd></div>}
+              {a.accountType && <div className="flex flex-wrap gap-2"><dt className="font-semibold">ประเภทบัญชี</dt><dd>{a.accountType}</dd></div>}
             </dl>
           </li>
         ))}

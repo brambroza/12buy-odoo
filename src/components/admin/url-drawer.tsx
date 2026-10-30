@@ -23,7 +23,8 @@ function DrawerBody({ children }: { children: ReactNode }) {
   return <div ref={ref} className="space-y-4 p-4">{children}</div>;
 }
 
-const WIDTH = { md: 'data-[side=right]:sm:max-w-2xl', lg: 'data-[side=right]:sm:max-w-4xl', xl: 'data-[side=right]:sm:max-w-6xl' } as const;
+// Every admin drawer now fills the full viewport width; sizes are kept so existing callers still type-check.
+const WIDTH = { md: 'data-[side=right]:sm:max-w-none', lg: 'data-[side=right]:sm:max-w-none', xl: 'data-[side=right]:sm:max-w-none' } as const;
 
 /**
  * Right-side drawer whose open state lives in the URL: the server renders it only for the open row

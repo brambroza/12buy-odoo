@@ -4,6 +4,7 @@ import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { baht, findProduct, getCatalog, getDealerCarrier } from '@/lib/shop/catalog';
 import { getCreditLine } from '@/lib/shop/credit-line';
+import { getWireTransferAccounts } from '@/lib/odoo/wire-transfer';
 import { billTotals, cashDiscountPerUnit, cashPercentOf, resolvePrice, uniformCashPercent, withCoupon } from '@/lib/shop/pricing';
 import { canSeeProduct, getDealerProfile } from '@/lib/shop/dealer';
 import { checkCartCoupon } from '@/lib/shop/cart-coupon';
@@ -41,7 +42,7 @@ export default async function CartPage({ searchParams }: { searchParams: Promise
   const cashPercent = uniformCashPercent(lines.map((l) => ({ cashDiscountPerUnit: l.cashOff, cashDiscountPercent: l.cashPercent })));
   const couponResult = coupon[profile.credit ? 'CREDIT' : 'CASH'] ?? coupon.CASH;
   // Live: the tighter of the web limit and Odoo's credit_limit; Odoo unreachable leaves only the web limit.
-  const creditLine = await getCreditLine(profile);
+  const [creditLine, bank] = await Promise.all([getCreditLine(profile), getWireTransferAccounts()]);
   const overStock = lines.find((l) => l.item.qty > l.product.qtyAvailable);
   const notAllowed = lines.find((l) => !l.allowed);
 
@@ -164,7 +165,7 @@ export default async function CartPage({ searchParams }: { searchParams: Promise
           <span className="text-xs text-muted-foreground">เลขที่ใบสั่งซื้อของร้าน (ไม่บังคับ)</span>
           <input name="poRef" maxLength={40} placeholder="เช่น PO-6811-023" className="mt-1 h-10 w-full rounded-lg border border-border bg-background px-3 text-sm" />
         </label>
-        <CheckoutSummary credit={profile.credit} creditBill={creditBill} cashBill={cashBill} cashPercent={cashPercent} creditLine={creditLine} lineCount={lines.length} blocked={!delivery ? 'ยังไม่มีการจัดส่ง' : notAllowed ? 'ลบสินค้าที่สั่งไม่ได้ก่อน' : overStock ? 'แก้จำนวนก่อน' : couponCode && !couponResult?.ok ? 'ลบโค้ดที่ใช้ไม่ได้ก่อน' : null} />
+        <CheckoutSummary bank={bank} credit={profile.credit} creditBill={creditBill} cashBill={cashBill} cashPercent={cashPercent} creditLine={creditLine} lineCount={lines.length} blocked={!delivery ? 'ยังไม่มีการจัดส่ง' : notAllowed ? 'ลบสินค้าที่สั่งไม่ได้ก่อน' : overStock ? 'แก้จำนวนก่อน' : couponCode && !couponResult?.ok ? 'ลบโค้ดที่ใช้ไม่ได้ก่อน' : null} />
        {/*  <p className="text-[11px] text-muted-foreground">ออเดอร์เข้า Odoo เมื่อฝ่ายขายยืนยัน</p> */}
       </form>
       </div>

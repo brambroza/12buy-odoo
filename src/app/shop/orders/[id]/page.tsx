@@ -8,7 +8,7 @@ import { CancelOrderButton } from '@/components/shop/cancel-order-button';
 import { getCurrentUser } from '@/lib/auth/session';
 import { isBackofficeRole, type Role } from '@/lib/auth/roles';
 import { Button } from '@/components/ui/button';
-import { BANK_ACCOUNTS } from '@/lib/shop/bank-accounts';
+import { getWireTransferAccounts } from '@/lib/odoo/wire-transfer';
 import { baht } from '@/lib/shop/catalog';
 import { getSessionId } from '@/lib/shop/session';
 import { getOrder } from '@/lib/shop/store';
@@ -25,6 +25,7 @@ export default async function OrderDetailPage({ params, searchParams }: { params
   if (!found) notFound();
   // Delivery/invoice/payment status comes from Odoo; refresh it when the last check is a few minutes old.
   const order = await refreshIfStale(found);
+  const bank = order.status === 'PENDING' && order.paymentMethod === 'CASH' && !order.payment.verifiedAt ? await getWireTransferAccounts() : null;
   const nextStatus = ORDER_STATUS_FLOW[ORDER_STATUS_FLOW.indexOf(order.status) + 1];
   // Demo status buttons: back-office users only, and never unless SHOP_DEMO_CONTROLS=true.
   // Orders from before per-product VAT carry no rate: their prices were VAT-included 7% (Odoo tax "7% (Inc)").
@@ -55,7 +56,7 @@ export default async function OrderDetailPage({ params, searchParams }: { params
           ) : (
             <p className="mt-1 text-sm text-muted-foreground">ยอดโอน <span className="font-bold text-foreground">{baht(order.total)}</span> · ยังไม่ได้แนบสลิป ออเดอร์จะถูกยืนยันหลังตรวจสลิปแล้ว</p>
           )}
-          {!order.payment.verifiedAt && <div className="mt-3 border-t border-border pt-3"><BankAccounts accounts={BANK_ACCOUNTS} /></div>}
+          {bank && <div className="mt-3 border-t border-border pt-3"><BankAccounts accounts={bank.accounts} error={bank.error} /></div>}
           {order.payment.slipFile && (
             // eslint-disable-next-line @next/next/no-img-element
             <img src={`/api/proto/uploads/${order.payment.slipFile}`} alt="สลิปโอนเงิน" className="mt-2 max-h-56 rounded-lg border border-border object-contain" />

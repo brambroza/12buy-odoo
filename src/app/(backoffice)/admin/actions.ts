@@ -352,8 +352,8 @@ export async function saveCashPairsAction(formData: FormData) {
 
 /**
  * Admin confirms/advances an order. Cash orders need a verified slip first; credit orders do not.
- * Confirming (PENDING → PREPARING) also pushes the order to Odoo; a failed push keeps the
- * web confirmation and shows a retry button.
+ * Confirming (PENDING → PREPARING) also pushes the order to Odoo as a confirmed SO with a draft
+ * invoice, for cash and credit alike; a failed push keeps the web confirmation and shows a retry button.
  */
 export async function adminAdvanceOrderAction(formData: FormData) {
   await requireBackoffice();
@@ -372,17 +372,26 @@ export async function adminAdvanceOrderAction(formData: FormData) {
   if (advanced && advanced.status !== order.status) {
     await flash(order.status === 'PENDING' ? 'ยืนยันออเดอร์แล้ว' : `เปลี่ยนสถานะเป็น “${ORDER_STATUS_LABELS[advanced.status]}” แล้ว`, {
       icon: advanced.status === 'SHIPPED' ? 'truck' : 'order',
-      description: `${order.ref} · ${order.dealerName}${order.status === 'PENDING' && advanced.odoo?.saleOrderName ? ` · Odoo ${advanced.odoo.saleOrderName}` : ''}`,
+      description: `${order.ref} · ${order.dealerName}${order.status === 'PENDING' ? odooSummary(advanced) : ''}`,
     });
   }
+}
+
+/** " · Odoo S00077 + ใบแจ้งหนี้ร่าง" for the confirm toast; empty when the order has no SO. */
+function odooSummary(order: ProtoOrder): string {
+  if (!order.odoo?.saleOrderName) return '';
+  return ` · Odoo ${order.odoo.saleOrderName}${order.odoo.invoice ? ` + ใบแจ้งหนี้${order.odoo.invoice.name ? ` ${order.odoo.invoice.name}` : 'ร่าง'}` : ''}`;
 }
 
 /** Pushes an order to Odoo; returns an error message for the admin, or null on success. */
 async function pushOrReport(order: ProtoOrder): Promise<string | null> {
   const result = await syncOrderToOdoo(order);
   if (result.status === 'FAILED') return `${order.ref}: ยืนยันในเว็บแล้ว แต่ส่งเข้า Odoo ไม่สำเร็จ — ${result.error}`;
-  if (result.status === 'MISMATCH') return `${order.ref}: สร้าง ${result.saleOrderName} ใน Odoo แล้ว แต่ยอด ${result.amountTotal === undefined || result.amountTotal === null ? '-' : formatAmount(result.amountTotal)} ไม่ตรงกับเว็บ ${formatAmount(order.total)} กรุณาตรวจใน Odoo`;
-  return null;
+  const problems = [
+    result.status === 'MISMATCH' ? `ยอด ${result.amountTotal === undefined || result.amountTotal === null ? '-' : formatAmount(result.amountTotal)} ไม่ตรงกับเว็บ ${formatAmount(order.total)} กรุณาตรวจใน Odoo` : '',
+    result.invoiceError ? `สร้างใบแจ้งหนี้ร่างไม่สำเร็จ — ${result.invoiceError} (กด “ส่งเข้า Odoo อีกครั้ง” เพื่อลองใหม่)` : '',
+  ].filter(Boolean);
+  return problems.length ? `${order.ref}: สร้าง ${result.saleOrderName} ใน Odoo แล้ว แต่${problems.join(' · ')}` : null;
 }
 
 /** Re-sends a confirmed order to Odoo (after a failure, or for orders confirmed before the Odoo link existed). */
@@ -393,7 +402,8 @@ export async function adminSyncOrderAction(formData: FormData) {
   const failure = await pushOrReport(order);
   revalidateAdmin();
   if (failure) redirect(await back('/admin/orders', { error: failure }));
-  await flash('ส่งออเดอร์เข้า Odoo สำเร็จ', { icon: 'sync', description: order.ref });
+  const sent = await shopStore.getOrder(null, order.id);
+  await flash('ส่งออเดอร์เข้า Odoo สำเร็จ', { icon: 'sync', description: `${order.ref}${sent ? odooSummary(sent) : ''}` });
 }
 
 export async function verifySlipAction(formData: FormData) {

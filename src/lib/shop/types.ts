@@ -159,6 +159,10 @@ export type OdooSync = {
   saleOrderName: string | null;
   amountTotal: number | null;
   error: string | null;
+  /** Draft customer invoice made right after the SO is confirmed (name stays null until accounting posts it). */
+  invoice?: { id: number; name: string | null; state: string } | null;
+  /** Why the draft invoice could not be made; the SO itself is in Odoo. */
+  invoiceError?: string | null;
   at: string;
   /** Last read of delivery/invoice progress from Odoo (status sync). */
   progress?: {

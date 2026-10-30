@@ -6,7 +6,7 @@ import { Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { BankAccounts } from '@/components/shop/bank-accounts';
 import { SlipField } from '@/components/shop/slip-upload';
-import { BANK_ACCOUNTS } from '@/lib/shop/bank-accounts';
+import type { WireTransferInfo } from '@/lib/odoo/wire-transfer';
 import { baht } from '@/lib/shop/catalog';
 import { creditAfterOrder } from '@/lib/shop/credit';
 import type { PaymentMethod } from '@/lib/shop/types';
@@ -20,10 +20,10 @@ type Bill = { subtotal: number; cashDiscount: number; couponDiscount: number; va
  * Below `lg` the total and the submit button sit in a bar fixed above the bottom navigation.
  * `blocked` (e.g. a line over stock) disables ordering with that reason on the button.
  * `cashPercent` labels the cash discount when every discounted line has the same %.
- * Cash: the dealer transfers and attaches the slip here first; the order is sent with it (`slip` field).
+ * Cash: the dealer transfers to the accounts from Odoo's Wire Transfer provider (`bank`) and attaches the slip here first; the order is sent with it (`slip` field).
  */
-export function CheckoutSummary({ credit, creditBill, cashBill, cashPercent, creditLine, lineCount, blocked }: {
-  credit: boolean; creditBill: Bill; cashBill: Bill; cashPercent: number | null; creditLine: { limit: number | null; used: number } | null; lineCount: number; blocked: string | null;
+export function CheckoutSummary({ credit, creditBill, cashBill, cashPercent, creditLine, lineCount, blocked, bank }: {
+  bank: WireTransferInfo; credit: boolean; creditBill: Bill; cashBill: Bill; cashPercent: number | null; creditLine: { limit: number | null; used: number } | null; lineCount: number; blocked: string | null;
 }) {
   const [method, setMethod] = useState<PaymentMethod>(credit ? 'CREDIT' : 'CASH');
   // Reset on switching to credit: the slip picker unmounts and drops its file.
@@ -61,7 +61,7 @@ export function CheckoutSummary({ credit, creditBill, cashBill, cashPercent, cre
           </label>
         </fieldset>
       )}
-      {method === 'CASH' && <CashPayment total={cashBill.total} onSlipChange={setSlipPicked} />}
+      {method === 'CASH' && <CashPayment total={cashBill.total} bank={bank} onSlipChange={setSlipPicked} />}
       {/* Phones/tablets: fixed above the bottom nav (md+ has no bottom nav). Desktop: inline at the end of the form. */}
       <div className="flex items-center justify-between gap-3 border-t border-border pt-3 max-lg:fixed max-lg:inset-x-0 max-lg:bottom-14 max-lg:z-30 max-lg:bg-card max-lg:px-4 max-lg:pb-3 max-lg:shadow-[0_-6px_18px_rgb(0_0_0/0.06)] md:max-lg:bottom-0">
         <div className="min-w-0">
@@ -78,7 +78,7 @@ export function CheckoutSummary({ credit, creditBill, cashBill, cashPercent, cre
 }
 
 /** Bank accounts, the amount to transfer and the slip picker; the slip is required before ordering cash. */
-function CashPayment({ total, onSlipChange }: { total: number; onSlipChange: (picked: boolean) => void }) {
+function CashPayment({ total, bank, onSlipChange }: { total: number; bank: WireTransferInfo; onSlipChange: (picked: boolean) => void }) {
   const { pending } = useFormStatus();
   return (
     <section className="space-y-3 rounded-lg border border-border p-3">
@@ -86,7 +86,7 @@ function CashPayment({ total, onSlipChange }: { total: number; onSlipChange: (pi
         <h3 className="text-sm font-semibold">โอนเงินแล้วแนบสลิป</h3>
         <p className="text-xs text-muted-foreground">ยอดโอน <span className="font-bold text-foreground">{baht(total)}</span> · แนบสลิปก่อนกดยืนยันสั่งซื้อ ฝ่ายขายตรวจสลิปแล้วจึงยืนยันออเดอร์และส่งเข้าระบบ</p>
       </div>
-      <BankAccounts accounts={BANK_ACCOUNTS} />
+      <BankAccounts accounts={bank.accounts} error={bank.error} />
       <SlipField disabled={pending} onChange={onSlipChange} />
     </section>
   );

@@ -19,7 +19,8 @@ const READ_METHODS = new Set([
 
 /**
  * The only writes the web may send: link dealers as partners, set a customer's pricelist,
- * credit limit and delivery method, push confirmed orders (with a coupon code through Odoo's coupon wizard), publish
+ * credit limit and delivery method, push confirmed orders (with a coupon code through Odoo's coupon wizard)
+ * and make their draft invoice through Odoo's "Create invoice" wizard, publish
  * approved price books as pricelists, create / archive discount-code and coupon programs, and
  * add / rename / publish / archive delivery methods.
  */
@@ -27,6 +28,7 @@ const WRITE_METHODS: Record<string, ReadonlySet<string>> = {
   'res.partner': new Set(['create', 'write']),
   'sale.order': new Set(['create', 'action_confirm']),
   'sale.loyalty.coupon.wizard': new Set(['create', 'action_apply']),
+  'sale.advance.payment.inv': new Set(['create', 'create_invoices']),
   'product.pricelist': new Set(['create']),
   'product.pricelist.item': new Set(['create', 'write', 'unlink']),
   'loyalty.program': new Set(['create', 'write']),

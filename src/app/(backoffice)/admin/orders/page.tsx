@@ -41,9 +41,28 @@ function OdooStatus({ sync }: { sync: OdooSync }) {
   const so = sync.saleOrderName && (base && sync.saleOrderId
     ? <a href={`${base}/odoo/sales/${sync.saleOrderId}`} target="_blank" rel="noreferrer" className="underline">{sync.saleOrderName}</a>
     : sync.saleOrderName);
-  if (sync.status === 'SYNCED') return <Badge variant="outline" className="border-transparent bg-emerald-500/15 text-emerald-700">Odoo {so}</Badge>;
-  if (sync.status === 'MISMATCH') return <Badge variant="outline" className="border-transparent bg-amber-500/15 text-amber-800">Odoo {so} ยอดไม่ตรง ({baht(sync.amountTotal ?? 0)})</Badge>;
-  return <span className="text-xs text-destructive">ส่ง Odoo ไม่สำเร็จ: {sync.error}</span>;
+  if (sync.status === 'FAILED') return <span className="text-xs text-destructive">ส่ง Odoo ไม่สำเร็จ: {sync.error}</span>;
+  return (
+    <span className="flex flex-wrap items-center gap-1">
+      {sync.status === 'SYNCED'
+        ? <Badge variant="outline" className="border-transparent bg-emerald-500/15 text-emerald-700">Odoo {so}</Badge>
+        : <Badge variant="outline" className="border-transparent bg-amber-500/15 text-amber-800">Odoo {so} ยอดไม่ตรง ({baht(sync.amountTotal ?? 0)})</Badge>}
+      <InvoiceStatus sync={sync} />
+    </span>
+  );
+}
+
+/** Draft invoice made with the SO: link to it in Odoo, or why it is missing. Nothing for orders sent before invoices were made. */
+function InvoiceStatus({ sync }: { sync: OdooSync }) {
+  if (sync.invoiceError) return <span className="text-xs text-destructive">ใบแจ้งหนี้ร่างไม่สำเร็จ: {sync.invoiceError}</span>;
+  if (!sync.invoice) return null;
+  const base = process.env.ODOO_URL;
+  const label = sync.invoice.name ?? (sync.invoice.state === 'draft' ? 'ใบแจ้งหนี้ร่าง' : 'ใบแจ้งหนี้');
+  return (
+    <Badge variant="outline" className="border-transparent bg-sky-500/15 text-sky-700">
+      {base ? <a href={`${base}/odoo/account.move/${sync.invoice.id}`} target="_blank" rel="noreferrer" className="underline">{label}</a> : label}
+    </Badge>
+  );
 }
 
 /** Workflow facts for one order: whether Odoo now drives it and the next manual step (if any). */
@@ -107,7 +126,7 @@ export default async function AdminOrdersPage({ searchParams }: { searchParams: 
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <h1 className="text-2xl font-bold">ออเดอร์จากเว็บ</h1>
-          <p className="text-sm text-muted-foreground">ยืนยันออเดอร์ = สร้างและยืนยันใบสั่งขาย (SO) ใน Odoo อัตโนมัติ · หลังจากนั้นสถานะจัดส่ง/วางบิล/ชำระเงินตามที่คลังและบัญชีทำใน Odoo (ดึงอัตโนมัติทุกไม่กี่นาที)</p>
+          <p className="text-sm text-muted-foreground">ยืนยันออเดอร์ (เงินสดหลังตรวจสลิป / เครดิตกดได้ทันที) = สร้างและยืนยันใบสั่งขาย (SO) พร้อมใบแจ้งหนี้ร่างใน Odoo อัตโนมัติ · หลังจากนั้นสถานะจัดส่ง/วางบิล/ชำระเงินตามที่คลังและบัญชีทำใน Odoo (ดึงอัตโนมัติทุกไม่กี่นาที)</p>
         </div>
         <form action={adminRefreshStatusesAction}><Button type="submit" size="sm" variant="outline"><RefreshCw /> ดึงสถานะจาก Odoo ตอนนี้</Button></form>
       </div>
@@ -179,7 +198,7 @@ export default async function AdminOrdersPage({ searchParams }: { searchParams: 
                         <form action={adminAdvanceOrderAction}>
                           <input type="hidden" name="orderId" value={o.id} />
                           <input type="hidden" name="expectedStatus" value={o.status} />
-                          <IconSubmit label={blocked ? `${next} (ต้องตรวจสลิปก่อน)` : next} tone="primary" disabled={blocked}>{NEXT_ICON[o.status]}</IconSubmit>
+                          <IconSubmit label={blocked ? `${next} (ต้องตรวจสลิปก่อน)` : o.status === 'PENDING' ? `${next} · สร้าง SO + ใบแจ้งหนี้ร่างใน Odoo` : next} tone="primary" disabled={blocked}>{NEXT_ICON[o.status]}</IconSubmit>
                         </form>
                       )}
                       {canSyncOrder(o) && (
@@ -278,13 +297,19 @@ function OrderDrawer({ order: o, closeHref, notice }: { order: ProtoOrder; close
         </section>
       )}
 
+      {o.status === 'PENDING' && o.paymentMethod === 'CREDIT' && (
+        <section className="rounded-lg bg-sky-500/10 p-3 text-xs text-sky-900">
+          ลูกค้าเครดิต · ไม่ต้องแนบสลิป · ตรวจรายการแล้วกด “ยืนยันออเดอร์” เพื่อสร้างใบสั่งขาย (SO) และใบแจ้งหนี้ร่างใน Odoo
+        </section>
+      )}
+
       <section className="flex flex-wrap items-center gap-2">
         {next && (
           <form action={adminAdvanceOrderAction} className="flex items-center gap-2">
             <input type="hidden" name="orderId" value={o.id} />
             <input type="hidden" name="expectedStatus" value={o.status} />
             {o.status === 'PREPARING' && <Input name="trackingRef" placeholder="เลขพัสดุ (ถ้ามี)" className="h-8 w-40" />}
-            <Button type="submit" size="sm" disabled={blocked}>{next}</Button>
+            <Button type="submit" size="sm" disabled={blocked}>{o.status === 'PENDING' ? <><CheckCircle2 /> {next} · สร้าง SO + ใบแจ้งหนี้ร่างใน Odoo</> : next}</Button>
           </form>
         )}
         {cancellable && (
@@ -301,7 +326,7 @@ function OrderDrawer({ order: o, closeHref, notice }: { order: ProtoOrder; close
           </form>
         )}
         {canSyncOrder(o) && (
-          <form action={adminSyncOrderAction}><input type="hidden" name="orderId" value={o.id} /><Button type="submit" size="sm" variant="outline">{o.odoo ? 'ส่งเข้า Odoo อีกครั้ง' : 'ส่งเข้า Odoo'}</Button></form>
+          <form action={adminSyncOrderAction}><input type="hidden" name="orderId" value={o.id} /><Button type="submit" size="sm" variant="outline">{o.odoo?.invoiceError ? 'สร้างใบแจ้งหนี้ร่างอีกครั้ง' : o.odoo ? 'ส่งเข้า Odoo อีกครั้ง' : 'ส่งเข้า Odoo'}</Button></form>
         )}
       </section>
       {progress && (

@@ -120,10 +120,39 @@ describe('pushOrderToOdoo', () => {
   });
 
   it('reuses an already confirmed SO with the same ref instead of creating a duplicate', async () => {
-    rpc.odooSearchRead.mockResolvedValueOnce([{ id: 77, name: 'S00077', state: 'sale', amount_total: 5990.2 }]);
+    rpc.odooSearchRead
+      .mockResolvedValueOnce([{ id: 77, name: 'S00077', state: 'sale', amount_total: 5990.2, invoice_ids: [55] }])
+      .mockResolvedValueOnce([{ id: 55, name: false, state: 'draft' }]);
     const result = await pushOrderToOdoo(sampleOrder(), 900);
     expect(rpc.odooWrite).not.toHaveBeenCalled();
-    expect(result.status).toBe('SYNCED');
+    expect(result).toMatchObject({ status: 'SYNCED', invoice: { id: 55, name: null, state: 'draft' }, invoiceError: null });
+  });
+
+  it('makes a draft invoice with the Create invoice wizard after confirming', async () => {
+    rpc.odooSearchRead
+      .mockResolvedValueOnce([{ id: 77, name: 'S00077', state: 'sale', amount_total: 5990.2, invoice_ids: [] }])
+      .mockResolvedValueOnce([{ id: 77, name: 'S00077', state: 'sale', amount_total: 5990.2, invoice_ids: [55] }])
+      .mockResolvedValueOnce([{ id: 55, name: '/', state: 'draft' }]);
+    rpc.odooWrite.mockResolvedValueOnce(8).mockResolvedValueOnce({ type: 'ir.actions.act_window' });
+
+    const result = await pushOrderToOdoo(sampleOrder({ paymentMethod: 'CREDIT' }), 900);
+
+    const context = { context: { active_model: 'sale.order', active_ids: [77], active_id: 77 } };
+    expect(rpc.odooWrite.mock.calls).toEqual([
+      ['sale.advance.payment.inv', 'create', [[{ advance_payment_method: 'delivered', sale_order_ids: [[6, 0, [77]]] }]], context],
+      ['sale.advance.payment.inv', 'create_invoices', [[8]], context],
+    ]);
+    expect(rpc.odooSearchRead.mock.calls[2].slice(0, 2)).toEqual(['account.move', [['id', 'in', [55]], ['move_type', '=', 'out_invoice']]]);
+    expect(result).toMatchObject({ status: 'SYNCED', saleOrderName: 'S00077', invoice: { id: 55, name: null, state: 'draft' }, invoiceError: null });
+  });
+
+  it('keeps the SO as sent and reports invoiceError when the invoice cannot be made', async () => {
+    rpc.odooSearchRead.mockResolvedValueOnce([{ id: 77, name: 'S00077', state: 'sale', amount_total: 5990.2, invoice_ids: [] }]);
+    rpc.odooWrite.mockRejectedValueOnce(new Error('There is no invoiceable line.'));
+
+    const result = await pushOrderToOdoo(sampleOrder(), 900);
+
+    expect(result).toMatchObject({ status: 'SYNCED', saleOrderId: 77, invoice: null, invoiceError: 'There is no invoiceable line.' });
   });
 
   it('applies the coupon through the Odoo wizard before confirming, and sets the book pricelist', async () => {
@@ -149,7 +178,8 @@ describe('pushOrderToOdoo', () => {
     const coupon = { code: 'TIRE500', programId: 9, programName: 'ลด 500', label: 'ลด ฿500', discount: 500 };
     rpc.odooSearchRead
       .mockResolvedValueOnce([{ id: 77, name: 'S00077', state: 'draft', amount_total: 5490.2 }])
-      .mockResolvedValueOnce([{ id: 77, name: 'S00077', state: 'sale', amount_total: 5490.2 }]);
+      .mockResolvedValueOnce([{ id: 77, name: 'S00077', state: 'sale', amount_total: 5490.2, invoice_ids: [55] }])
+      .mockResolvedValueOnce([{ id: 55, name: false, state: 'draft' }]);
     rpc.odooRead.mockResolvedValueOnce(1);
     rpc.odooWrite.mockResolvedValueOnce(true);
     await pushOrderToOdoo(sampleOrder({ coupon, couponDiscount: 500, total: 5490.2 }), 900);

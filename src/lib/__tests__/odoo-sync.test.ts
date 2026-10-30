@@ -21,6 +21,11 @@ describe('odoo sync eligibility', () => {
     expect(canSyncOrder(order({ status: 'SHIPPED', odoo: { status: 'FAILED' } as ProtoOrder['odoo'] }))).toBe(true);
   });
 
+  it('allows a retry when the SO is in Odoo but its draft invoice failed', () => {
+    expect(canSyncOrder(order({ odoo: { status: 'SYNCED', invoiceError: 'no invoiceable line' } as ProtoOrder['odoo'] }))).toBe(true);
+    expect(canSyncOrder(order({ odoo: { status: 'SYNCED', invoice: { id: 5, name: null, state: 'draft' }, invoiceError: null } as ProtoOrder['odoo'] }))).toBe(false);
+  });
+
   it('skips pending, cancelled, staff test orders and orders already in Odoo', () => {
     expect(canSyncOrder(order({ status: 'PENDING' }))).toBe(false);
     expect(canSyncOrder(order({ status: 'CANCELLED' }))).toBe(false);

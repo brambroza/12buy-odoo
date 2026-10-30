@@ -1,5 +1,5 @@
 /**
- * Pushes a confirmed web order to Odoo as a confirmed `sale.order`.
+ * Pushes a confirmed web order to Odoo as a confirmed `sale.order` plus a draft customer invoice.
  * Prices are sent as `price_unit` (the price the dealer saw), see docs/PLAN.md §3.1.
  */
 import type { OdooSync, ProtoOrder } from '@/lib/shop/types';
@@ -9,7 +9,8 @@ import { findCarrierByName } from './delivery-carrier';
 import { applyCouponToOrder } from './loyalty';
 import { odooRead, odooSearchRead, odooWrite } from './rpc';
 
-type SaleOrderRead = { id: number; name: string; state: string; amount_total: number };
+type SaleOrderRead = { id: number; name: string; state: string; amount_total: number; invoice_ids?: number[] };
+type InvoiceRead = { id: number; name: string | false; state: string };
 type PartnerSalesRead = { id: number; user_id: [number, string] | false; commercial_partner_id: [number, string] | false };
 
 /**
@@ -147,21 +148,45 @@ export async function carrierIdFor(order: Pick<ProtoOrder, 'carrier' | 'carrierI
   return (await findCarrierByName(order.carrier))?.id ?? null;
 }
 
+const SO_FIELDS = ['id', 'name', 'state', 'amount_total', 'invoice_ids'];
+
 async function findByRef(ref: string): Promise<SaleOrderRead | null> {
-  const rows = await odooSearchRead<SaleOrderRead>('sale.order', [['client_order_ref', '=', ref]], ['id', 'name', 'state', 'amount_total'], { limit: 1 });
+  const rows = await odooSearchRead<SaleOrderRead>('sale.order', [['client_order_ref', '=', ref]], SO_FIELDS, { limit: 1 });
   return rows[0] ?? null;
 }
 
 async function readById(id: number): Promise<SaleOrderRead> {
-  const rows = await odooSearchRead<SaleOrderRead>('sale.order', [['id', '=', id]], ['id', 'name', 'state', 'amount_total'], { limit: 1 });
+  const rows = await odooSearchRead<SaleOrderRead>('sale.order', [['id', '=', id]], SO_FIELDS, { limit: 1 });
   if (!rows[0]) throw new Error(`อ่าน sale.order #${id} ไม่ได้`);
   return rows[0];
 }
 
 /**
+ * Draft customer invoice of a confirmed SO: the existing one, else one made with Odoo's
+ * "Create invoice" wizard (regular invoice; every product is invoiced on ordered qty).
+ * Safe to retry: an SO that already has an invoice gets no second one. Accounting posts it in Odoo.
+ */
+export async function ensureDraftInvoice(saleOrderId: number, invoiceIds: number[] = []): Promise<NonNullable<OdooSync['invoice']>> {
+  let ids = invoiceIds;
+  if (!ids.length) {
+    const context = { active_model: 'sale.order', active_ids: [saleOrderId], active_id: saleOrderId };
+    const created = await odooWrite<number | number[]>('sale.advance.payment.inv', 'create', [[{ advance_payment_method: 'delivered', sale_order_ids: [[6, 0, [saleOrderId]]] }]], { context });
+    await odooWrite<unknown>('sale.advance.payment.inv', 'create_invoices', [[Array.isArray(created) ? created[0] : created]], { context });
+    ids = (await readById(saleOrderId)).invoice_ids ?? [];
+  }
+  const [invoice] = ids.length
+    ? await odooSearchRead<InvoiceRead>('account.move', [['id', 'in', ids], ['move_type', '=', 'out_invoice']], ['id', 'name', 'state'], { order: 'id desc', limit: 1 })
+    : [];
+  if (!invoice) throw new Error('Odoo ไม่ได้สร้างใบแจ้งหนี้ให้ใบสั่งขายนี้');
+  // A draft has no number yet ("/" or empty) until accounting posts it.
+  return { id: invoice.id, name: invoice.name && invoice.name !== '/' ? invoice.name : null, state: invoice.state };
+}
+
+/**
  * Creates and confirms the SO for `order`, or returns the existing one with the same
  * `client_order_ref` (safe to retry). A coupon is applied through Odoo's wizard while the
- * SO is still a draft. The result compares Odoo's total with the web total.
+ * SO is still a draft. Then a draft invoice is made; if that fails the SO still counts as sent and
+ * `invoiceError` says why (the admin can retry). The result compares Odoo's total with the web total.
  */
 export async function pushOrderToOdoo(order: ProtoOrder, partnerId: number): Promise<OdooSync> {
   let so = await findByRef(order.ref);
@@ -186,12 +211,21 @@ export async function pushOrderToOdoo(order: ProtoOrder, partnerId: number): Pro
     await odooWrite<boolean>('sale.order', 'action_confirm', [[so.id]]);
     so = await readById(so.id);
   }
+  let invoice: OdooSync['invoice'] = null;
+  let invoiceError: string | null = null;
+  try {
+    invoice = await ensureDraftInvoice(so.id, so.invoice_ids);
+  } catch (error) {
+    invoiceError = error instanceof Error ? error.message : String(error);
+  }
   return {
     status: totalsMatch(so.amount_total, order.total) ? 'SYNCED' : 'MISMATCH',
     saleOrderId: so.id,
     saleOrderName: so.name,
     amountTotal: so.amount_total,
     error: null,
+    invoice,
+    invoiceError,
     at: new Date().toISOString(),
   };
 }
