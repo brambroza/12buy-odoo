@@ -8,12 +8,14 @@ export type LeadWithDealer = DealerLead & { dealer: Pick<Dealer, 'id' | 'name' |
 
 /** Persists a validated lead from the public sign-up form; the password is stored only as a hash. */
 export async function createLead(input: DealerLeadInput, source = 'landing'): Promise<DealerLead> {
-  const row = unwrap(await db().from('DealerLead').insert({
+  const base = {
     id: newId(), shopName: input.shopName, taxId: input.taxId, province: input.address.province, types: input.types, phone: input.phone, lineId: input.lineId || null, source,
     email: input.email, passwordHash: hashPassword(input.password), address: input.address,
-    consentAt: new Date().toISOString(),
-  }).select('*').single());
-  return reviveDates<DealerLead>(row);
+  };
+  const first = await db().from('DealerLead').insert({ ...base, consentAt: new Date().toISOString() }).select('*').single();
+  // Until migration 20261030200000 adds `consentAt`, store the lead without it rather than losing the sign-up.
+  const result = first.error?.code === '42703' || /consentAt/.test(first.error?.message ?? '') ? await db().from('DealerLead').insert(base).select('*').single() : first;
+  return reviveDates<DealerLead>(unwrap(result));
 }
 
 /** A not-yet-handled lead (NEW / CONTACTED) that already uses this email. */

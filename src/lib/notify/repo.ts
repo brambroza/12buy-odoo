@@ -27,14 +27,23 @@ export async function setNotificationChannels(id: string, channels: Record<strin
 
 /** Newest first for a dealer (all users of the shop) or a staff member. */
 export async function listNotifications(scope: { dealerId: string } | { userId: string }, limit = 50): Promise<NotificationRow[]> {
-  const q = db().from('Notification').select('*').order('createdAt', { ascending: false }).limit(limit);
-  return rows<NotificationRow>(await ('dealerId' in scope ? q.eq('dealerId', scope.dealerId) : q.eq('userId', scope.userId)));
+  try {
+    const q = db().from('Notification').select('*').order('createdAt', { ascending: false }).limit(limit);
+    return rows<NotificationRow>(await ('dealerId' in scope ? q.eq('dealerId', scope.dealerId) : q.eq('userId', scope.userId)));
+  } catch (error) {
+    // Table missing until migration 20261030210000 is applied: the inbox is simply empty.
+    console.warn('[notify] inbox unavailable', error instanceof Error ? error.message : error);
+    return [];
+  }
 }
 
 export async function countUnread(scope: { dealerId: string } | { userId: string }): Promise<number> {
   const q = db().from('Notification').select('id', { count: 'exact', head: true }).is('readAt', null);
   const { count, error } = await ('dealerId' in scope ? q.eq('dealerId', scope.dealerId) : q.eq('userId', scope.userId));
-  if (error) throw new Error(error.message);
+  if (error) {
+    console.warn('[notify] unread count unavailable', error.message);
+    return 0;
+  }
   return count ?? 0;
 }
 

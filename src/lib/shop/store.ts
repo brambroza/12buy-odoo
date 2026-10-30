@@ -143,9 +143,15 @@ const MAX_FAVORITES = 200;
 
 /** Product ids the shop marked as favourites, newest first. */
 export async function getFavorites(scope: string): Promise<number[]> {
-  const row = unwrap(await db().from('ShopCart').select('favorites').eq('scope', scope).maybeSingle()) as { favorites?: unknown } | null;
-  const raw = Array.isArray(row?.favorites) ? row!.favorites : [];
-  return raw.filter((id): id is number => Number.isInteger(id));
+  try {
+    const row = unwrap(await db().from('ShopCart').select('favorites').eq('scope', scope).maybeSingle()) as { favorites?: unknown } | null;
+    const raw = Array.isArray(row?.favorites) ? row!.favorites : [];
+    return raw.filter((id): id is number => Number.isInteger(id));
+  } catch (error) {
+    // Column missing until migration 20261030220000 is applied: favourites are just empty, the shop keeps working.
+    console.warn('[store] favorites unavailable', error instanceof Error ? error.message : error);
+    return [];
+  }
 }
 
 /** Adds or removes a favourite; returns the new state of that product. */
