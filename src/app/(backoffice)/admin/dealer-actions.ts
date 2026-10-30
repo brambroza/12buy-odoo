@@ -12,8 +12,9 @@ import { canManageRole, isBackofficeRole, type Role } from '@/lib/auth/roles';
 import { parseProfileForm } from '@/lib/auth/profile';
 import { requireAdmin, requireBackoffice, revokeAllSessions } from '@/lib/auth/session';
 import { createUser, createUserWithHash, findUserByEmail, findUserById, isUniqueViolation, setPassword, updateUser } from '@/lib/auth/users';
-import { createDealer, getDealer, updateDealer } from '@/lib/dealers/repo';
+import { createDealer, findDealerByTaxId, getDealer, updateDealer } from '@/lib/dealers/repo';
 import { clearLeadPassword, findLead, setLeadStatus } from '@/lib/leads/repo';
+import { normalizeTaxId, taxIdProblem } from '@/lib/tax-id';
 import { formatThaiAddress, parseThaiAddress } from '@/lib/thai-address';
 import { ensureDealerPartner } from '@/lib/odoo/dealer-partner';
 import { getOdooCustomer, listOdooPricelists, updateOdooCustomerCreditLimit } from '@/lib/odoo/customer-pricing';
@@ -51,7 +52,15 @@ const dealerSchema = z.object({
   address: optionalText(300),
   phone: optionalText(30),
   lineId: optionalText(60),
-  taxId: optionalText(20),
+  taxId: z.string().trim().max(20).transform((v, ctx) => {
+    if (!v) return null;
+    const problem = taxIdProblem(v);
+    if (problem) {
+      ctx.addIssue({ code: 'custom', message: problem });
+      return z.NEVER;
+    }
+    return normalizeTaxId(v);
+  }),
   creditEnabled: z.boolean(),
   creditLimit: optionalBaht,
   creditOpening: optionalBaht.transform((v) => v ?? 0),
@@ -146,6 +155,19 @@ function fail(path: string, message: string): never {
   redirect(`${path}?error=${encodeURIComponent(message)}`);
 }
 
+/** Message for a duplicate-key failure on the Dealer table: which of the two unique keys was hit. */
+function dealerUniqueMessage(error: unknown): string {
+  const text = `${(error as Error)?.message ?? ''} ${(error as { details?: string | null })?.details ?? ''}`;
+  return text.includes('taxId') ? 'เลขผู้เสียภาษีนี้มีดีลเลอร์อยู่แล้ว' : 'ลูกค้า Odoo รายนี้ถูกผูกกับดีลเลอร์อื่นแล้ว';
+}
+
+/** Error when `taxId` already belongs to another dealer (`exceptId` = the dealer being edited), else null. */
+async function taxIdTakenBy(taxId: string | null, exceptId?: string): Promise<string | null> {
+  if (!taxId) return null;
+  const other = await findDealerByTaxId(taxId);
+  return other && other.id !== exceptId ? `เลขผู้เสียภาษีนี้เป็นของดีลเลอร์ "${other.name}" อยู่แล้ว` : null;
+}
+
 /** Creates a dealer record manually (optionally linked to an Odoo partner). */
 export async function createDealerAction(formData: FormData) {
   const actor = await requireAdmin();
@@ -153,13 +175,15 @@ export async function createDealerAction(formData: FormData) {
   if (!parsed.success) fail('/admin/dealers', parsed.error.issues[0]?.message ?? 'ข้อมูลไม่ถูกต้อง');
   const pricelistError = await invalidTypePricelist(parsed.data.typePricelists);
   if (pricelistError) fail('/admin/dealers', pricelistError);
+  const taxIdError = await taxIdTakenBy(parsed.data.taxId);
+  if (taxIdError) fail('/admin/dealers', taxIdError);
   let id: string;
   try {
     const dealer = await createDealer(parsed.data);
     id = dealer.id;
     if (parsed.data.status === 'ACTIVE') await updateDealer(id, { approvedAt: new Date(), approvedById: actor.id });
   } catch (error) {
-    if (isUniqueViolation(error)) fail('/admin/dealers', 'ลูกค้า Odoo รายนี้ถูกผูกกับดีลเลอร์อื่นแล้ว');
+    if (isUniqueViolation(error)) fail('/admin/dealers', dealerUniqueMessage(error));
     throw error;
   }
   const groupId = await saveDealerGroup(id, formData);
@@ -189,11 +213,13 @@ export async function updateDealerAction(formData: FormData) {
   if (!parsed.success) fail(`/admin/dealers`, parsed.error.issues[0]?.message ?? 'ข้อมูลไม่ถูกต้อง');
   const pricelistError = await invalidTypePricelist(parsed.data.typePricelists);
   if (pricelistError) fail('/admin/dealers', pricelistError);
+  const taxIdError = await taxIdTakenBy(parsed.data.taxId, id);
+  if (taxIdError) fail(`/admin/dealers?open=${id}`, taxIdError);
   const becomingActive = parsed.data.status === 'ACTIVE' && before.status !== 'ACTIVE';
   try {
     await updateDealer(id, { ...parsed.data, ...(becomingActive ? { approvedAt: new Date(), approvedById: actor.id } : {}) });
   } catch (error) {
-    if (isUniqueViolation(error)) fail('/admin/dealers', 'ลูกค้า Odoo รายนี้ถูกผูกกับดีลเลอร์อื่นแล้ว');
+    if (isUniqueViolation(error)) fail(`/admin/dealers?open=${id}`, dealerUniqueMessage(error));
     throw error;
   }
   if (parsed.data.status === 'SUSPENDED') for (const u of before.users) await revokeAllSessions(u.id);
@@ -328,10 +354,21 @@ export async function approveLeadAction(formData: FormData) {
   if (!lead || lead.status === 'APPROVED') redirect('/admin/leads');
   const tier = tierSchema.safeParse(formData.get('tier')).data ?? 'M';
   const shipping = parseThaiAddress(lead.address);
-  const dealer = await createDealer({
-    name: lead.shopName, province: lead.province, types: lead.types, tier, status: 'ACTIVE', phone: lead.phone, lineId: lead.lineId,
-    ...(shipping ? { address: formatThaiAddress(shipping), shippingAddress: shipping } : {}),
-  });
+  const taxId = normalizeTaxId(lead.taxId);
+  // The sign-up refused a tax id that already had a dealer, but one may have been created since (by hand or
+  // via /activate); approving would then make a second dealer for the same shop.
+  const existing = taxId ? await findDealerByTaxId(taxId) : null;
+  if (existing) fail(`/admin/leads?open=${leadId}`, `เลขผู้เสียภาษีนี้เป็นของดีลเลอร์ "${existing.name}" อยู่แล้ว ไม่สร้างร้านซ้ำ ถ้าเป็นร้านเดียวกันให้ปฏิเสธใบสมัครนี้แล้วเพิ่มผู้ใช้ในร้านเดิมแทน`);
+  let dealer: Awaited<ReturnType<typeof createDealer>>;
+  try {
+    dealer = await createDealer({
+      name: lead.shopName, province: lead.province, types: lead.types, tier, status: 'ACTIVE', phone: lead.phone, lineId: lead.lineId, taxId,
+      ...(shipping ? { address: formatThaiAddress(shipping), shippingAddress: shipping } : {}),
+    });
+  } catch (error) {
+    if (isUniqueViolation(error)) fail(`/admin/leads?open=${leadId}`, dealerUniqueMessage(error));
+    throw error;
+  }
   await updateDealer(dealer.id, { approvedAt: new Date(), approvedById: actor.id });
   await setLeadStatus(leadId, 'APPROVED', { dealerId: dealer.id });
   await audit(actor.id, 'lead.approve', 'DealerLead', leadId, { dealerId: dealer.id, tier });

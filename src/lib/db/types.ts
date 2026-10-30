@@ -158,6 +158,8 @@ export type DealerLead = {
   passwordHash: string | null;
   /** Structured shop address (ThaiAddress) from the sign-up form. */
   address: unknown;
+  /** Thai tax id, 13 digits; the key used to spot an applicant that is already a dealer or Odoo customer. */
+  taxId: string | null;
 };
 
 export type PasswordResetRequest = {

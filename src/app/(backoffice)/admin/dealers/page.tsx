@@ -583,7 +583,7 @@ function DealerForm({ action, dealer, prefill, creditUsed, odooCreditLimit, part
       </label>
       <label className="text-xs font-medium">โทร<input name="phone" defaultValue={dealer?.phone ?? prefill?.phone ?? ''} maxLength={30} className={field} /></label>
       <label className="text-xs font-medium">LINE ID<input name="lineId" defaultValue={dealer?.lineId ?? ''} maxLength={60} className={field} /></label>
-      <label className="text-xs font-medium">เลขผู้เสียภาษี<input name="taxId" defaultValue={dealer?.taxId ?? prefill?.taxId ?? ''} maxLength={20} className={field} /></label>
+      <label className="text-xs font-medium">เลขผู้เสียภาษี (13 หลัก ห้ามซ้ำกับร้านอื่น)<input name="taxId" inputMode="numeric" defaultValue={dealer?.taxId ?? prefill?.taxId ?? ''} maxLength={20} placeholder="0-1055-56123-45-6" className={field} /></label>
       <label className="text-xs font-medium">ที่อยู่<input name="address" defaultValue={dealer?.address ?? ''} maxLength={300} className={field} /></label>
       <label className="text-xs font-medium md:col-span-2">หมายเหตุ<input name="notes" defaultValue={dealer?.notes ?? ''} maxLength={500} className={field} /></label>
       <div className="md:col-span-2"><Button type="submit" size="sm">{dealer ? 'บันทึก' : 'สร้างดีลเลอร์'}</Button></div>

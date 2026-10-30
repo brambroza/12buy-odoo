@@ -3,6 +3,7 @@
  * its tax id plus a phone number that both match the company partner in Odoo. Read-only on Odoo.
  */
 import { normalizeThaiPhone } from '@/lib/shop/shipping';
+import { normalizeTaxId } from '@/lib/tax-id';
 import { odooRead, odooSearchRead } from './rpc';
 
 /** Company partner fields the web needs to create the dealer. */
@@ -19,11 +20,7 @@ export type ClaimablePartner = {
   state_id: [number, string] | false;
 };
 
-/** Digits of a Thai tax id (13), or null when it is not one. Odoo may store it with `TH`, dashes or spaces. */
-export function normalizeTaxId(raw: string): string | null {
-  const digits = raw.replace(/\D/g, '');
-  return digits.length === 13 ? digits : null;
-}
+export { normalizeTaxId };
 
 /** Comparable phone: the last 9 digits after `+66` → `0`, so `02-123-4567`, `021234567` and `+6621234567` match. */
 export function phoneKey(raw: string | false | null | undefined): string | null {
@@ -60,6 +57,16 @@ export async function findClaimablePartner(taxId: string, phone: string): Promis
     [['vat', 'ilike', taxId], ['parent_id', '=', false], ['customer_rank', '>', 0]], fields, { limit: 20 });
   const matches = candidates.filter((p) => normalizeTaxId(p.vat || '') === taxId && phoneMatches(p, phone));
   return matches.length === 1 ? matches[0] : null;
+}
+
+/**
+ * The company customers in Odoo with this tax id (13 digits). Used by the sign-up form to tell an
+ * existing customer to activate its account instead of applying again. Read-only on Odoo.
+ */
+export async function findPartnersByTaxId(taxId: string): Promise<Pick<ClaimablePartner, 'id' | 'name'>[]> {
+  const candidates = await odooSearchRead<Pick<ClaimablePartner, 'id' | 'name' | 'vat'>>('res.partner',
+    [['vat', 'ilike', taxId], ['parent_id', '=', false], ['customer_rank', '>', 0]], ['id', 'name', 'vat'], { limit: 20 });
+  return candidates.filter((p) => normalizeTaxId(p.vat || '') === taxId).map(({ id, name }) => ({ id, name }));
 }
 
 /** One-line address from the partner, for `Dealer.address`. */

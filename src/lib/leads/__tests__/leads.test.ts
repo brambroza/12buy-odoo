@@ -5,7 +5,7 @@ import { verifyTurnstile } from '@/lib/security/turnstile';
 
 const address = { line: '99/1 ม.3', province: 'เชียงใหม่', district: 'กัลยาณิวัฒนา', subdistrict: 'บ้านจันทร์', postalCode: '58130' };
 const valid = {
-  shopName: 'ร้านยางทดสอบ', address, types: ['CAR'], phone: '081-234-5678', lineId: '@shop',
+  shopName: 'ร้านยางทดสอบ', taxId: '0-1055-56123-45-3', address, types: ['CAR'], phone: '081-234-5678', lineId: '@shop',
   email: ' Shop@Example.com ', password: 'abc12345', confirmPassword: 'abc12345', website: '',
 };
 const issue = (input: unknown) => {
@@ -21,7 +21,15 @@ describe('dealerLeadSchema', () => {
       expect(r.data.email).toBe('shop@example.com');
       expect(r.data.phone).toBe('0812345678');
       expect(r.data.address.province).toBe('เชียงใหม่');
+      expect(r.data.taxId).toBe('0105556123453');
     }
+  });
+
+  it('requires a 13-digit tax id with a valid check digit', () => {
+    expect(issue({ ...valid, taxId: '' })).toMatchObject({ path: ['taxId'], message: 'เลขผู้เสียภาษีต้องมี 13 หลัก' });
+    expect(issue({ ...valid, taxId: '010555612345' })?.path).toEqual(['taxId']);
+    expect(issue({ ...valid, taxId: '0105556123456' })?.message).toContain('ไม่ถูกต้อง');
+    expect(issue({ ...valid, taxId: 'TH0105556123453' })).toBeNull();
   });
 
   it('requires a real province / district / subdistrict combination', () => {
@@ -46,6 +54,7 @@ describe('dealerLeadSchema', () => {
   it('reads the address picker and multi-value types from FormData', () => {
     const fd = new FormData();
     fd.set('shopName', 'A1 Tyre');
+    fd.set('taxId', '1234567890121');
     for (const [k, v] of Object.entries(address)) fd.set(k, v);
     fd.append('types', 'CAR');
     fd.append('types', 'TRUCK');
@@ -55,7 +64,10 @@ describe('dealerLeadSchema', () => {
     fd.set('confirmPassword', 'abc12345');
     const parsed = dealerLeadSchema.safeParse(leadFromFormData(fd));
     expect(parsed.success).toBe(true);
-    if (parsed.success) expect(parsed.data.types).toEqual(['CAR', 'TRUCK']);
+    if (parsed.success) {
+      expect(parsed.data.types).toEqual(['CAR', 'TRUCK']);
+      expect(parsed.data.taxId).toBe('1234567890121');
+    }
   });
 
   it('never puts the password in the sales notification', () => {

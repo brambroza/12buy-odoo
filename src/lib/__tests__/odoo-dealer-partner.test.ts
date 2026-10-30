@@ -54,10 +54,10 @@ describe('ensureDealerPartner', () => {
     expect(repo.updateDealer).toHaveBeenCalledWith('d1', { odooPartnerId: 42 });
   });
 
-  it('searches by tax id when the dealer has one', async () => {
-    rpc.odooSearchRead.mockResolvedValueOnce([{ id: 42, name: 'x' }]);
-    await ensureDealerPartner(dealer({ taxId: '0105555000000' }), 9);
-    expect(rpc.odooSearchRead.mock.calls[0][1]).toContainEqual(['vat', '=', '0105555000000']);
+  it('searches by tax id when the dealer has one and matches on the digits Odoo stores', async () => {
+    rpc.odooSearchRead.mockResolvedValueOnce([{ id: 42, name: 'x', vat: 'TH0105555000000' }, { id: 43, name: 'y', vat: '0105555000001' }]);
+    expect(await ensureDealerPartner(dealer({ taxId: '0105555000000' }), 9)).toBe(42);
+    expect(rpc.odooSearchRead.mock.calls[0][1]).toContainEqual(['vat', 'ilike', '0105555000000']);
   });
 
   it('refuses to guess between several matching partners', async () => {

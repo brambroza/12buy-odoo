@@ -15,6 +15,7 @@ import { DEALER_TIER_LABELS, DEALER_TYPE_LABELS, type DealerTier, type DealerTyp
 import { cn } from '@/lib/utils';
 import type { LeadStatus } from '@/lib/db/types';
 import { formatThaiAddress, parseThaiAddress } from '@/lib/thai-address';
+import { formatTaxId } from '@/lib/tax-id';
 import { approveLeadAction, setLeadStatusAction } from '../dealer-actions';
 
 const STATUS: Record<LeadStatus, string> = { NEW: 'ใหม่', CONTACTED: 'ติดต่อแล้ว', APPROVED: 'อนุมัติแล้ว', REJECTED: 'ไม่ผ่าน' };
@@ -33,7 +34,7 @@ export default async function LeadsPage({ searchParams }: { searchParams: Promis
   const all = await listLeads();
   const counts = Object.fromEntries((Object.keys(STATUS) as LeadStatus[]).map((s) => [s, all.filter((l) => l.status === s).length])) as Record<LeadStatus, number>;
   const q = searchText(params.q);
-  const leads = all.filter((l) => (!filter || l.status === filter) && matchesSearch(q, l.shopName, l.province, l.phone, l.lineId, l.email));
+  const leads = all.filter((l) => (!filter || l.status === filter) && matchesSearch(q, l.shopName, l.province, l.phone, l.lineId, l.email, l.taxId));
   const pageRows = paginate(leads, params.page);
 
   /** List URL with the current filters; `changes` overrides params such as `status`, `open` or `page`. */
@@ -85,6 +86,7 @@ export default async function LeadsPage({ searchParams }: { searchParams: Promis
                   <TableCell data-label="ติดต่อ">
                     <a href={`tel:${lead.phone.replace(/\D/g, '')}`} className="block text-xs underline">{lead.phone}</a>
                     {lead.lineId && <span className="block text-xs text-muted-foreground">LINE {lead.lineId}</span>}
+                    {lead.taxId && <span className="block text-xs text-muted-foreground">ภาษี {formatTaxId(lead.taxId)}</span>}
                   </TableCell>
                   <TableCell data-label="สมัครเมื่อ"><span className="text-xs text-muted-foreground">{fmt.format(new Date(lead.createdAt))}</span></TableCell>
                   <TableCell data-label="">
@@ -125,6 +127,7 @@ function LeadDrawer({ lead, canApprove, closeHref }: { lead: LeadWithDealer; can
       closeHref={closeHref}
     >
       <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1.5 text-sm">
+        {lead.taxId && <><dt className="text-muted-foreground">เลขผู้เสียภาษี</dt><dd>{formatTaxId(lead.taxId)}</dd></>}
         <dt className="text-muted-foreground">โทร</dt>
         <dd><a href={`tel:${lead.phone.replace(/\D/g, '')}`} className="underline">{lead.phone}</a></dd>
         {lead.lineId && <><dt className="text-muted-foreground">LINE</dt><dd>{lead.lineId}</dd></>}

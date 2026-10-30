@@ -3,7 +3,6 @@
  * Prices are sent as `price_unit` (the price the dealer saw), see docs/PLAN.md §3.1.
  */
 import type { OdooSync, ProtoOrder } from '@/lib/shop/types';
-import { PAYMENT_METHOD_LABELS } from '@/lib/shop/types';
 import { formatAmount } from '@/lib/money';
 import { findCarrierByName } from './delivery-carrier';
 import { applyCouponToOrder } from './loyalty';
@@ -117,14 +116,10 @@ async function cashDiscountLineFor(order: ProtoOrder): Promise<CashDiscountLine>
   return { productId, taxField: await saleLineTaxField() };
 }
 
-/** Free-text note on the SO: payment, delivery method, delivery address and the dealer's remark. */
-export function buildOrderNote(order: ProtoOrder, discountAsLine = false): string {
-  const cashNote = order.cashDiscount <= 0 ? '' : discountAsLine
-    ? ` (ส่วนลดเงินสด ${formatAmount(order.cashDiscount)} บาท เป็นบรรทัดท้ายบิล)`
-    : ` (รวมส่วนลดเงินสด ${formatAmount(order.cashDiscount)} บาทในราคาแล้ว)`;
+/** Free-text note on the SO: web order ref, coupon, dealer PO, delivery method, delivery address and the dealer's remark. */
+export function buildOrderNote(order: ProtoOrder): string {
   return [
     `ออเดอร์เว็บ ${order.ref}`,
-    `ชำระ: ${PAYMENT_METHOD_LABELS[order.paymentMethod]}${cashNote}`,
     order.coupon ? `คูปอง: ${order.coupon.code} (${order.coupon.programName}) เว็บคำนวณส่วนลด ${formatAmount(order.couponDiscount)} บาท` : '',
     order.poRef ? `เลขที่ใบสั่งซื้อของร้าน: ${order.poRef}` : '',
     `การจัดส่ง: ${order.carrier}`,
@@ -201,7 +196,7 @@ export async function pushOrderToOdoo(order: ProtoOrder, partnerId: number): Pro
       origin: 'Web',
       ...(order.odooPricelistId ? { pricelist_id: order.odooPricelistId } : {}),
       ...(carrierId ? { carrier_id: carrierId } : {}),
-      note: buildOrderNote(order, Boolean(discount)),
+      note: buildOrderNote(order),
       order_line: buildOrderLines(order, discount).map((values) => [0, 0, values]),
     }]]);
     so = await readById(Array.isArray(created) ? created[0] : created);

@@ -11,7 +11,7 @@ import { PROVINCES } from '@/lib/provinces';
 import { shortProvince } from '@/lib/shop/catalog';
 import { normalizeThaiPhone } from '@/lib/shop/shipping';
 import { DEALER_TYPE_LABELS } from '@/lib/shop/types';
-import { createDealer, findDealerByPartnerId, getDealer, updateDealer } from './repo';
+import { createDealer, findDealerByPartnerId, findDealerByTaxId, getDealer, updateDealer } from './repo';
 
 const ALL_TYPES = Object.keys(DEALER_TYPE_LABELS) as DealerType[];
 
@@ -21,15 +21,19 @@ function isUniqueViolation(error: unknown): boolean {
 
 /**
  * Creates an ACTIVE dealer linked to the Odoo company partner.
- * Returns null when another request linked the same partner first (unique `odooPartnerId`).
+ * Returns null when a dealer for this shop already exists: another request linked the same partner
+ * first (unique `odooPartnerId`), or a web dealer already carries the partner's tax id (unique `taxId`,
+ * e.g. one an admin created by hand without linking it). Callers decide how to report that.
  */
 export async function createDealerFromPartner(partner: ClaimablePartner, extra: { types?: DealerType[]; phone?: string; note: string }): Promise<Dealer | null> {
   const province = partner.state_id ? shortProvince(partner.state_id[1]) : '';
   const phone = extra.phone ?? (phoneKey(partner.phone) ? normalizeThaiPhone(partner.phone as string) : null);
+  const taxId = normalizeTaxId(partner.vat || '');
+  if (taxId && (await findDealerByTaxId(taxId))) return null;
   try {
     const dealer = await createDealer({
       name: partner.name, province: (PROVINCES as readonly string[]).includes(province) ? province : '', types: extra.types ?? ALL_TYPES, tier: 'M',
-      status: 'ACTIVE', odooPartnerId: partner.id, phone, taxId: normalizeTaxId(partner.vat || ''), address: partnerAddress(partner), notes: extra.note,
+      status: 'ACTIVE', odooPartnerId: partner.id, phone, taxId, address: partnerAddress(partner), notes: extra.note,
     });
     await updateDealer(dealer.id, { approvedAt: new Date() });
     return dealer;
@@ -58,6 +62,8 @@ export function resetOdooLoginLimit() {
 export type OdooLoginOutcome =
   | { kind: 'created'; user: User; dealer: Dealer; odooUid: number; newDealer: boolean }
   | { kind: 'not-portal'; odooUid: number }
+  /** A web dealer with the company's tax id exists but is not linked to this Odoo partner; staff must link it. */
+  | { kind: 'conflict'; odooUid: number; dealer: Dealer }
   | { kind: 'invalid' };
 
 /**
@@ -78,8 +84,13 @@ export async function provisionFromOdooLogin(email: string, password: string): P
     dealer = await createDealerFromPartner(account.company, { note: `สร้างอัตโนมัติจาก portal user Odoo #${uid}` });
     newDealer = !!dealer;
     dealer ??= await findDealerByPartnerId(account.company.id);
+    if (!dealer) {
+      const taxId = normalizeTaxId(account.company.vat || '');
+      const byTaxId = taxId ? await findDealerByTaxId(taxId) : null;
+      if (byTaxId) return { kind: 'conflict', odooUid: uid, dealer: byTaxId };
+      throw new Error(`dealer for Odoo partner ${account.company.id} not found after create`);
+    }
   }
-  if (!dealer) throw new Error(`dealer for Odoo partner ${account.company.id} not found after create`);
 
   const hasUsers = !newDealer && ((await getDealer(dealer.id))?.users.length ?? 0) > 0;
   const user = await createUser({ email, name: account.contactName, password, role: hasUsers ? 'DEALER_STAFF' : 'DEALER_OWNER', dealerId: dealer.id });

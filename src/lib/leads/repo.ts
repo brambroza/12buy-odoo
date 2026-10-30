@@ -9,7 +9,7 @@ export type LeadWithDealer = DealerLead & { dealer: Pick<Dealer, 'id' | 'name' |
 /** Persists a validated lead from the public sign-up form; the password is stored only as a hash. */
 export async function createLead(input: DealerLeadInput, source = 'landing'): Promise<DealerLead> {
   const row = unwrap(await db().from('DealerLead').insert({
-    id: newId(), shopName: input.shopName, province: input.address.province, types: input.types, phone: input.phone, lineId: input.lineId || null, source,
+    id: newId(), shopName: input.shopName, taxId: input.taxId, province: input.address.province, types: input.types, phone: input.phone, lineId: input.lineId || null, source,
     email: input.email, passwordHash: hashPassword(input.password), address: input.address,
   }).select('*').single());
   return reviveDates<DealerLead>(row);
@@ -18,6 +18,12 @@ export async function createLead(input: DealerLeadInput, source = 'landing'): Pr
 /** A not-yet-handled lead (NEW / CONTACTED) that already uses this email. */
 export async function findOpenLeadByEmail(email: string): Promise<DealerLead | null> {
   const data = unwrap(await db().from('DealerLead').select('*').eq('email', email.trim().toLowerCase()).in('status', ['NEW', 'CONTACTED']).order('createdAt', { ascending: false }).limit(1).maybeSingle());
+  return data ? reviveDates<DealerLead>(data) : null;
+}
+
+/** A not-yet-handled lead (NEW / CONTACTED) for this tax id (13 digits). */
+export async function findOpenLeadByTaxId(taxId: string): Promise<DealerLead | null> {
+  const data = unwrap(await db().from('DealerLead').select('*').eq('taxId', taxId).in('status', ['NEW', 'CONTACTED']).order('createdAt', { ascending: false }).limit(1).maybeSingle());
   return data ? reviveDates<DealerLead>(data) : null;
 }
 

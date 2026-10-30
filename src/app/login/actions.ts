@@ -69,6 +69,10 @@ async function tryOdooLogin(email: string, password: string): Promise<Awaited<Re
     const outcome = await provisionFromOdooLogin(email, password);
     if (outcome.kind === 'invalid') return null;
     if (outcome.kind === 'not-portal') return { ok: false, message: 'บัญชี Odoo นี้ไม่ใช่บัญชีลูกค้า ติดต่อแอดมิน' };
+    if (outcome.kind === 'conflict') {
+      await audit(null, 'login.odoo_conflict', 'Dealer', outcome.dealer.id, { odooUid: outcome.odooUid, email, ip: ip.slice(0, 64) });
+      return { ok: false, message: 'ร้านของคุณมีบัญชีบนเว็บอยู่แล้ว ขอให้เจ้าของร้านเพิ่มผู้ใช้ให้ หรือทัก LINE ให้ทีมงานช่วย' };
+    }
     await audit(outcome.user.id, 'login.odoo_provision', 'User', outcome.user.id, { dealerId: outcome.dealer.id, odooUid: outcome.odooUid, newDealer: outcome.newDealer, role: outcome.user.role, ip: ip.slice(0, 64) });
     return findUserByEmail(email);
   } catch (error) {

@@ -14,7 +14,7 @@ const label = 'text-sm font-medium';
 const section = 'text-base font-bold sm:col-span-2';
 
 /**
- * Public dealer sign-up: shop, full address (province → district → subdistrict), contact,
+ * Public dealer sign-up: shop, tax id, full address (province → district → subdistrict), contact,
  * product families, the owner's login (email + password twice) and a Cloudflare Turnstile check.
  * After an error the form is refilled from what the server sent back (passwords excepted).
  */
@@ -42,6 +42,13 @@ export function RegisterForm() {
       <div className="sm:col-span-2">
         <label htmlFor="shopName" className={label}>ชื่อร้าน</label>
         <input id="shopName" name="shopName" required maxLength={120} autoComplete="organization" defaultValue={values?.shopName} placeholder="เช่น ร้านยางสมชาย" className={field} aria-invalid={invalid('shopName')} />
+      </div>
+      <div className="sm:col-span-2">
+        <label htmlFor="taxId" className={label}>เลขประจำตัวผู้เสียภาษี <span className="font-normal text-[var(--lp-muted)]">(13 หลัก ของร้าน/บริษัท หรือเลขบัตรประชาชนเจ้าของร้าน)</span></label>
+        <input id="taxId" name="taxId" inputMode="numeric" autoComplete="off" required maxLength={17} defaultValue={values?.taxId} placeholder="0-1055-56123-45-6" className={field} aria-invalid={invalid('taxId')} />
+        {failed?.hint === 'activate' && (
+          <p className="mt-1 text-sm"><Link href="/activate" className="font-medium text-[var(--lp-accent)] underline">ไปหน้าเปิดใช้บัญชีลูกค้าเดิม</Link></p>
+        )}
       </div>
       <div className="sm:col-span-2">
         <ThaiAddressFields

@@ -77,16 +77,14 @@ describe('cash discount as end-of-bill lines', () => {
     expect(buildOrderLines({ lines: old, paymentMethod: 'CASH', ref: 'WEB-1' }, discount)).toEqual([{ product_id: 1, product_uom_qty: 4, price_unit: 980 }]);
   });
 
-  it('says so in the note', () => {
-    expect(buildOrderNote(sampleOrder({ cashDiscount: 109 }), true)).toContain('ส่วนลดเงินสด 109.00 บาท เป็นบรรทัดท้ายบิล');
-  });
 });
 
 describe('buildOrderNote', () => {
-  it('lists ref, payment, carrier, address and the dealer remark', () => {
+  it('lists ref, carrier, address and the dealer remark without the payment line', () => {
     const note = buildOrderNote(sampleOrder({ note: 'ส่งช่วงเช้า', cashDiscount: 12.5 }));
-    expect(note).toContain('WEB-20261028-007');
-    expect(note).toContain('รวมส่วนลดเงินสด 12.50 บาท');
+    expect(note).toContain('ออเดอร์เว็บ WEB-20261028-007');
+    expect(note).not.toContain('ชำระ:');
+    expect(note).not.toContain('ส่วนลดเงินสด');
     expect(note).toContain('การจัดส่ง: รถบริษัท');
     expect(note).toContain('หมายเหตุ: ส่งช่วงเช้า');
     expect(note).not.toContain('เลขที่ใบสั่งซื้อ');

@@ -63,6 +63,11 @@ export async function findDealerByPartnerId(odooPartnerId: number): Promise<Deal
   return rowOrNull<Dealer>(await db().from('Dealer').select('*').eq('odooPartnerId', odooPartnerId).maybeSingle());
 }
 
+/** The web dealer with this tax id (13 digits), if any. Tax ids are unique per dealer. */
+export async function findDealerByTaxId(taxId: string): Promise<Dealer | null> {
+  return rowOrNull<Dealer>(await db().from('Dealer').select('*').eq('taxId', taxId).maybeSingle());
+}
+
 /** Hard-deletes a dealer that has no users or orders yet (undoing a half-finished self-activation). */
 export async function deleteDealer(id: string): Promise<void> {
   unwrap(await db().from('Dealer').delete().eq('id', id));

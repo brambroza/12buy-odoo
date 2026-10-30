@@ -7,6 +7,7 @@ import type { Dealer } from '@/lib/db/types';
 import { updateDealer } from '@/lib/dealers/repo';
 import { clearPartnerCache } from '@/lib/shop/catalog';
 import { parseThaiAddress } from '@/lib/thai-address';
+import { normalizeTaxId } from '@/lib/tax-id';
 import { odooSearchRead, odooWrite } from './rpc';
 
 const BANGKOK = 'กรุงเทพมหานคร';
@@ -46,12 +47,17 @@ export function partnerValues(dealer: Dealer, refs: { stateId: number | null; co
   return values;
 }
 
-/** Existing company partners that are the same shop: same tax id if we have one, else the exact name. */
+/**
+ * Existing company partners that are the same shop: same tax id if we have one (Odoo may store it with
+ * `TH`, dashes or spaces, so match on the digits), else the exact name.
+ */
 async function findExistingPartners(dealer: Dealer): Promise<IdName[]> {
-  const domain = dealer.taxId
-    ? [['vat', '=', dealer.taxId], ['is_company', '=', true]]
-    : [['name', '=ilike', dealer.name.trim()], ['is_company', '=', true]];
-  return odooSearchRead<IdName>('res.partner', domain, ['id', 'name'], { limit: 3 });
+  const taxId = normalizeTaxId(dealer.taxId);
+  if (taxId) {
+    const found = await odooSearchRead<IdName & { vat: string | false }>('res.partner', [['vat', 'ilike', taxId], ['is_company', '=', true]], ['id', 'name', 'vat'], { limit: 10 });
+    return found.filter((p) => normalizeTaxId(p.vat || '') === taxId).map(({ id, name }) => ({ id, name }));
+  }
+  return odooSearchRead<IdName>('res.partner', [['name', '=ilike', dealer.name.trim()], ['is_company', '=', true]], ['id', 'name'], { limit: 3 });
 }
 
 async function findStateAndCountry(province: string): Promise<{ stateId: number | null; countryId: number | null }> {

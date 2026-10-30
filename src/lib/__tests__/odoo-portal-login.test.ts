@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const rpc = vi.hoisted(() => ({ odooCheckLogin: vi.fn(), odooRead: vi.fn(), odooSearchRead: vi.fn() }));
-const repo = vi.hoisted(() => ({ createDealer: vi.fn(), findDealerByPartnerId: vi.fn(), getDealer: vi.fn(), updateDealer: vi.fn() }));
+const repo = vi.hoisted(() => ({ createDealer: vi.fn(), findDealerByPartnerId: vi.fn(), findDealerByTaxId: vi.fn(), getDealer: vi.fn(), updateDealer: vi.fn() }));
 const users = vi.hoisted(() => ({ createUser: vi.fn() }));
 vi.mock('@/lib/odoo/rpc', () => rpc);
 vi.mock('@/lib/dealers/repo', () => repo);
@@ -38,6 +38,13 @@ describe('createDealerFromPartner', () => {
     repo.createDealer.mockRejectedValue(Object.assign(new Error('dup'), { code: '23505' }));
     expect(await createDealerFromPartner(company as never, { note: 'n' })).toBeNull();
   });
+
+  it('returns null without inserting when a web dealer already has the partner tax id', async () => {
+    repo.findDealerByTaxId.mockResolvedValue({ id: 'd-old', name: 'ร้านเดิม' });
+    expect(await createDealerFromPartner(company as never, { note: 'n' })).toBeNull();
+    expect(repo.findDealerByTaxId).toHaveBeenCalledWith('0105556123456');
+    expect(repo.createDealer).not.toHaveBeenCalled();
+  });
 });
 
 describe('provisionFromOdooLogin', () => {
@@ -69,6 +76,17 @@ describe('provisionFromOdooLogin', () => {
     expect(outcome).toMatchObject({ kind: 'created', newDealer: true, odooUid: 12 });
     expect(repo.createDealer).toHaveBeenCalledWith(expect.objectContaining({ odooPartnerId: 40 }));
     expect(users.createUser).toHaveBeenCalledWith({ email: 'somchai@yangdee.co', name: 'คุณสมชาย', password: 'pw1234567', role: 'DEALER_OWNER', dealerId: 'd1' });
+  });
+
+  it('reports a conflict when an unlinked web dealer already carries the company tax id', async () => {
+    rpc.odooCheckLogin.mockResolvedValue(12);
+    odooHas();
+    repo.findDealerByPartnerId.mockResolvedValue(null);
+    repo.findDealerByTaxId.mockResolvedValue({ id: 'd-old', name: 'ร้านเดิม', odooPartnerId: null });
+    const outcome = await provisionFromOdooLogin('somchai@yangdee.co', 'pw1234567');
+    expect(outcome).toMatchObject({ kind: 'conflict', odooUid: 12, dealer: { id: 'd-old' } });
+    expect(repo.createDealer).not.toHaveBeenCalled();
+    expect(users.createUser).not.toHaveBeenCalled();
   });
 
   it('adds later logins of the same company as staff of the existing dealer', async () => {
