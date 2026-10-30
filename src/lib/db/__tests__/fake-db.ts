@@ -42,9 +42,13 @@ export function createFakeDb() {
     update(row: Row) { this.op = 'update'; this.payload = row; return this; }
     eq(col: string, value: unknown) { this.filters.push((r) => r[col] === value); return this; }
     lt(col: string, value: string) { this.filters.push((r) => String(r[col]) < value.replace('Z', '')); return this; }
-    /** Only `not(col, 'in', '("A","B")')`, as the store uses it. */
-    not(col: string, _op: 'in', list: string) {
-      const values = [...list.matchAll(/"((?:[^"\\]|\\.)*)"/g)].map((m) => m[1]);
+    /** `not(col, 'in', '("A","B")')` as the store uses it, and `not(col, 'is', null)` as the notifier does. */
+    not(col: string, op: 'in' | 'is', value: string | null) {
+      if (op === 'is') {
+        this.filters.push((r) => r[col] !== null && r[col] !== undefined);
+        return this;
+      }
+      const values = [...String(value ?? '').matchAll(/"((?:[^"\\]|\\.)*)"/g)].map((m) => m[1]);
       this.filters.push((r) => !values.includes(String(r[col])));
       return this;
     }
