@@ -18,6 +18,8 @@ import { listOpenCreditOrders } from '@/lib/shop/store';
 import { DEALER_TIER_LABELS, DEALER_TYPE_LABELS, type DealerTier, type DealerType } from '@/lib/shop/types';
 import { DealerAvatar } from '@/components/shop/dealer-avatar';
 import { UrlDrawer } from '@/components/admin/url-drawer';
+import { DealerNameField, type ExistingShop } from '@/components/admin/dealer-name-field';
+import { formatTaxId } from '@/lib/tax-id';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { EmptyRow, FilterChip, IconLink, ListPagination, ListSearch, TableCard } from '@/components/admin/list-kit';
 import { IconSubmit } from '@/components/admin/icon-submit';
@@ -106,6 +108,11 @@ export default async function DealersPage({ searchParams }: { searchParams: Prom
   const closeHref = href();
   const openDealer = params.open ? allDealers.find((d) => d.id === params.open) : undefined;
   const openCustomer = odoo.data && params.open?.startsWith('odoo-') ? customerById.get(Number(params.open.slice(5))) : undefined;
+  /** Shops the "add dealer" name field suggests: every web dealer, then Odoo customers that have no web dealer yet. */
+  const existingShops: ExistingShop[] = [
+    ...allDealers.map((d) => ({ kind: 'dealer' as const, name: d.name, detail: [d.province, d.taxId && formatTaxId(d.taxId)].filter(Boolean).join(' · '), href: href({ open: d.id, new: undefined, partner: undefined }) })),
+    ...unlinked.map((c) => ({ kind: 'odoo' as const, name: c.name, detail: [c.province, c.vat && formatTaxId(c.vat)].filter(Boolean).join(' · '), href: href({ new: '1', partner: String(c.id) }) })),
+  ];
   /** Table row for an Odoo customer that has no web dealer yet. */
   const odooRow = (c: OdooCustomer) => {
     const editHref = href({ open: `odoo-${c.id}` });
@@ -250,7 +257,7 @@ export default async function DealersPage({ searchParams }: { searchParams: Prom
       {params.new && canEdit && (
         <UrlDrawer key={`new-${params.partner ?? ''}`} title={prefill ? `สร้างดีลเลอร์จากลูกค้า Odoo` : 'เพิ่มดีลเลอร์ใหม่'} description={prefill?.name} closeHref={closeHref}>
           {notice}
-          <DealerForm action={createDealerAction} prefill={prefill} odooCreditLimit={prefillCustomer && prefill ? prefillCustomer.creditLimit : undefined} partners={partners} zones={zones} groups={groups} pricelists={odoo.data?.pricelists ?? []} />
+          <DealerForm action={createDealerAction} prefill={prefill} existing={existingShops} odooCreditLimit={prefillCustomer && prefill ? prefillCustomer.creditLimit : undefined} partners={partners} zones={zones} groups={groups} pricelists={odoo.data?.pricelists ?? []} />
         </UrlDrawer>
       )}
 
@@ -333,7 +340,7 @@ export default async function DealersPage({ searchParams }: { searchParams: Prom
             {canEdit ? (
               <>
                 <p className="text-xs text-muted-foreground">ตั้งค่าได้เหมือนดีลเลอร์บนเว็บ · กดบันทึกแล้วระบบสร้างข้อมูลร้านบนเว็บผูกกับ Odoo #{openCustomer.id} ให้ (ยังไม่สร้างบัญชีเข้าสู่ระบบ)</p>
-                <DealerForm action={createDealerAction} prefill={prefillFrom(openCustomer)} odooCreditLimit={openCustomer.creditLimit} partners={partners} zones={zones} groups={groups} pricelists={odoo.data.pricelists} />
+                <DealerForm action={createDealerAction} prefill={prefillFrom(openCustomer)} existing={existingShops} odooCreditLimit={openCustomer.creditLimit} partners={partners} zones={zones} groups={groups} pricelists={odoo.data.pricelists} />
               </>
             ) : <p className="text-xs text-muted-foreground">แก้ไขได้เฉพาะแอดมิน</p>}
           </section>
@@ -532,12 +539,19 @@ function TypePricelistFields({ saved, savedPercents, pricelists }: { saved: Part
   );
 }
 
-/** Shared create/edit form. Province list is static so it works when Odoo is down. */
-function DealerForm({ action, dealer, prefill, creditUsed, odooCreditLimit, partners, zones, groups, groupId, pricelists }: { action: (formData: FormData) => Promise<void>; dealer?: DealerRow; prefill?: DealerPrefill; creditUsed?: number; odooCreditLimit?: number | null; partners: Partner[]; zones: PriceZone[]; groups: CustomerGroup[]; groupId?: string; pricelists: OdooPricelistOption[] }) {
+/**
+ * Shared create/edit form. Province list is static so it works when Odoo is down.
+ * `existing` (create only) feeds the shop-name autocomplete that points at shops we already have.
+ */
+function DealerForm({ action, dealer, prefill, existing, creditUsed, odooCreditLimit, partners, zones, groups, groupId, pricelists }: { action: (formData: FormData) => Promise<void>; dealer?: DealerRow; prefill?: DealerPrefill; existing?: ExistingShop[]; creditUsed?: number; odooCreditLimit?: number | null; partners: Partner[]; zones: PriceZone[]; groups: CustomerGroup[]; groupId?: string; pricelists: OdooPricelistOption[] }) {
   return (
     <form action={action} className="grid gap-3 md:grid-cols-2">
       {dealer && <input type="hidden" name="dealerId" value={dealer.id} />}
-      <label className="text-xs font-medium">ชื่อร้าน<input name="name" defaultValue={dealer?.name ?? prefill?.name} required maxLength={120} className={field} /></label>
+      <label className="text-xs font-medium">ชื่อร้าน
+        {existing && !dealer
+          ? <DealerNameField existing={prefill ? existing.filter((s) => !(s.kind === 'odoo' && s.name === prefill.name)) : existing} defaultValue={prefill?.name} className={field} />
+          : <input name="name" defaultValue={dealer?.name ?? prefill?.name} required maxLength={120} className={field} />}
+      </label>
       <label className="text-xs font-medium">จังหวัด
         <select name="province" defaultValue={dealer?.province ?? prefill?.province ?? ''} required className={field}>
           <option value="" disabled>เลือกจังหวัด</option>
