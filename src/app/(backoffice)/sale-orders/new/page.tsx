@@ -1,6 +1,7 @@
 'use client';
 
 import { useMemo, useState } from 'react';
+import { MoneyInput } from '@/components/ui/money-input';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 import { Trash2, Plus } from 'lucide-react';
@@ -163,7 +164,7 @@ export default function NewSaleOrderPage() {
             </div>
             <div className="space-y-1.5">
               <Label>ราคา/หน่วย</Label>
-              <Input type="number" min={0} value={price} onChange={(e) => setPrice(Number(e.target.value))} />
+              <MoneyInput value={price} onValueChange={(v) => setPrice(v ?? 0)} />
             </div>
             <div className="space-y-1.5">
               <Label>ส่วนลด %</Label>

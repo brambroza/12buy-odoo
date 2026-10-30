@@ -2,6 +2,7 @@ import Link from 'next/link';
 import { Coins, Eraser, Undo2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { MoneyInput } from '@/components/ui/money-input';
 import { Badge } from '@/components/ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { EmptyRow, FilterChip, ListPagination, ListSearch, TableCard } from '@/components/admin/list-kit';
@@ -262,7 +263,7 @@ function BookEditor({ book, zone, catalog, type, query, params }: {
                     <TableCell data-label="ประเภท" className="text-xs">{DEALER_TYPE_LABELS[p.dealerType]}</TableCell>
                     <TableCell data-label="ราคาตั้ง (Odoo)" className="text-right text-muted-foreground tabular-nums">{baht(p.listPrice)}</TableCell>
                     <TableCell data-label={`ฐาน ${basePricelist?.name ?? ''}`} className="text-right text-muted-foreground tabular-nums">{baht(base)}</TableCell>
-                    <TableCell data-label="ราคาคงที่ (กรอก)" className="text-right"><input name={`price_${p.tmplId}`} inputMode="decimal" defaultValue={entry ?? ''} placeholder="—" aria-label={`ราคาคงที่ ${p.code}`} className="h-8 w-24 rounded-md border border-border bg-background px-2 text-right tabular-nums" /></TableCell>
+                    <TableCell data-label="ราคาคงที่ (กรอก)" className="text-right"><MoneyInput unstyled name={`price_${p.tmplId}`} defaultValue={entry} placeholder="—" aria-label={`ราคาคงที่ ${p.code}`} className="h-8 w-28 rounded-md border border-border bg-background px-2 text-right tabular-nums" /></TableCell>
                     <TableCell data-label="ดีลเลอร์เห็น" className={cn('text-right font-semibold tabular-nums', entry !== undefined ? 'text-primary' : '')}>{baht(effective)}</TableCell>
                   </TableRow>
                 );

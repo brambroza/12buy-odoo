@@ -161,8 +161,12 @@ export async function createDealerAction(formData: FormData) {
   }
   const groupId = await saveDealerGroup(id, formData);
   await audit(actor.id, 'dealer.create', 'Dealer', id, { ...parsed.data, customerGroupId: groupId });
-  // A new dealer has no limit in Odoo yet from the web, so any limit typed here goes to the Partner Limit.
-  const odooWarning = parsed.data.creditLimit === null ? null : await syncCreditLimitToOdoo(actor.id, { odooPartnerId: null, creditLimit: null }, parsed.data);
+  // A limit typed here goes to the Partner Limit, unless Odoo already has the same one (a dealer made from an
+  // Odoo customer starts with its limit), so that writes nothing and gives no read-only warning.
+  const odooLimit = parsed.data.creditLimit !== null && parsed.data.odooPartnerId
+    ? await getOdooCustomer(parsed.data.odooPartnerId).then((c) => (c ? { odooPartnerId: c.id, creditLimit: c.creditLimit } : null)).catch(() => null)
+    : null;
+  const odooWarning = parsed.data.creditLimit === null ? null : await syncCreditLimitToOdoo(actor.id, odooLimit ?? { odooPartnerId: null, creditLimit: null }, parsed.data);
   revalidate();
   await flash(odooWarning ? 'สร้างดีลเลอร์แล้ว (วงเงินยังไม่เข้า Odoo)' : 'สร้างดีลเลอร์แล้ว', {
     type: odooWarning ? 'warning' : 'success',

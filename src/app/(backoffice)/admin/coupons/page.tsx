@@ -3,6 +3,7 @@ import { Archive, ArchiveRestore, Plus, Ticket } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { MoneyInput } from '@/components/ui/money-input';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { EmptyRow, IconLink, ListPagination, ListSearch, TableCard } from '@/components/admin/list-kit';
 import { IconSubmit } from '@/components/admin/icon-submit';
@@ -255,7 +256,7 @@ export default async function CouponsPage({ searchParams }: { searchParams: Prom
 
             <fieldset className="grid gap-2 sm:grid-cols-2">
               <legend className="mb-1 text-sm font-semibold">ส่วนลด</legend>
-              <label className={labelClass}>จำนวน<Input name="discount" type="number" min={0.01} step="0.01" required className="mt-1" /></label>
+              <label className={labelClass}>จำนวน<MoneyInput name="discount" required className="mt-1" /></label>
               <label className={labelClass}>หน่วย
                 <select name="mode" defaultValue="percent" className={selectClass}>
                   <option value="percent">% ของยอด</option>
@@ -275,14 +276,14 @@ export default async function CouponsPage({ searchParams }: { searchParams: Prom
                   {categories.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
                 </select>
               </label>
-              <label className={labelClass}>ลดสูงสุด (บาท, เฉพาะ %)<Input name="maxAmount" type="number" min={0} step="0.01" placeholder="ไม่จำกัด" className="mt-1" /></label>
+              <label className={labelClass}>ลดสูงสุด (บาท, เฉพาะ %)<MoneyInput name="maxAmount" placeholder="ไม่จำกัด" className="mt-1" /></label>
             </fieldset>
 
             <fieldset className="grid gap-2 sm:grid-cols-2">
               <legend className="mb-1 text-sm font-semibold">เงื่อนไข</legend>
               {kind === 'promo_code' && (
                 <>
-                  <label className={labelClass}>ยอดขั้นต่ำ (บาท)<Input name="minimumAmount" type="number" min={0} step="0.01" placeholder="ไม่มี" className="mt-1" /></label>
+                  <label className={labelClass}>ยอดขั้นต่ำ (บาท)<MoneyInput name="minimumAmount" placeholder="ไม่มี" className="mt-1" /></label>
                   <label className={labelClass}>จำนวนขั้นต่ำ (ชิ้น)<Input name="minimumQty" type="number" min={0} step="1" placeholder="ไม่มี" className="mt-1" /></label>
                 </>
               )}

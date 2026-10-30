@@ -4,6 +4,7 @@
  */
 import type { OdooSync, ProtoOrder } from '@/lib/shop/types';
 import { PAYMENT_METHOD_LABELS } from '@/lib/shop/types';
+import { formatAmount } from '@/lib/money';
 import { findCarrierByName } from './delivery-carrier';
 import { applyCouponToOrder } from './loyalty';
 import { odooSearchRead, odooWrite } from './rpc';
@@ -52,8 +53,8 @@ export function buildOrderLines(order: Pick<ProtoOrder, 'lines' | 'paymentMethod
 export function buildOrderNote(order: ProtoOrder): string {
   return [
     `ออเดอร์เว็บ ${order.ref}`,
-    `ชำระ: ${PAYMENT_METHOD_LABELS[order.paymentMethod]}${order.cashDiscount > 0 ? ` (รวมส่วนลดเงินสด ${order.cashDiscount.toFixed(2)} บาทในราคาแล้ว)` : ''}`,
-    order.coupon ? `คูปอง: ${order.coupon.code} (${order.coupon.programName}) เว็บคำนวณส่วนลด ${order.couponDiscount.toFixed(2)} บาท` : '',
+    `ชำระ: ${PAYMENT_METHOD_LABELS[order.paymentMethod]}${order.cashDiscount > 0 ? ` (รวมส่วนลดเงินสด ${formatAmount(order.cashDiscount)} บาทในราคาแล้ว)` : ''}`,
+    order.coupon ? `คูปอง: ${order.coupon.code} (${order.coupon.programName}) เว็บคำนวณส่วนลด ${formatAmount(order.couponDiscount)} บาท` : '',
     order.poRef ? `เลขที่ใบสั่งซื้อของร้าน: ${order.poRef}` : '',
     `การจัดส่ง: ${order.carrier}`,
     `ส่งที่: ${order.address}`,

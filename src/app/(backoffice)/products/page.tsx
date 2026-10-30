@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { MoneyInput } from '@/components/ui/money-input';
 import { toast } from 'sonner';
 import { Plus, RefreshCw, Trash2, Pencil } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -165,7 +166,7 @@ export default function ProductsPage() {
             </div>
             <div className="space-y-1.5">
               <Label>ราคา</Label>
-              <Input type="number" value={form.price} onChange={(e) => setForm({ ...form, price: Number(e.target.value) })} />
+              <MoneyInput value={form.price} onValueChange={(price) => setForm({ ...form, price: price ?? 0 })} />
             </div>
             <div className="space-y-1.5">
               <Label>บาร์โค้ด</Label>

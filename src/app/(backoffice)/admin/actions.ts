@@ -15,6 +15,7 @@ import { requireAdmin, requireBackoffice } from '@/lib/auth/session';
 import { canSyncOrder, syncOrderToOdoo } from '@/lib/shop/odoo-sync';
 import * as shopStore from '@/lib/shop/store';
 import { refreshOrderStatuses } from '@/lib/shop/status-sync';
+import { formatAmount } from '@/lib/money';
 import { ORDER_STATUS_LABELS, type DealerType, type ProtoOrder } from '@/lib/shop/types';
 
 const tierSchema = z.enum(['S', 'M', 'L']);
@@ -369,7 +370,7 @@ export async function adminAdvanceOrderAction(formData: FormData) {
 async function pushOrReport(order: ProtoOrder): Promise<string | null> {
   const result = await syncOrderToOdoo(order);
   if (result.status === 'FAILED') return `${order.ref}: ยืนยันในเว็บแล้ว แต่ส่งเข้า Odoo ไม่สำเร็จ — ${result.error}`;
-  if (result.status === 'MISMATCH') return `${order.ref}: สร้าง ${result.saleOrderName} ใน Odoo แล้ว แต่ยอด ${result.amountTotal?.toFixed(2)} ไม่ตรงกับเว็บ ${order.total.toFixed(2)} กรุณาตรวจใน Odoo`;
+  if (result.status === 'MISMATCH') return `${order.ref}: สร้าง ${result.saleOrderName} ใน Odoo แล้ว แต่ยอด ${result.amountTotal === undefined || result.amountTotal === null ? '-' : formatAmount(result.amountTotal)} ไม่ตรงกับเว็บ ${formatAmount(order.total)} กรุณาตรวจใน Odoo`;
   return null;
 }
 
