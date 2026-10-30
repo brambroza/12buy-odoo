@@ -8,7 +8,8 @@ import type { CredentialResult } from '@/components/admin/credential-forms';
 import { audit } from '@/lib/auth/audit';
 import { generateTempPassword } from '@/lib/auth/password';
 import { findResetRequest, resolveResetRequests } from '@/lib/auth/reset-requests';
-import { canManageRole, type Role } from '@/lib/auth/roles';
+import { canManageRole, isBackofficeRole, type Role } from '@/lib/auth/roles';
+import { parseProfileForm } from '@/lib/auth/profile';
 import { requireAdmin, requireBackoffice, revokeAllSessions } from '@/lib/auth/session';
 import { createUser, createUserWithHash, findUserByEmail, findUserById, isUniqueViolation, setPassword, updateUser } from '@/lib/auth/users';
 import { createDealer, getDealer, updateDealer } from '@/lib/dealers/repo';
@@ -395,4 +396,38 @@ export async function createStaffUserAction(_prev: CredentialResult, formData: F
     if (isUniqueViolation(error)) return { ok: false, message: 'อีเมลนี้มีผู้ใช้อยู่แล้ว' };
     throw error;
   }
+}
+
+/**
+ * Admin edits a staff account from the users drawer: name, phone, role (permissions) and active status.
+ * The actor must be allowed to manage both the current and the new role, and cannot change their own
+ * role or status (that would risk locking everyone out). Deactivating signs the user out everywhere.
+ */
+export async function updateStaffUserAction(formData: FormData) {
+  const actor = await requireAdmin();
+  const userId = String(formData.get('userId') ?? '');
+  const back = backTo(formData, '/admin/users');
+  /** Reopens the drawer with an error; the typed values are lost, so messages stay short and specific. */
+  const failEdit = (message: string): never => redirect(`/admin/users?edit=${encodeURIComponent(userId)}&error=${encodeURIComponent(message)}`);
+  const target = await findUserById(userId);
+  if (!target || !isBackofficeRole(target.role as Role) || !canManageRole(actor.role as Role, target.role as Role)) redirect(back);
+  const profile = parseProfileForm(formData);
+  const role = z.enum(['SUPER_ADMIN', 'ADMIN', 'SALES', 'WAREHOUSE']).safeParse(formData.get('role'));
+  if (!profile.success) return failEdit(profile.error.issues[0]?.message ?? 'ข้อมูลไม่ครบ');
+  if (!role.success) return failEdit('เลือกบทบาท');
+  const self = target.id === actor.id;
+  const nextRole = self ? (target.role as Role) : role.data;
+  const nextActive = self ? true : formData.get('isActive') === '1';
+  if (!canManageRole(actor.role as Role, nextRole)) return failEdit('ไม่มีสิทธิ์ให้บทบาทนี้');
+
+  await updateUser(userId, { ...profile.data, role: nextRole, isActive: nextActive });
+  if (target.isActive && !nextActive) await revokeAllSessions(userId);
+  await audit(actor.id, 'user.update', 'User', userId, {
+    name: profile.data.name, phone: profile.data.phone,
+    ...(nextRole !== target.role && { role: { from: target.role, to: nextRole } }),
+    ...(nextActive !== target.isActive && { isActive: nextActive }),
+  });
+  revalidate();
+  await flash('บันทึกผู้ใช้แล้ว', { icon: 'user', description: !nextActive && target.isActive ? `${target.email} · ปิดใช้งานและออกจากระบบทุกอุปกรณ์แล้ว` : target.email });
+  redirect(back);
 }

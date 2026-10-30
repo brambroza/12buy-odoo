@@ -5,12 +5,15 @@ import { usePathname } from 'next/navigation';
 import { useRef, useState } from 'react';
 import gsap from 'gsap';
 import { useGSAP } from '@gsap/react';
-import { Gauge, LayoutDashboard, FileText, Users, Package, Menu, PanelLeftClose, PanelLeftOpen, MapPinned, Tags, Store, Inbox, Smartphone, UserPlus, ShieldCheck, LogOut, UsersRound, TicketPercent, Truck } from 'lucide-react';
+import { Gauge, LayoutDashboard, FileText, Users, Package, Menu, PanelLeftClose, PanelLeftOpen, MapPinned, Tags, Store, Inbox, Smartphone, UserPlus, ShieldCheck, LogOut, UsersRound, TicketPercent, Truck, UserRound, KeyRound, ChevronDown } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { SIDEBAR_COOKIE } from '@/lib/backoffice-ui';
 import { AdminMotion } from '@/components/admin/admin-motion';
 import { Button } from '@/components/ui/button';
 import { Sheet, SheetContent, SheetTitle, SheetTrigger } from '@/components/ui/sheet';
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
+import { NotificationBell } from '@/components/admin/notification-bell';
+import { DealerAvatar } from '@/components/shop/dealer-avatar';
 import { ROLE_LABELS, isAdminRole, type Role } from '@/lib/auth/roles';
 import { logoutAction } from '@/app/login/actions';
 import { BrandLogo } from '@/components/landing/brand-logo';
@@ -64,15 +67,54 @@ function NavLinks({ pathname, role, onNavigate }: { pathname: string; role: Role
   );
 }
 
-function UserBox({ user }: { user: { name: string; role: Role } }) {
+type ShellUser = { name: string; role: string; email?: string; avatarFile?: string | null };
+
+function UserBox({ user, onNavigate }: { user: ShellUser & { role: Role }; onNavigate?: () => void }) {
   return (
     <div className="mt-auto rounded-lg border border-border p-3 text-sm">
-      <p className="truncate font-medium">{user.name}</p>
-      <p className="text-xs text-muted-foreground">{ROLE_LABELS[user.role]}</p>
+      <Link href="/admin/profile" onClick={onNavigate} className="-m-1 flex items-center gap-2 rounded-md p-1 hover:bg-muted">
+        <DealerAvatar name={user.name} avatarFile={user.avatarFile ?? null} size={32} />
+        <span className="min-w-0">
+          <span className="block truncate font-medium">{user.name}</span>
+          <span className="block text-xs text-muted-foreground">{ROLE_LABELS[user.role]}</span>
+        </span>
+      </Link>
       <form action={logoutAction} className="mt-2">
         <Button type="submit" variant="outline" size="sm" className="w-full"><LogOut className="size-4" /> ออกจากระบบ</Button>
       </form>
     </div>
+  );
+}
+
+/** Top-bar account menu: avatar + name, links to the profile and password, and sign out. */
+function UserMenu({ user }: { user: ShellUser & { role: Role } }) {
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger render={
+        <Button variant="ghost" className="h-10 gap-2 px-1.5 sm:px-2" aria-label={`บัญชีของ ${user.name}`}>
+          <DealerAvatar name={user.name} avatarFile={user.avatarFile ?? null} size={30} />
+          <span className="hidden max-w-40 text-left leading-tight md:block">
+            <span className="block truncate text-sm font-medium">{user.name}</span>
+            <span className="block text-[11px] text-muted-foreground">{ROLE_LABELS[user.role]}</span>
+          </span>
+          <ChevronDown className="hidden size-4 text-muted-foreground md:block" />
+        </Button>
+      } />
+      <DropdownMenuContent align="end" className="w-60">
+        <div className="px-1.5 py-1.5">
+          <p className="truncate text-sm font-medium">{user.name}</p>
+          {user.email && <p className="truncate text-xs text-muted-foreground">{user.email}</p>}
+        </div>
+        <DropdownMenuSeparator />
+        <DropdownMenuItem render={<Link href="/admin/profile" />}><UserRound /> โปรไฟล์ของฉัน</DropdownMenuItem>
+        <DropdownMenuItem render={<Link href="/admin/profile#password" />}><KeyRound /> เปลี่ยนรหัสผ่าน</DropdownMenuItem>
+        {isAdminRole(user.role) && <DropdownMenuItem render={<Link href="/admin/users" />}><ShieldCheck /> ผู้ใช้และสิทธิ์</DropdownMenuItem>}
+        <DropdownMenuSeparator />
+        <DropdownMenuItem variant="destructive" onClick={() => (document.getElementById('backoffice-logout') as HTMLFormElement | null)?.requestSubmit()}>
+          <LogOut /> ออกจากระบบ
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 }
 
@@ -85,7 +127,7 @@ const SIDEBAR_WIDTH = 240;
  * Sidebar + top bar for staff pages. Rendered by the `(backoffice)` layout after the session check.
  * On desktop the sidebar can be hidden to give tables the full width; phones use the slide-in menu.
  */
-export function BackofficeShell({ user, sidebarOpen: initialSidebarOpen = true, children }: { user: { name: string; role: string }; sidebarOpen?: boolean; children: React.ReactNode }) {
+export function BackofficeShell({ user, sidebarOpen: initialSidebarOpen = true, children }: { user: ShellUser; sidebarOpen?: boolean; children: React.ReactNode }) {
   const pathname = usePathname();
   const [open, setOpen] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(initialSidebarOpen);
@@ -123,7 +165,7 @@ export function BackofficeShell({ user, sidebarOpen: initialSidebarOpen = true, 
         <div className="flex h-full w-60 flex-col gap-6 overflow-y-auto p-4">
           <Brand />
           <NavLinks pathname={pathname} role={role} />
-          <UserBox user={{ name: user.name, role }} />
+          <UserBox user={{ ...user, role }} />
         </div>
       </aside>
       <div className="flex min-h-screen min-w-0 flex-1 flex-col">
@@ -133,7 +175,7 @@ export function BackofficeShell({ user, sidebarOpen: initialSidebarOpen = true, 
             <SheetContent side="left" className="flex w-64 flex-col p-4">
               <SheetTitle className="sr-only">เมนู</SheetTitle>
               <Brand />
-              <div className="mt-6 flex flex-1 flex-col"><NavLinks pathname={pathname} role={role} onNavigate={() => setOpen(false)} /><UserBox user={{ name: user.name, role }} /></div>
+              <div className="mt-6 flex flex-1 flex-col"><NavLinks pathname={pathname} role={role} onNavigate={() => setOpen(false)} /><UserBox user={{ ...user, role }} onNavigate={() => setOpen(false)} /></div>
             </SheetContent>
           </Sheet>
           <Button variant="ghost" size="icon" className="hidden md:inline-flex" onClick={toggleSidebar} aria-expanded={sidebarOpen}
@@ -141,7 +183,11 @@ export function BackofficeShell({ user, sidebarOpen: initialSidebarOpen = true, 
             {sidebarOpen ? <PanelLeftClose className="size-5" /> : <PanelLeftOpen className="size-5" />}
           </Button>
           <p className={cn('flex items-center gap-2 text-sm font-medium text-muted-foreground', sidebarOpen && 'md:hidden')}><BrandLogo size={28} /> 12buy Admin</p>
-          <p className="ml-auto hidden text-xs text-muted-foreground md:block">{user.name} · {ROLE_LABELS[role]}</p>
+          <div className="ml-auto flex items-center gap-1">
+            <NotificationBell />
+            <UserMenu user={{ ...user, role }} />
+          </div>
+          <form id="backoffice-logout" action={logoutAction} className="hidden" />
         </header>
         <main className="min-w-0 flex-1 bg-muted/30 px-3 py-4 sm:p-4 md:p-6"><AdminMotion>{children}</AdminMotion></main>
       </div>

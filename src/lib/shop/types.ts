@@ -95,7 +95,7 @@ export type TypePricelists = Partial<Record<DealerType, number>>;
 /** CASH = transfer + slip before confirmation; CREDIT = billed on the dealer's payment term, no slip. */
 export type PaymentMethod = 'CASH' | 'CREDIT';
 
-export const PAYMENT_METHOD_LABELS: Record<PaymentMethod, string> = { CASH: 'เงินสด (โอนแล้วแนบสลิป)', CREDIT: 'เครดิต (วางบิลตามเทอม)' };
+export const PAYMENT_METHOD_LABELS: Record<PaymentMethod, string> = { CASH: 'เงินสด (โอนแล้วแนบสลิป)', CREDIT: 'เครดิต' };
 
 /** `qty` is always in base units; `unitId`/`unitQty` remember the pack the dealer chose, if any. */
 export type CartItem = { productId: number; qty: number; unitId?: number | null; unitQty?: number | null; unitName?: string | null };

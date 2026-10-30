@@ -94,6 +94,48 @@ export function percentChange(after: number, before: number): number | null {
   return Math.round(((after - before) / before) * 1000) / 10;
 }
 
+/** Credit invoices due within this many days are listed as "ใกล้ครบกำหนด". */
+export const DUE_SOON_DAYS = 7;
+/** Due within this many days (or today) makes the reminder a "today" task instead of a follow-up. */
+export const DUE_URGENT_DAYS = 3;
+const NOT_OWED = new Set(['paid', 'in_payment', 'reversed']);
+const bahtText = new Intl.NumberFormat('th-TH', { style: 'currency', currency: 'THB', maximumFractionDigits: 0 });
+
+/** One unpaid Odoo invoice of a credit order, with days until its due date (negative = overdue). */
+export type CreditDue = { orderId: string; ref: string; dealerName: string; invoice: string; dueDate: string; residual: number; daysLeft: number };
+
+/** Whole days from Thai day `from` to `to` (both `YYYY-MM-DD`). */
+function daysBetween(from: string, to: string): number {
+  return Math.round((Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / 86_400_000);
+}
+
+/** "เลยกำหนด 3 วัน" / "ครบกำหนดวันนี้" / "อีก 2 วัน". */
+export function dueLabel(daysLeft: number): string {
+  if (daysLeft < 0) return `เลยกำหนด ${-daysLeft} วัน`;
+  return daysLeft === 0 ? 'ครบกำหนดวันนี้' : `อีก ${daysLeft} วัน`;
+}
+
+/**
+ * Unpaid invoices of credit orders that are overdue or due within `withinDays`, soonest first.
+ * Due dates come from the Odoo status sync (`odoo.progress.invoices`), so orders not yet invoiced
+ * or not yet synced are skipped.
+ */
+export function creditDues(orders: readonly OrderLike[], now = Date.now(), withinDays = DUE_SOON_DAYS): CreditDue[] {
+  const today = thaiDay(now);
+  const dues: CreditDue[] = [];
+  for (const order of orders) {
+    if (order.paymentMethod !== 'CREDIT' || order.status === 'CANCELLED' || order.status === 'PAID') continue;
+    for (const inv of order.odoo?.progress?.invoices ?? []) {
+      if (!inv.dueDate || inv.amountResidual <= 0 || NOT_OWED.has(inv.paymentState)) continue;
+      const dueDate = inv.dueDate.slice(0, 10);
+      const daysLeft = daysBetween(today, dueDate);
+      if (Number.isNaN(daysLeft) || daysLeft > withinDays) continue;
+      dues.push({ orderId: order.id, ref: order.ref, dealerName: order.dealerName, invoice: inv.name, dueDate, residual: inv.amountResidual, daysLeft });
+    }
+  }
+  return dues.sort((a, b) => a.daysLeft - b.daysLeft || b.residual - a.residual);
+}
+
 export type TaskPriority = 'urgent' | 'today' | 'soon';
 
 /** One thing someone should do, with where to go to do it. */
@@ -156,6 +198,22 @@ export function buildTasks(input: TaskInput): DashboardTask[] {
   if (readyToConfirm.length) tasks.push({
     id: 'confirm-orders', priority: stale.some((o) => readyToConfirm.includes(o)) ? 'urgent' : 'today', count: readyToConfirm.length, title: 'ยืนยันออเดอร์ (สร้างใบสั่งขายใน Odoo)',
     detail: `${refs(readyToConfirm)} · เครดิตหรือตรวจสลิปแล้ว พร้อมยืนยัน`, href: one(readyToConfirm, '/admin/orders?status=PENDING'), action: 'ยืนยัน',
+  });
+  const dues = creditDues(input.orders, now);
+  const overdue = dues.filter((d) => d.daysLeft < 0);
+  const dueSoon = dues.filter((d) => d.daysLeft >= 0);
+  /** "SO1 ร้าน A (เลยกำหนด 2 วัน), …" for the first three invoices. */
+  const dueRefs = (list: CreditDue[]) => list.slice(0, 3).map((d) => `${d.invoice} ${d.dealerName} (${dueLabel(d.daysLeft)})`).join(', ') + (list.length > 3 ? ` และอีก ${list.length - 3}` : '');
+  const dueTotal = (list: CreditDue[]) => bahtText.format(list.reduce((sum, d) => sum + d.residual, 0));
+  const dueHref = (list: CreditDue[], filter: string) => (new Set(list.map((d) => d.orderId)).size === 1 ? `/admin/orders?open=${encodeURIComponent(list[0].orderId)}` : `/admin/orders?due=${filter}`);
+  if (overdue.length) tasks.push({
+    id: 'credit-overdue', priority: 'urgent', count: overdue.length, title: 'ลูกค้าเครดิตเลยกำหนดชำระ',
+    detail: `${dueRefs(overdue)} · ค้างรวม ${dueTotal(overdue)} · โทรติดตามเก็บเงิน`, href: dueHref(overdue, 'overdue'), action: 'ติดตาม',
+  });
+  if (dueSoon.length) tasks.push({
+    id: 'credit-due-soon', priority: dueSoon.some((d) => d.daysLeft <= DUE_URGENT_DAYS) ? 'today' : 'soon', count: dueSoon.length,
+    title: `ใกล้ครบกำหนดชำระ (เครดิต ภายใน ${DUE_SOON_DAYS} วัน)`,
+    detail: `${dueRefs(dueSoon)} · รวม ${dueTotal(dueSoon)} · แจ้งเตือนร้านทาง LINE`, href: dueHref(dueSoon, 'soon'), action: 'ดูบิล',
   });
   if (input.newLeads) tasks.push({
     id: 'leads', priority: input.oldestNewLeadAt && now - new Date(input.oldestNewLeadAt).getTime() > DAY_MS ? 'urgent' : 'today', count: input.newLeads,

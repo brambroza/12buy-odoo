@@ -1,10 +1,10 @@
 import Link from 'next/link';
-import { AlertTriangle, ArrowDownRight, ArrowRight, ArrowUpRight, CalendarCheck, CheckCircle2, Clock, Coins, Inbox, ListTodo, ShoppingCart, Store, Tags, UserPlus, Wallet } from 'lucide-react';
+import { AlertTriangle, ArrowDownRight, ArrowRight, ArrowUpRight, CalendarCheck, CalendarClock, CheckCircle2, Clock, Coins, Inbox, ListTodo, ShoppingCart, Store, Tags, UserPlus, Wallet } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { CountUp } from '@/components/admin/count-up';
 import * as admin from '@/lib/admin/store';
-import { TIME_ZONE, buildTasks, currentTime, percentChange, summarizeOrders, thaiDay, type DashboardTask, type SalesSummary, type TaskPriority } from '@/lib/admin/dashboard';
+import { DUE_SOON_DAYS, DUE_URGENT_DAYS, TIME_ZONE, buildTasks, creditDues, currentTime, dueLabel, percentChange, summarizeOrders, thaiDay, type CreditDue, type DashboardTask, type SalesSummary, type TaskPriority } from '@/lib/admin/dashboard';
 import { listPendingResetRequests } from '@/lib/auth/reset-requests';
 import { isAdminRole, type Role } from '@/lib/auth/roles';
 import { requireBackoffice } from '@/lib/auth/session';
@@ -23,7 +23,7 @@ const PRIORITY: Record<TaskPriority, { label: string; dot: string; badge: string
 };
 const TASK_ICON: Record<string, typeof Inbox> = {
   'odoo-sync': AlertTriangle, 'check-slip': Wallet, 'confirm-orders': CheckCircle2, leads: UserPlus, dealers: Store,
-  'price-books': Tags, 'reset-requests': Clock, carriers: AlertTriangle, 'waiting-slip': Clock,
+  'price-books': Tags, 'reset-requests': Clock, carriers: AlertTriangle, 'waiting-slip': Clock, 'credit-overdue': CalendarClock, 'credit-due-soon': CalendarClock,
 };
 const STATUS_FLOW: OrderStatus[] = ['PENDING', 'PREPARING', 'SHIPPED', 'INVOICED', 'PAID', 'CANCELLED'];
 const STATUS_BAR: Record<OrderStatus, string> = {
@@ -57,6 +57,7 @@ export default async function AdminDashboardPage() {
   ]);
   const now = currentTime();
   const summary = summarizeOrders(orders, now);
+  const dues = creditDues(orders, now);
   const booksPending = books.filter((b) => b.status === 'PENDING_APPROVAL')
     .map((b) => ({ id: b.id, label: `${zones.find((z) => z.id === b.zoneId)?.name ?? 'โซน'} · ${b.tier}` }));
   const tasks = buildTasks({
@@ -129,6 +130,7 @@ export default async function AdminDashboardPage() {
             </div>
           </section>
 
+          <CreditDueList dues={dues} />
           <StatusBreakdown summary={summary} />
         </div>
       </div>
@@ -154,6 +156,44 @@ export default async function AdminDashboardPage() {
         </section>
       </div>
     </div>
+  );
+}
+
+const dueDate = new Intl.DateTimeFormat('th-TH', { timeZone: 'UTC', day: 'numeric', month: 'short' });
+
+/** Credit invoices overdue or due within `DUE_SOON_DAYS`, so staff can remind the shop before the date. */
+function CreditDueList({ dues }: { dues: CreditDue[] }) {
+  const overdue = dues.filter((d) => d.daysLeft < 0).reduce((sum, d) => sum + d.residual, 0);
+  const total = dues.reduce((sum, d) => sum + d.residual, 0);
+  return (
+    <section aria-labelledby="due-heading" className={cn('rounded-xl border bg-card p-4', overdue > 0 ? 'border-destructive/40' : 'border-border')}>
+      <div className="mb-3 flex flex-wrap items-center gap-2">
+        <CalendarClock className="size-5 text-primary" aria-hidden />
+        <h2 id="due-heading" className="font-semibold">ครบกำหนดชำระ (ลูกค้าเครดิต)</h2>
+        {dues.length > 0 && <span className="ml-auto text-xs text-muted-foreground">รวม <span className="font-semibold text-foreground tabular-nums">{baht(total)}</span></span>}
+      </div>
+      {dues.length === 0 ? (
+        <p className="text-sm text-muted-foreground">ไม่มีบิลเครดิตที่เลยกำหนดหรือครบกำหนดใน {DUE_SOON_DAYS} วัน</p>
+      ) : (
+        <ul className="space-y-1">
+          {dues.slice(0, 8).map((d) => (
+            <li key={`${d.orderId}-${d.invoice}`}>
+              <Link href={`/admin/orders?open=${encodeURIComponent(d.orderId)}`} className="flex items-center gap-3 rounded-lg p-1.5 text-sm hover:bg-muted">
+                <span className={cn('w-24 shrink-0 rounded-full px-2 py-0.5 text-center text-[11px] font-medium',
+                  d.daysLeft < 0 ? PRIORITY.urgent.badge : d.daysLeft <= DUE_URGENT_DAYS ? PRIORITY.today.badge : PRIORITY.soon.badge)}>{dueLabel(d.daysLeft)}</span>
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate font-medium">{d.dealerName}</span>
+                  <span className="block truncate text-xs text-muted-foreground">{d.invoice} · {d.ref} · ครบ {dueDate.format(new Date(`${d.dueDate}T00:00:00Z`))}</span>
+                </span>
+                <span className="font-semibold tabular-nums">{baht(d.residual)}</span>
+              </Link>
+            </li>
+          ))}
+        </ul>
+      )}
+      {dues.length > 8 && <Link href="/admin/orders?due=all" className="mt-2 block text-center text-xs font-medium text-primary hover:underline">ดูทั้งหมด {dues.length} บิล</Link>}
+      <p className="mt-2 text-[11px] text-muted-foreground">วันครบกำหนดดึงจากใบแจ้งหนี้ใน Odoo (ซิงก์สถานะอัตโนมัติ)</p>
+    </section>
   );
 }
 

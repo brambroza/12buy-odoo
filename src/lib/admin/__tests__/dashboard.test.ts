@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildTasks, percentChange, summarizeOrders, thaiDay } from '@/lib/admin/dashboard';
+import { buildTasks, creditDues, dueLabel, percentChange, summarizeOrders, thaiDay } from '@/lib/admin/dashboard';
 
 // 2026-10-29 10:00 in Bangkok (03:00 UTC).
 const NOW = Date.parse('2026-10-29T03:00:00Z');
@@ -82,5 +82,68 @@ describe('buildTasks', () => {
     expect(tasks.find((t) => t.id === 'price-books')).toMatchObject({ href: '/admin/prices?book=b1', adminOnly: true });
     expect(tasks.find((t) => t.id === 'reset-requests')).toMatchObject({ count: 2, adminOnly: true });
     expect(tasks.find((t) => t.id === 'dealers')?.href).toBe('/admin/dealers?status=PENDING');
+  });
+});
+
+/** Credit order shipped and invoiced in Odoo with the given invoices. */
+function invoiced(id: string, invoices: { name?: string; dueDate: string | null; amountResidual?: number; paymentState?: string }[], overrides: Partial<O> = {}): O {
+  return order({
+    id, ref: `WEB-${id}`, status: 'INVOICED', paymentMethod: 'CREDIT', ...overrides,
+    odoo: {
+      status: 'SYNCED', saleOrderId: 1, saleOrderName: 'S1', amountTotal: 1000, error: null, at: '2026-10-01T00:00:00Z',
+      progress: { deliveryStatus: 'full', checkedAt: '2026-10-29T00:00:00Z', invoices: invoices.map((i, n) => ({ name: i.name ?? `INV/${id}/${n}`, paymentState: i.paymentState ?? 'not_paid', amountResidual: i.amountResidual ?? 1000, dueDate: i.dueDate })) },
+    },
+  });
+}
+
+const baseTasks = { newLeads: 0, pendingDealers: 0, booksPending: [], resetRequests: 0, publishedCarriers: 1, now: NOW };
+
+describe('creditDues', () => {
+  it('lists overdue and due-within-7-days unpaid credit invoices, soonest first, by Thai day', () => {
+    const dues = creditDues([
+      invoiced('a', [{ dueDate: '2026-11-03' }]),
+      invoiced('b', [{ dueDate: '2026-10-27' }]),
+      invoiced('c', [{ dueDate: '2026-10-29' }]),
+      invoiced('d', [{ dueDate: '2026-11-06' }]),
+    ], NOW);
+    expect(dues.map((d) => [d.orderId, d.daysLeft])).toEqual([['b', -2], ['c', 0], ['a', 5]]);
+  });
+
+  it('skips cash, paid, cancelled, settled and not-yet-invoiced orders', () => {
+    expect(creditDues([
+      invoiced('cash', [{ dueDate: '2026-10-29' }], { paymentMethod: 'CASH' }),
+      invoiced('paid', [{ dueDate: '2026-10-29' }], { status: 'PAID' }),
+      invoiced('cancel', [{ dueDate: '2026-10-29' }], { status: 'CANCELLED' }),
+      invoiced('zero', [{ dueDate: '2026-10-29', amountResidual: 0 }]),
+      invoiced('inpay', [{ dueDate: '2026-10-29', paymentState: 'in_payment' }]),
+      invoiced('nodate', [{ dueDate: null }]),
+      order({ id: 'nosync', status: 'SHIPPED' }),
+    ], NOW)).toEqual([]);
+  });
+
+  it('labels days left in Thai', () => {
+    expect(dueLabel(-3)).toBe('เลยกำหนด 3 วัน');
+    expect(dueLabel(0)).toBe('ครบกำหนดวันนี้');
+    expect(dueLabel(2)).toBe('อีก 2 วัน');
+  });
+});
+
+describe('buildTasks credit reminders', () => {
+  it('adds an urgent overdue task and a due-soon task linking to the filtered orders', () => {
+    const tasks = buildTasks({ ...baseTasks, orders: [
+      invoiced('a', [{ dueDate: '2026-10-28', amountResidual: 1500 }]),
+      invoiced('b', [{ dueDate: '2026-10-25', amountResidual: 500 }]),
+      invoiced('c', [{ dueDate: '2026-10-31' }]),
+    ] });
+    const overdue = tasks.find((t) => t.id === 'credit-overdue');
+    expect(overdue).toMatchObject({ priority: 'urgent', count: 2, href: '/admin/orders?due=overdue' });
+    expect(overdue?.detail).toContain('เลยกำหนด 4 วัน');
+    expect(tasks.find((t) => t.id === 'credit-due-soon')).toMatchObject({ priority: 'today', count: 1, href: '/admin/orders?open=c' });
+    expect(tasks[0].priority).toBe('urgent');
+  });
+
+  it('makes a reminder more than 3 days out a follow-up', () => {
+    const tasks = buildTasks({ ...baseTasks, orders: [invoiced('a', [{ dueDate: '2026-11-04' }])] });
+    expect(tasks).toEqual([expect.objectContaining({ id: 'credit-due-soon', priority: 'soon' })]);
   });
 });

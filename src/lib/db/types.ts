@@ -83,6 +83,10 @@ export type User = {
   email: string;
   passwordHash: string;
   name: string;
+  /** Contact phone (staff profile); null when not set. */
+  phone: string | null;
+  /** Profile picture file in the `avatars` bucket; null when not set. */
+  avatarFile: string | null;
   role: Role;
   dealerId: string | null;
   isActive: boolean;

@@ -9,6 +9,7 @@ import { EmptyRow, FilterChip, IconLink, ListPagination, ListSearch, TableCard }
 import { IconSubmit } from '@/components/admin/icon-submit';
 import { UrlDrawer } from '@/components/admin/url-drawer';
 import { listHref, matchesSearch, paginate, searchText } from '@/lib/admin/list';
+import { creditDues } from '@/lib/admin/dashboard';
 import { baht } from '@/lib/shop/catalog';
 import { canSyncOrder } from '@/lib/shop/odoo-sync';
 import { countStalePending, isPaymentReady, listAllOrders } from '@/lib/shop/store';
@@ -27,7 +28,11 @@ const STATUSES = ['PENDING', ...ORDER_STATUS_FLOW.slice(1), 'CANCELLED'] as Orde
 const CANCEL_CONFIRM = 'ยืนยันยกเลิกออเดอร์นี้? ยกเลิกแล้วย้อนกลับไม่ได้';
 const dateTime = (iso: string) => new Date(iso).toLocaleString('th-TH', { dateStyle: 'short', timeStyle: 'short' });
 
-type Search = { q?: string; status?: string; page?: string; open?: string; error?: string; info?: string };
+type Search = { q?: string; status?: string; page?: string; open?: string; error?: string; info?: string; due?: string };
+
+/** `?due=` filter: credit orders with an unpaid invoice overdue, due soon, or either. */
+const DUE_FILTERS = { overdue: 'เลยกำหนดชำระ', soon: 'ใกล้ครบกำหนด', all: 'ครบกำหนดทั้งหมด' } as const;
+type DueFilter = keyof typeof DUE_FILTERS;
 
 /** Odoo push status: SO number linking to Odoo, or what went wrong. */
 function OdooStatus({ sync }: { sync: OdooSync }) {
@@ -73,14 +78,18 @@ export default async function AdminOrdersPage({ searchParams }: { searchParams: 
   const status = STATUSES.includes(params.status as OrderStatus) ? (params.status as OrderStatus) : undefined;
   const [all, pendingOld] = await Promise.all([listAllOrders(), countStalePending(2 * 60 * 60 * 1000)]);
   const counts = Object.fromEntries(STATUSES.map((s) => [s, all.filter((o) => o.status === s).length])) as Record<OrderStatus, number>;
+  const due = params.due && params.due in DUE_FILTERS ? (params.due as DueFilter) : undefined;
+  const dues = creditDues(all);
+  const dueIds = (filter: DueFilter) => new Set(dues.filter((d) => filter === 'all' || (filter === 'overdue') === (d.daysLeft < 0)).map((d) => d.orderId));
+  const dueMatch = due ? dueIds(due) : null;
   const q = searchText(params.q);
-  const orders = all.filter((o) => (!status || o.status === status)
+  const orders = all.filter((o) => (!status || o.status === status) && (!dueMatch || dueMatch.has(o.id))
     && matchesSearch(q, o.ref, o.dealerName, o.poRef, o.carrier, o.trackingRef, o.odoo?.saleOrderName, ...o.lines.flatMap((l) => [l.code, l.size, l.name])));
   const pageRows = paginate(orders, params.page);
 
   /** List URL with the current filters; `changes` overrides params such as `status`, `open` or `page`. */
   const href = (changes: Record<string, string | undefined> = {}) =>
-    listHref('/admin/orders', { q: params.q, status, page: params.page }, changes);
+    listHref('/admin/orders', { q: params.q, status, due, page: params.page }, changes);
   const filterHref = (next: OrderStatus | undefined) => href({ status: next, page: undefined });
   const closeHref = href();
   const openOrder = params.open ? all.find((o) => o.id === params.open) : undefined;
@@ -107,8 +116,13 @@ export default async function AdminOrdersPage({ searchParams }: { searchParams: 
       <div className="flex flex-wrap items-center gap-2">
         <FilterChip href={filterHref(undefined)} active={!status}>ทั้งหมด {all.length}</FilterChip>
         {STATUSES.map((s) => <FilterChip key={s} href={filterHref(status === s ? undefined : s)} active={status === s}>{ORDER_STATUS_LABELS[s]} {counts[s]}</FilterChip>)}
+        {(['overdue', 'soon'] as const).map((f) => {
+          const n = dueIds(f).size;
+          return (n > 0 || due === f) && <FilterChip key={f} href={href({ due: due === f ? undefined : f, page: undefined })} active={due === f}>{DUE_FILTERS[f]} {n}</FilterChip>;
+        })}
+        {due === 'all' && <FilterChip href={href({ due: undefined, page: undefined })} active>{DUE_FILTERS.all} {dueIds('all').size}</FilterChip>}
         <div className="w-full sm:ml-auto sm:w-auto">
-          <ListSearch action="/admin/orders" q={params.q} placeholder="ค้นเลขออเดอร์ / ร้าน / PO / ขนาดยาง / SO" keep={{ status }}
+          <ListSearch action="/admin/orders" q={params.q} placeholder="ค้นเลขออเดอร์ / ร้าน / PO / ขนาดยาง / SO" keep={{ status, due }}
             clearHref={params.q ? listHref('/admin/orders', { status }) : undefined} />
         </div>
       </div>

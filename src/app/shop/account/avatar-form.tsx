@@ -23,12 +23,17 @@ async function squareJpeg(file: File): Promise<File> {
   return new File([blob], 'avatar.jpg', { type: 'image/jpeg' });
 }
 
-/** Pick, crop and upload the shop's profile picture; the server keeps only the newest one. */
-export function AvatarForm({ hasAvatar }: { hasAvatar: boolean }) {
+type AvatarAction = (prev: AvatarResult, formData: FormData) => Promise<AvatarResult>;
+
+/**
+ * Pick, crop and upload a profile picture; the server keeps only the newest one.
+ * `action` defaults to the dealer shop's picture; staff profiles pass their own.
+ */
+export function AvatarForm({ hasAvatar, action: serverAction = updateAvatarAction }: { hasAvatar: boolean; action?: AvatarAction }) {
   const input = useRef<HTMLInputElement>(null);
   const [preparing, setPreparing] = useState(false);
   const [localError, setLocalError] = useState<string | null>(null);
-  const [state, action, pending] = useActionState<AvatarResult, FormData>(updateAvatarAction, null);
+  const [state, action, pending] = useActionState<AvatarResult, FormData>(serverAction, null);
   const busy = pending || preparing;
 
   async function onPick(e: React.ChangeEvent<HTMLInputElement>) {

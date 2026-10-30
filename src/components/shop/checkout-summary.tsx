@@ -34,7 +34,7 @@ export function CheckoutSummary({ credit, creditBill, cashBill, creditLine, line
           <legend className="text-sm font-semibold">วิธีชำระเงิน</legend>
           <label className="flex cursor-pointer items-start gap-2 rounded-lg border border-border p-3 text-sm has-[:checked]:border-primary has-[:checked]:bg-primary/5">
             <input type="radio" name="paymentMethod" value="CREDIT" checked={method === 'CREDIT'} onChange={() => setMethod('CREDIT')} className="mt-1" />
-            <span className="flex-1">เครดิต (วางบิลตามเทอม)<span className="block text-xs text-muted-foreground">ไม่ต้องแนบสลิป</span></span>
+            <span className="flex-1">เครดิต<span className="block text-xs text-muted-foreground">ไม่ต้องแนบสลิป</span></span>
             <span className="font-bold">{baht(creditBill.total)}</span>
           </label>
           {method === 'CREDIT' && afterCredit.remaining !== null && (
