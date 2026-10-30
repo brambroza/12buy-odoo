@@ -15,7 +15,7 @@ import { createDealer, getDealer, updateDealer } from '@/lib/dealers/repo';
 import { clearLeadPassword, findLead, setLeadStatus } from '@/lib/leads/repo';
 import { formatThaiAddress, parseThaiAddress } from '@/lib/thai-address';
 import { ensureDealerPartner } from '@/lib/odoo/dealer-partner';
-import { listOdooPricelists, updateOdooCustomerCreditLimit } from '@/lib/odoo/customer-pricing';
+import { getOdooCustomer, listOdooPricelists, updateOdooCustomerCreditLimit } from '@/lib/odoo/customer-pricing';
 import { odooWritesEnabled } from '@/lib/odoo/rpc';
 import { clearPartnerCache } from '@/lib/shop/catalog';
 import * as admin from '@/lib/admin/store';
@@ -161,8 +161,14 @@ export async function createDealerAction(formData: FormData) {
   }
   const groupId = await saveDealerGroup(id, formData);
   await audit(actor.id, 'dealer.create', 'Dealer', id, { ...parsed.data, customerGroupId: groupId });
+  // A new dealer has no limit in Odoo yet from the web, so any limit typed here goes to the Partner Limit.
+  const odooWarning = parsed.data.creditLimit === null ? null : await syncCreditLimitToOdoo(actor.id, { odooPartnerId: null, creditLimit: null }, parsed.data);
   revalidate();
-  await flash('สร้างดีลเลอร์แล้ว', { icon: 'store', description: `${parsed.data.name} · ขั้นต่อไป: สร้างบัญชีเข้าสู่ระบบให้ร้าน` });
+  await flash(odooWarning ? 'สร้างดีลเลอร์แล้ว (วงเงินยังไม่เข้า Odoo)' : 'สร้างดีลเลอร์แล้ว', {
+    type: odooWarning ? 'warning' : 'success',
+    icon: 'store',
+    description: odooWarning ? `${parsed.data.name} · ${odooWarning}` : `${parsed.data.name} · ขั้นต่อไป: สร้างบัญชีเข้าสู่ระบบให้ร้าน`,
+  });
   redirect(`/admin/dealers?open=${id}&saved=1`);
 }
 
@@ -196,6 +202,31 @@ export async function updateDealerAction(formData: FormData) {
       : parsed.data.status === 'SUSPENDED' && before.status !== 'SUSPENDED' ? `${parsed.data.name} · ระงับร้านและออกจากระบบผู้ใช้ทุกคนแล้ว`
       : becomingActive ? `${parsed.data.name} · เปิดใช้งานร้านแล้ว` : parsed.data.name,
   });
+  redirect(`/admin/dealers?open=${id}&saved=1`);
+}
+
+/**
+ * Copies the Odoo Partner Limit (res.partner `credit_limit`) into the dealer's web credit limit, for when
+ * accounting set the limit in Odoo. Read-only on the Odoo side, so it works while ODOO_READ_ONLY is on.
+ */
+export async function pullOdooCreditLimitAction(formData: FormData) {
+  const actor = await requireAdmin();
+  const id = String(formData.get('dealerId') ?? '');
+  const dealer = await getDealer(id);
+  if (!dealer) redirect('/admin/dealers');
+  if (!dealer.odooPartnerId) fail('/admin/dealers', 'ดีลเลอร์นี้ยังไม่ได้ผูกลูกค้า Odoo');
+  let customer: Awaited<ReturnType<typeof getOdooCustomer>>;
+  try {
+    customer = await getOdooCustomer(dealer.odooPartnerId);
+  } catch (error) {
+    fail('/admin/dealers', `เชื่อมต่อ Odoo ไม่ได้: ${error instanceof Error ? error.message : 'ไม่ทราบสาเหตุ'}`);
+  }
+  if (!customer) fail('/admin/dealers', 'ไม่พบลูกค้านี้ใน Odoo');
+  const before = dealer.creditLimit === null ? null : Number(dealer.creditLimit);
+  await updateDealer(id, { creditLimit: customer.creditLimit });
+  await audit(actor.id, 'dealer.credit_limit_from_odoo', 'Dealer', id, { from: before, to: customer.creditLimit, odooPartnerId: dealer.odooPartnerId });
+  revalidate();
+  await flash('ดึงวงเงินจาก Odoo แล้ว', { icon: 'save', description: `${dealer.name} · ${customer.creditLimit === null ? 'ไม่จำกัดวงเงิน' : `วงเงิน ${customer.creditLimit.toLocaleString('th-TH')} บาท`}` });
   redirect(`/admin/dealers?open=${id}&saved=1`);
 }
 

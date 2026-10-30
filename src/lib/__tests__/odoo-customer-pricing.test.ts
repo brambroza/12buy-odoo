@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const rpc = vi.hoisted(() => ({ odooSearchRead: vi.fn(), odooWrite: vi.fn() }));
 vi.mock('@/lib/odoo/rpc', () => rpc);
 
-const { getOdooCustomer, updateOdooCustomerCreditLimit, getOdooPartnerKinds, partnerKind, parseCustomerCarrier, parseCustomerPricingForm, partnerPricingValues, toOdooCustomer, updateOdooCustomerPricing } = await import('@/lib/odoo/customer-pricing');
+const { getOdooCustomer, updateOdooCustomerCreditLimit, getOdooPartnerKinds, partnerKind, parseCustomerCarrier, parseCustomerPricingForm, partnerPricingValues, sameCreditLimit, toOdooCustomer, updateOdooCustomerPricing } = await import('@/lib/odoo/customer-pricing');
 
 function raw(overrides: Record<string, unknown> = {}) {
   return {
@@ -122,5 +122,21 @@ describe('getOdooPartnerKinds', () => {
       ['res.partner', 'write', [[185], { use_partner_credit_limit: true, credit_limit: 100000 }]],
       ['res.partner', 'write', [[185], { use_partner_credit_limit: false, credit_limit: 0 }]],
     ]);
+  });
+});
+
+describe('sameCreditLimit', () => {
+  it('treats null and 0 as no limit on either side', () => {
+    expect(sameCreditLimit(null, null)).toBe(true);
+    expect(sameCreditLimit(0, null)).toBe(true);
+    expect(sameCreditLimit(null, 0)).toBe(true);
+  });
+
+  it('compares amounts to the satang', () => {
+    expect(sameCreditLimit(100000, 100000)).toBe(true);
+    expect(sameCreditLimit(100000.004, 100000)).toBe(true);
+    expect(sameCreditLimit(100000, 50000)).toBe(false);
+    expect(sameCreditLimit(100000, null)).toBe(false);
+    expect(sameCreditLimit(null, 35000)).toBe(false);
   });
 });

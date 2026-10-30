@@ -178,6 +178,15 @@ export function partnerCreditLimitValues(creditLimit: number | null): Record<str
   return { use_partner_credit_limit: limited, credit_limit: limited ? creditLimit : 0 };
 }
 
+/**
+ * Whether the web credit limit equals the Odoo Partner Limit. "No limit" on either side is null or 0,
+ * since Odoo stores a switched-off limit as 0; amounts compare to the satang.
+ */
+export function sameCreditLimit(web: number | null, odoo: number | null): boolean {
+  const norm = (v: number | null) => (v !== null && v > 0 ? Math.round(v * 100) : 0);
+  return norm(web) === norm(odoo);
+}
+
 /** Writes only the credit limit to the Odoo partner (the dealer form's web limit). Throws when Odoo writes are off. */
 export async function updateOdooCustomerCreditLimit(partnerId: number, creditLimit: number | null): Promise<void> {
   await odooWrite<boolean>('res.partner', 'write', [[partnerId], partnerCreditLimitValues(creditLimit)]);

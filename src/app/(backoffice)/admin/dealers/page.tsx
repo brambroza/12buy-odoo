@@ -7,7 +7,7 @@ import type { CustomerGroup, PriceZone } from '@/lib/admin/types';
 import { requireBackoffice } from '@/lib/auth/session';
 import { ROLE_LABELS, isAdminRole, type Role } from '@/lib/auth/roles';
 import { listDealers } from '@/lib/dealers/repo';
-import { getOdooPartnerKinds, listOdooCustomers, listOdooPricelists, type OdooCustomer, type OdooPartnerKind, type OdooPricelistOption } from '@/lib/odoo/customer-pricing';
+import { getOdooPartnerKinds, listOdooCustomers, listOdooPricelists, sameCreditLimit, type OdooCustomer, type OdooPartnerKind, type OdooPricelistOption } from '@/lib/odoo/customer-pricing';
 import { listAllCarriers, type DeliveryCarrier } from '@/lib/odoo/delivery-carrier';
 import { odooWritesEnabled } from '@/lib/odoo/rpc';
 import { PROVINCES } from '@/lib/provinces';
@@ -25,7 +25,7 @@ import { listHref, matchesSearch, paginate, searchText } from '@/lib/admin/list'
 import { TierShield } from '@/components/shop/tier-shield';
 import { cn } from '@/lib/utils';
 import { updateOdooCustomerAction } from '../customer-actions';
-import { createDealerAction, createDealerUserAction, openAsDealerAction, resetPasswordAction, toggleUserActiveAction, updateDealerAction } from '../dealer-actions';
+import { createDealerAction, createDealerUserAction, openAsDealerAction, pullOdooCreditLimitAction, resetPasswordAction, toggleUserActiveAction, updateDealerAction } from '../dealer-actions';
 
 const TYPES = Object.keys(DEALER_TYPE_LABELS) as DealerType[];
 const TIERS = Object.keys(DEALER_TIER_LABELS) as DealerTier[];
@@ -286,7 +286,14 @@ export default async function DealersPage({ searchParams }: { searchParams: Prom
 
             <section className="space-y-2">
               <h2 className="text-sm font-semibold">ข้อมูลร้าน</h2>
-              {canEdit ? <DealerForm action={updateDealerAction} dealer={d} creditUsed={creditUsed(d)} partners={partners} zones={zones} groups={groups} groupId={group?.id} pricelists={odoo.data?.pricelists ?? []} /> : <p className="text-xs text-muted-foreground">แก้ไขได้เฉพาะแอดมิน</p>}
+              {canEdit ? <DealerForm action={updateDealerAction} dealer={d} creditUsed={creditUsed(d)} odooCreditLimit={customer ? customer.creditLimit : undefined} partners={partners} zones={zones} groups={groups} groupId={group?.id} pricelists={odoo.data?.pricelists ?? []} /> : <p className="text-xs text-muted-foreground">แก้ไขได้เฉพาะแอดมิน</p>}
+              {canEdit && customer && !sameCreditLimit(d.creditLimit == null ? null : Number(d.creditLimit), customer.creditLimit) && (
+                <form action={pullOdooCreditLimitAction} className="flex flex-wrap items-center gap-2 rounded-lg border border-amber-500/40 bg-amber-500/10 p-2 text-xs text-amber-800">
+                  <input type="hidden" name="dealerId" value={d.id} />
+                  <span>วงเงินเว็บไม่ตรงกับ Partner Limit ใน Odoo ({customer.creditLimit === null ? 'ไม่จำกัด' : baht(customer.creditLimit)}){writable ? ' · กดบันทึกด้านบนเพื่อส่งวงเงินเว็บไป Odoo หรือ' : ' · Odoo อ่านอย่างเดียว ส่งไปไม่ได้ ·'}</span>
+                  <Button type="submit" size="sm" variant="outline">ดึงวงเงินจาก Odoo มาใช้</Button>
+                </form>
+              )}
               <p className="text-xs text-muted-foreground">ราคา: {typePricelistSummary(d, odoo.data?.pricelists ?? [])}{book?.status === 'PUBLISHED' ? `ตารางราคาเว็บ ${zone.name} / ${d.tier}` : 'pricelist ใน Odoo'}</p>
             </section>
 
@@ -425,6 +432,16 @@ function typePricelistSummary(dealer: DealerRow, pricelists: OdooPricelistOption
   return `${entries.map(([t, id]) => `${DEALER_TYPE_LABELS[t]}: ${name(id)}`).join(' · ')} · อื่น ๆ: `;
 }
 
+/** Odoo Partner Limit under the web limit field; saving a changed web limit writes it there. */
+function OdooLimitNote({ web, odoo }: { web: number | null; odoo: number | null }) {
+  const same = sameCreditLimit(web, odoo);
+  return (
+    <span className={cn('block font-normal', same ? 'text-muted-foreground' : 'text-amber-700')}>
+      Odoo Partner Limit: {odoo === null ? 'ไม่จำกัด' : baht(odoo)}{same ? ' · ตรงกับเว็บ' : ' · ไม่ตรงกับเว็บ'}
+    </span>
+  );
+}
+
 /** Web credit used vs. limit in the dealer row header. */
 function CreditUsage({ limit, used }: { limit: number | null; used: number }) {
   if (limit === null) return <span className="text-xs text-muted-foreground">ค้างเครดิต {baht(used)} · ไม่จำกัดวงเงินเว็บ</span>;
@@ -466,7 +483,7 @@ function TypePricelistFields({ saved, pricelists }: { saved: Partial<Record<Deal
 }
 
 /** Shared create/edit form. Province list is static so it works when Odoo is down. */
-function DealerForm({ action, dealer, prefill, creditUsed, partners, zones, groups, groupId, pricelists }: { action: (formData: FormData) => Promise<void>; dealer?: DealerRow; prefill?: DealerPrefill; creditUsed?: number; partners: Partner[]; zones: PriceZone[]; groups: CustomerGroup[]; groupId?: string; pricelists: OdooPricelistOption[] }) {
+function DealerForm({ action, dealer, prefill, creditUsed, odooCreditLimit, partners, zones, groups, groupId, pricelists }: { action: (formData: FormData) => Promise<void>; dealer?: DealerRow; prefill?: DealerPrefill; creditUsed?: number; odooCreditLimit?: number | null; partners: Partner[]; zones: PriceZone[]; groups: CustomerGroup[]; groupId?: string; pricelists: OdooPricelistOption[] }) {
   return (
     <form action={action} className="grid gap-3 md:grid-cols-2">
       {dealer && <input type="hidden" name="dealerId" value={dealer.id} />}
@@ -508,6 +525,7 @@ function DealerForm({ action, dealer, prefill, creditUsed, partners, zones, grou
       </label>
       <label className="text-xs font-medium">วงเงินเครดิต (บาท)
         <input name="creditLimit" inputMode="decimal" defaultValue={dealer?.creditLimit ?? ''} placeholder="ว่าง = ไม่จำกัด" className={field} />
+        {odooCreditLimit !== undefined && <OdooLimitNote web={dealer?.creditLimit == null ? null : Number(dealer.creditLimit)} odoo={odooCreditLimit} />}
       </label>
       <label className="text-xs font-medium">ยอดค้างยกมา (บาท)
         <input name="creditOpening" inputMode="decimal" defaultValue={dealer ? Number(dealer.creditOpening) || '' : ''} placeholder="0" className={field} />
