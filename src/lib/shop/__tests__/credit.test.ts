@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { creditAfterOrder, isDealerScope, tightestCredit, webCreditLine, webCreditUsed } from '../credit';
+import { creditAfterOrder, isDealerScope, orderCreditView, parseOrderScope, tightestCredit, webCreditLine, webCreditUsed } from '../credit';
 
 describe('creditAfterOrder', () => {
   it('is the limit minus what is owed minus this order', () => {
@@ -64,5 +64,31 @@ describe('webCreditLine', () => {
     expect(webCreditLine({ id: 'd1', odooPartnerId: null, creditLimit: null, creditOpening: '100' }, [])).toBeNull();
     expect(webCreditLine({ id: 'd1', odooPartnerId: null, creditLimit: '50000.00', creditOpening: '1200.50' }, [{ scope: 'dealer:d1', paymentMethod: 'CREDIT', status: 'PENDING', total: 800 }]))
       .toEqual({ limit: 50_000, used: 2_000.5 });
+  });
+});
+
+describe('parseOrderScope', () => {
+  it('reads dealer and staff scopes', () => {
+    expect(parseOrderScope('dealer:d1')).toEqual({ dealerId: 'd1' });
+    expect(parseOrderScope('staff:u1:42')).toEqual({ odooPartnerId: 42 });
+  });
+  it('returns null for demo, empty or unknown scopes', () => {
+    expect(parseOrderScope('staff:u1:demo')).toBeNull();
+    expect(parseOrderScope('dealer:')).toBeNull();
+    expect(parseOrderScope('staff:u1:0')).toBeNull();
+    expect(parseOrderScope('guest')).toBeNull();
+  });
+});
+
+describe('orderCreditView', () => {
+  it('takes the order back out of a line that already counts it (web)', () => {
+    expect(orderCreditView({ limit: 100_000, used: 60_000 }, 10_000, true)).toEqual({ limit: 100_000, used: 50_000, before: 50_000, after: 40_000, over: false });
+  });
+  it('subtracts the order from a line that does not count it yet (Odoo)', () => {
+    expect(orderCreditView({ limit: 50_000, used: 45_000 }, 6_000.5, false)).toEqual({ limit: 50_000, used: 45_000, before: 5_000, after: -1_000.5, over: true });
+  });
+  it('is null without a limit', () => {
+    expect(orderCreditView(null, 1_000, true)).toBeNull();
+    expect(orderCreditView({ limit: null, used: 5 }, 1_000, false)).toBeNull();
   });
 });

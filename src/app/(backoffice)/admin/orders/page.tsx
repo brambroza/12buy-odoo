@@ -13,6 +13,8 @@ import { creditDues } from '@/lib/admin/dashboard';
 import { uniformCashPercent } from '@/lib/shop/pricing';
 import { baht } from '@/lib/shop/catalog';
 import { canSyncOrder } from '@/lib/shop/odoo-sync';
+import { getPendingOrderCredit } from '@/lib/shop/credit-line';
+import type { OrderCreditView } from '@/lib/shop/credit';
 import { countStalePending, isPaymentReady, listAllOrders } from '@/lib/shop/store';
 import { ORDER_STATUS_FLOW, ORDER_STATUS_LABELS, type OdooSync, type OrderStatus, type ProtoOrder } from '@/lib/shop/types';
 import { cn } from '@/lib/utils';
@@ -298,8 +300,9 @@ function OrderDrawer({ order: o, closeHref, notice }: { order: ProtoOrder; close
       )}
 
       {o.status === 'PENDING' && o.paymentMethod === 'CREDIT' && (
-        <section className="rounded-lg bg-sky-500/10 p-3 text-xs text-sky-900">
-          ลูกค้าเครดิต · ไม่ต้องแนบสลิป · ตรวจรายการแล้วกด “ยืนยันออเดอร์” เพื่อสร้างใบสั่งขาย (SO) และใบแจ้งหนี้ร่างใน Odoo
+        <section className="space-y-3 rounded-lg bg-sky-500/10 p-3 text-xs text-sky-900">
+         
+          <CreditPanel order={o} />
         </section>
       )}
 
@@ -351,6 +354,41 @@ function OrderDrawer({ order: o, closeHref, notice }: { order: ProtoOrder; close
         </section>
       )}
     </UrlDrawer>
+  );
+}
+
+/** Remaining credit of the dealer behind a pending credit order: web line and Odoo partner limit, before and after this order. */
+async function CreditPanel({ order: o }: { order: ProtoOrder }) {
+  const credit = await getPendingOrderCredit(o);
+  if (!credit) return <p className="text-muted-foreground">ไม่พบข้อมูลวงเงินของลูกค้ารายนี้</p>;
+  const { web, odoo, odooError } = credit;
+  return (
+    <div className="grid gap-2 sm:grid-cols-1">
+      <CreditCard title="วงเงินเครดิต" view={web} usedLabel="ยอดยกมา + ออเดอร์เครดิตค้าง" empty="ไม่ได้ตั้งวงเงินบนเว็บ" />
+     {(web?.over || odoo?.over) && (
+        <p className="rounded-md bg-destructive/10 p-2 text-destructive sm:col-span-2">ออเดอร์นี้เกินวงเงินเครดิต · ตรวจสอบกับฝ่ายขาย/บัญชีก่อนยืนยัน</p>
+      )}
+    </div>
+  );
+}
+
+/** One credit line: limit, used, room left now and after confirming the order. */
+function CreditCard({ title, view, usedLabel, empty }: { title: string; view: OrderCreditView | null; usedLabel: string; empty: string }) {
+  return (
+    <div className="rounded-md border border-sky-500/20 bg-background p-2 text-foreground">
+      <p className="mb-1 font-semibold">{title}</p>
+      {view ? (
+        <dl className="grid grid-cols-[1fr_auto] gap-x-3 gap-y-0.5 tabular-nums">
+          <dt className="text-muted-foreground">วงเงิน</dt><dd className="text-right">{baht(view.limit)}</dd>
+          <dt className="text-muted-foreground">{usedLabel}</dt><dd className="text-right">{baht(view.used)}</dd>
+          <dt className="text-muted-foreground">คงเหลือก่อนออเดอร์นี้</dt><dd className="text-right">{baht(view.before)}</dd>
+          <dt className="font-medium">คงเหลือหลังยืนยัน</dt>
+          <dd className={cn('text-right font-bold', view.over ? 'text-destructive' : 'text-emerald-700')}>{baht(view.after)}</dd>
+        </dl>
+      ) : (
+        <p className="text-muted-foreground">{empty}</p>
+      )}
+    </div>
   );
 }
 

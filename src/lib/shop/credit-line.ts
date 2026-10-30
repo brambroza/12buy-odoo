@@ -1,6 +1,6 @@
-import { getDealer } from '@/lib/dealers/repo';
+import { findDealerByPartnerId, getDealer } from '@/lib/dealers/repo';
 import { getPartnerCredit } from './catalog';
-import { tightestCredit, webCreditLine, type CreditLine } from './credit';
+import { orderCreditView, parseOrderScope, tightestCredit, webCreditLine, type CreditLine, type OrderCreditView } from './credit';
 import { listOpenCreditOrders } from './store';
 import type { DealerProfile } from './types';
 
@@ -25,4 +25,25 @@ export async function getCreditLine(profile: Pick<DealerProfile, 'credit' | 'dea
     profile.odooPartnerId ? getPartnerCredit(profile.odooPartnerId).catch(() => null) : null,
   ]);
   return tightestCredit(web, odoo);
+}
+
+/** Credit of the dealer behind one order, for the admin confirming it. `odooError` when Odoo could not be read. */
+export type OrderCredit = { web: OrderCreditView | null; odoo: OrderCreditView | null; odooError: boolean };
+
+/**
+ * Web and Odoo credit lines of whoever placed a pending credit order, each as room before/after it.
+ * The pending order already reserves web credit but is not in Odoo yet. Null when the scope maps to no customer.
+ */
+export async function getPendingOrderCredit(order: { sessionId: string; total: number }): Promise<OrderCredit | null> {
+  const who = parseOrderScope(order.sessionId);
+  if (!who) return null;
+  const dealer = 'dealerId' in who ? await getDealer(who.dealerId) : await findDealerByPartnerId(who.odooPartnerId);
+  const partnerId = dealer?.odooPartnerId ?? ('odooPartnerId' in who ? who.odooPartnerId : null);
+  if (!dealer && !partnerId) return null;
+  let odooError = false;
+  const [web, odoo] = await Promise.all([
+    dealer && dealer.creditLimit != null ? listOpenCreditOrders(dealer).then((orders) => webCreditLine(dealer, orders)) : null,
+    partnerId ? getPartnerCredit(partnerId).catch(() => { odooError = true; return null; }) : null,
+  ]);
+  return { web: orderCreditView(web, order.total, true), odoo: orderCreditView(odoo, order.total, false), odooError };
 }
