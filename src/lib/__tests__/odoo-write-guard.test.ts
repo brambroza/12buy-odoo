@@ -41,9 +41,11 @@ describe('odooWrite guard', () => {
     // Cancelling a web order's SO and its draft invoice is allowed; deleting or posting is not.
     await expect(odooWrite('sale.order', 'action_cancel', [[1]])).rejects.not.toThrow('not an allowed write');
     await expect(odooWrite('account.move', 'button_cancel', [[1]])).rejects.not.toThrow('not an allowed write');
-    expect(fetchSpy).toHaveBeenCalledTimes(2);
+    // Allowed pairs reach the network (authenticate + call); a blocked pair adds no request at all.
+    expect(fetchSpy).toHaveBeenCalled();
+    const reached = fetchSpy.mock.calls.length;
     await expect(odooWrite('account.move', 'button_draft', [[1]])).rejects.toThrow('not an allowed write');
-    expect(fetchSpy).toHaveBeenCalledTimes(2);
+    expect(fetchSpy).toHaveBeenCalledTimes(reached);
   });
 
   it('lets res.partner.write touch only pricelist and credit limit fields', async () => {

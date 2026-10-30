@@ -9,9 +9,6 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
-      # Build-time placeholders only; nothing here reaches Odoo or Supabase.
-      SUPABASE_URL: https://placeholder.supabase.co
-      SUPABASE_SERVICE_ROLE_KEY: placeholder-service-role-key
       NEXT_PUBLIC_SITE_URL: https://example.com
       ODOO_READ_ONLY: 'true'
       NEXT_TELEMETRY_DISABLED: '1'
@@ -26,6 +23,10 @@ jobs:
       - run: npm run typecheck
       - run: npm run test:coverage
       - run: npm run build
+        env:
+          # Build-time placeholders only (the env check wants them present); nothing reaches Supabase.
+          SUPABASE_URL: https://placeholder.supabase.co
+          SUPABASE_SERVICE_ROLE_KEY: placeholder-service-role-key
       - name: Upload coverage report
         if: always()
         uses: actions/upload-artifact@v4
