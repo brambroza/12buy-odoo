@@ -46,6 +46,19 @@ export function pickUnit(units: readonly SaleUnit[], unitId: number | null | und
   return units.find((u) => u.id === unitId) ?? units[0];
 }
 
+/**
+ * Unit pre-selected when the dealer adds to cart: the smallest packaging set on the
+ * product in Odoo (Sales tab → Packagings), or the base unit when none is set.
+ */
+export function defaultSaleUnit<T extends { factor: number }>(units: readonly T[]): T | undefined {
+  return units.find((u) => u.factor > 1) ?? units[0];
+}
+
+/** Starting quantity for a unit: 1 pack, or the family default when ordering base units. */
+export function defaultQtyForUnit(unit: { factor: number } | undefined, baseDefaultQty: number): number {
+  return unit && unit.factor > 1 ? 1 : baseDefaultQty;
+}
+
 /** Human description of a quantity, e.g. `2 มัด 3 เส้น (6 เส้น)` or `4 เส้น`. */
 export function describeQty(baseQty: number, baseLabel: string, unit?: { name: string; factor: number } | null, unitQty?: number | null): string {
   if (!unit || unit.factor <= 1 || !unitQty) return `${baseQty} ${baseLabel}`;

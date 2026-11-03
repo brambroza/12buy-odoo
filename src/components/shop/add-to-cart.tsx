@@ -4,22 +4,24 @@ import { useActionState, useState } from 'react';
 import { Minus, Plus, ShoppingCart, Check } from 'lucide-react';
 import { addToCartAction, type ActionResult } from '@/app/shop/actions';
 import { Button } from '@/components/ui/button';
+import { defaultQtyForUnit, defaultSaleUnit } from '@/lib/shop/units';
 
 export type UnitOption = { id: number; name: string; factor: number };
 
 /**
  * Quantity stepper + optional unit picker (เส้น / มัด 3 เส้น / …) + add button.
+ * Starts on the product's Odoo packaging when it has one (see `defaultSaleUnit`), otherwise the base unit.
  * `onChange` lets the product page show the price for the selected unit.
  * `soldOut` replaces the form with a disabled button (the server also refuses out-of-stock adds).
  */
 export function AddToCart({ productId, defaultQty, units = [], compact = false, soldOut = false, onChange }: { productId: number; defaultQty: number; units?: UnitOption[]; compact?: boolean; soldOut?: boolean; onChange?: (unit: UnitOption, qty: number) => void }) {
   const [state, action, pending] = useActionState<ActionResult | null, FormData>(addToCartAction, null);
-  const [unitId, setUnitId] = useState<number | undefined>(units[0]?.id);
+  const [unitId, setUnitId] = useState<number | undefined>(() => defaultSaleUnit(units)?.id);
   const unit = units.find((u) => u.id === unitId) ?? units[0];
-  const [qty, setQtyState] = useState(defaultQty);
+  const [qty, setQtyState] = useState(() => defaultQtyForUnit(defaultSaleUnit(units), defaultQty));
   const hasPacks = units.some((u) => u.factor > 1);
   const setQty = (n: number) => { const v = Math.max(1, Math.min(999, n || 1)); setQtyState(v); if (unit) onChange?.(unit, v); };
-  const pickUnit = (id: number) => { setUnitId(id); const u = units.find((x) => x.id === id); if (u) { const v = u.factor > 1 ? 1 : defaultQty; setQtyState(v); onChange?.(u, v); } };
+  const pickUnit = (id: number) => { setUnitId(id); const u = units.find((x) => x.id === id); if (u) { const v = defaultQtyForUnit(u, defaultQty); setQtyState(v); onChange?.(u, v); } };
   if (soldOut) return <Button type="button" variant="secondary" disabled className={compact ? 'h-11' : 'h-11 w-full'}>สินค้าหมด</Button>;
   return (
     <form action={action} className={compact ? 'flex flex-wrap items-center gap-2' : 'flex flex-wrap items-center gap-3'}>

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { baseUnitLabel, buildUnitIndex, describeQty, parseQuickQty, pickUnit, unitsForProduct, type RawUom } from '@/lib/shop/units';
+import { baseUnitLabel, buildUnitIndex, defaultQtyForUnit, defaultSaleUnit, describeQty, parseQuickQty, pickUnit, unitsForProduct, type RawUom } from '@/lib/shop/units';
 
 const rows: RawUom[] = [
   { id: 1, name: 'Units', relative_factor: 1, relative_uom_id: false },
@@ -29,6 +29,19 @@ describe('units', () => {
     expect(pickUnit(units, 32).factor).toBe(3);
     expect(pickUnit(units, 777).factor).toBe(1);
     expect(pickUnit(units, null).name).toBe('เส้น');
+  });
+
+  it('defaults to the smallest Odoo packaging, else the base unit', () => {
+    expect(defaultSaleUnit(unitsForProduct('MOTORCYCLE', 1, [33], index))?.name).toBe('มัด 5 เส้น');
+    expect(defaultSaleUnit(unitsForProduct('MOTORCYCLE', 1, [33, 32], index))?.name).toBe('มัด 3 เส้น');
+    expect(defaultSaleUnit(unitsForProduct('CAR', 1, [], index))?.name).toBe('เส้น');
+    expect(defaultSaleUnit([])).toBeUndefined();
+  });
+
+  it('starts at 1 pack or the base default quantity', () => {
+    expect(defaultQtyForUnit({ factor: 5 }, 4)).toBe(1);
+    expect(defaultQtyForUnit({ factor: 1 }, 4)).toBe(4);
+    expect(defaultQtyForUnit(undefined, 2)).toBe(2);
   });
 
   it('describes quantities', () => {
