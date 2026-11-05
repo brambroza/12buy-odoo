@@ -57,6 +57,16 @@ describe('webCreditUsed', () => {
   it('skips cash orders and other dealers', () => {
     expect(webCreditUsed(dealer, [order({ paymentMethod: 'CASH' }), order({ scope: 'dealer:d2' })])).toBe(5_000);
   });
+
+  it('uses Odoo Total Receivable instead of the manual opening and skips invoiced orders already in it', () => {
+    const orders = [order({}), order({ status: 'INVOICED', total: 2_500.25 }), order({ scope: 'staff:u1:42', status: 'SHIPPED' })];
+    expect(webCreditUsed(dealer, orders, 12_000.5)).toBe(14_000.5);
+    expect(webCreditUsed(dealer, orders, 0)).toBe(2_000);
+  });
+
+  it('falls back to the manual opening when the receivable is unknown', () => {
+    expect(webCreditUsed(dealer, [order({ status: 'INVOICED' })], null)).toBe(6_000);
+  });
 });
 
 describe('webCreditLine', () => {
@@ -64,6 +74,7 @@ describe('webCreditLine', () => {
     expect(webCreditLine({ id: 'd1', odooPartnerId: null, creditLimit: null, creditOpening: '100' }, [])).toBeNull();
     expect(webCreditLine({ id: 'd1', odooPartnerId: null, creditLimit: '50000.00', creditOpening: '1200.50' }, [{ scope: 'dealer:d1', paymentMethod: 'CREDIT', status: 'PENDING', total: 800 }]))
       .toEqual({ limit: 50_000, used: 2_000.5 });
+    expect(webCreditLine({ id: 'd1', odooPartnerId: 42, creditLimit: '50000.00', creditOpening: '1200.50' }, [], 3_000)).toEqual({ limit: 50_000, used: 3_000 });
   });
 });
 

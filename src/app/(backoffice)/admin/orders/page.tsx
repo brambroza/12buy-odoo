@@ -483,7 +483,7 @@ async function CreditPanel({ order: o }: { order: ProtoOrder }) {
   const { web, odoo, odooError } = credit;
   return (
     <div className="grid gap-2 sm:grid-cols-1">
-      <CreditCard title="วงเงินเครดิต" view={web} usedLabel="ยอดยกมา + ออเดอร์เครดิตค้าง" empty="ไม่ได้ตั้งวงเงินบนเว็บ" />
+      <CreditCard title="วงเงินเครดิต" view={web} usedLabel="ยอดค้างยกมา (Odoo) + ออเดอร์เครดิตค้าง" empty="ไม่ได้ตั้งวงเงินบนเว็บ" />
      {(web?.over || odoo?.over) && (
         <p className="rounded-md bg-destructive/10 p-2 text-destructive sm:col-span-2">ออเดอร์นี้เกินวงเงินเครดิต · ตรวจสอบกับฝ่ายขาย/บัญชีก่อนยืนยัน</p>
       )}

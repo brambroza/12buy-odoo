@@ -34,6 +34,8 @@ export type Catalog = {
 };
 
 const CATALOG_TTL_MS = 5 * 60 * 1000;
+/** Odoo domain for web-sellable products: can be sold, has a category, published on the website. */
+export const PRODUCT_DOMAIN = [['sale_ok', '=', true], ['is_published', '=', true], ['categ_id', '!=', false]];
 const SUFFIX_TO_TYPE: Record<string, DealerType> = { PCR: 'CAR', TBR: 'TRUCK', MC: 'MOTORCYCLE', BT: 'BATTERY', WH: 'WHEEL' };
 
 let catalogCache: { value: Catalog; expiresAt: number } | null = null;
@@ -66,7 +68,10 @@ function imageUrlFor(tmplId: number, published: boolean, base: string): string |
   return published && base ? `${base}/web/image/product.template/${tmplId}/image_512` : null;
 }
 
-/** Loads products, categories and pricelist rules from Odoo (read-only) with a 5-minute cache. */
+/**
+ * Loads products, categories and pricelist rules from Odoo (read-only) with a 5-minute cache.
+ * Only products published on the website (product tab eCommerce > Published) are listed.
+ */
 export async function getCatalog(): Promise<Catalog> {
   if (catalogCache && catalogCache.expiresAt > Date.now()) return catalogCache.value;
   if (!catalogInFlight) {
@@ -78,7 +83,7 @@ export async function getCatalog(): Promise<Catalog> {
 /** Performs the actual Odoo reads for the catalog (single-flight via getCatalog). */
 async function loadCatalog(): Promise<Catalog> {
   const [rawProducts, rawCategories, rawPricelists, rawItems, rawUoms, rawTaxes] = await Promise.all([
-    odooSearchRead<RawProduct>('product.product', [['sale_ok', '=', true], ['categ_id', '!=', false]],
+    odooSearchRead<RawProduct>('product.product', PRODUCT_DOMAIN,
       ['id', 'product_tmpl_id', 'name', 'default_code', 'list_price', 'categ_id', 'qty_available', 'is_published', 'uom_id', 'uom_ids', 'taxes_id'], { limit: 2000, order: 'default_code asc' }),
     odooSearchRead<RawCategory>('product.category', [], ['id', 'name', 'parent_id'], { limit: 500 }),
     odooSearchRead<RawPricelist>('product.pricelist', [], ['id', 'name'], { limit: 200 }),

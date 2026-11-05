@@ -12,7 +12,7 @@ import { getOdooPartnerKinds, listOdooCustomers, listOdooPricelists, sameCreditL
 import { listAllCarriers, type DeliveryCarrier } from '@/lib/odoo/delivery-carrier';
 import { odooWritesEnabled } from '@/lib/odoo/rpc';
 import { PROVINCES } from '@/lib/provinces';
-import { baht, getPartners } from '@/lib/shop/catalog';
+import { baht, getPartners, shortProvince } from '@/lib/shop/catalog';
 import { webCreditUsed } from '@/lib/shop/credit';
 import { listOpenCreditOrders } from '@/lib/shop/store';
 import { DEALER_TIER_LABELS, DEALER_TYPE_LABELS, type DealerTier, type DealerType } from '@/lib/shop/types';
@@ -20,6 +20,7 @@ import { DealerAvatar } from '@/components/shop/dealer-avatar';
 import { UrlDrawer } from '@/components/admin/url-drawer';
 import { ExportMenu } from '@/components/admin/export-menu';
 import { DealerNameField, type ExistingShop } from '@/components/admin/dealer-name-field';
+import { OdooPartnerField, type OdooPartnerOption } from '@/components/admin/odoo-partner-field';
 import { formatTaxId } from '@/lib/tax-id';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { EmptyRow, FilterChip, IconLink, ListPagination, ListSearch, TableCard } from '@/components/admin/list-kit';
@@ -76,7 +77,16 @@ export default async function DealersPage({ searchParams }: { searchParams: Prom
   // Salesperson lives on the Odoo customer (res.partner.user_id); web orders carry it so commission stays with the right person.
   const salesperson = (id: number) => { const p = partners.find((x) => x.id === id); return p?.user_id ? p.user_id[1] : null; };
   const { zones, groups } = settings;
-  const creditUsed = (d: DealerRow) => webCreditUsed({ id: d.id, odooPartnerId: d.odooPartnerId, creditOpening: Number(d.creditOpening) || 0 }, openCredit);
+  const linkedDealer = new Map(allDealers.filter((d) => d.odooPartnerId).map((d) => [d.odooPartnerId!, { dealerId: d.id, name: d.name }]));
+  const partnerOptions: OdooPartnerOption[] = partners.map((p) => ({
+    id: p.id,
+    name: p.name,
+    detail: [p.state_id && shortProvince(p.state_id[1]), p.property_product_pricelist && p.property_product_pricelist[1], p.phone].filter(Boolean).join(' · '),
+    linkedTo: linkedDealer.get(p.id),
+  }));
+  // Linked dealers carry over Odoo's Total Receivable; the manual value only covers unlinked dealers or Odoo being down.
+  const odooReceivable = (d: DealerRow) => (d.odooPartnerId ? customerById.get(d.odooPartnerId)?.receivable ?? null : null);
+  const creditUsed = (d: DealerRow) => webCreditUsed({ id: d.id, odooPartnerId: d.odooPartnerId, creditOpening: Number(d.creditOpening) || 0 }, openCredit, odooReceivable(d));
 
   const customerById = new Map((odoo.data?.customers ?? []).map((c) => [c.id, c]));
   const linked = new Set(allDealers.map((d) => d.odooPartnerId).filter((id): id is number => id !== null));
@@ -259,7 +269,7 @@ export default async function DealersPage({ searchParams }: { searchParams: Prom
       {params.new && canEdit && (
         <UrlDrawer key={`new-${params.partner ?? ''}`} title={prefill ? `สร้างดีลเลอร์จากลูกค้า Odoo` : 'เพิ่มดีลเลอร์ใหม่'} description={prefill?.name} closeHref={closeHref}>
           {notice}
-          <DealerForm action={createDealerAction} prefill={prefill} existing={existingShops} odooCreditLimit={prefillCustomer && prefill ? prefillCustomer.creditLimit : undefined} partners={partners} zones={zones} groups={groups} pricelists={odoo.data?.pricelists ?? []} />
+          <DealerForm action={createDealerAction} prefill={prefill} existing={existingShops} odooCreditLimit={prefillCustomer && prefill ? prefillCustomer.creditLimit : undefined} odooReceivable={prefillCustomer && prefill ? prefillCustomer.receivable : undefined} partners={partnerOptions} zones={zones} groups={groups} pricelists={odoo.data?.pricelists ?? []} />
         </UrlDrawer>
       )}
 
@@ -286,7 +296,7 @@ export default async function DealersPage({ searchParams }: { searchParams: Prom
 
             <section className="space-y-2">
               <h2 className="text-sm font-semibold">ข้อมูลร้าน</h2>
-              {canEdit ? <DealerForm action={updateDealerAction} dealer={d} creditUsed={creditUsed(d)} odooCreditLimit={customer ? customer.creditLimit : undefined} partners={partners} zones={zones} groups={groups} groupId={group?.id} pricelists={odoo.data?.pricelists ?? []} /> : <p className="text-xs text-muted-foreground">แก้ไขได้เฉพาะแอดมิน</p>}
+              {canEdit ? <DealerForm action={updateDealerAction} dealer={d} creditUsed={creditUsed(d)} odooCreditLimit={customer ? customer.creditLimit : undefined} odooReceivable={customer?.receivable} partners={partnerOptions} zones={zones} groups={groups} groupId={group?.id} pricelists={odoo.data?.pricelists ?? []} /> : <p className="text-xs text-muted-foreground">แก้ไขได้เฉพาะแอดมิน</p>}
               {canEdit && customer && !sameCreditLimit(d.creditLimit == null ? null : Number(d.creditLimit), customer.creditLimit) && (
                 <form action={pullOdooCreditLimitAction} className="flex flex-wrap items-center gap-2 rounded-lg border border-amber-500/40 bg-amber-500/10 p-2 text-xs text-amber-800">
                   <input type="hidden" name="dealerId" value={d.id} />
@@ -342,7 +352,7 @@ export default async function DealersPage({ searchParams }: { searchParams: Prom
             {canEdit ? (
               <>
                 <p className="text-xs text-muted-foreground">ตั้งค่าได้เหมือนดีลเลอร์บนเว็บ · กดบันทึกแล้วระบบสร้างข้อมูลร้านบนเว็บผูกกับ Odoo #{openCustomer.id} ให้ (ยังไม่สร้างบัญชีเข้าสู่ระบบ)</p>
-                <DealerForm action={createDealerAction} prefill={prefillFrom(openCustomer)} existing={existingShops} odooCreditLimit={openCustomer.creditLimit} partners={partners} zones={zones} groups={groups} pricelists={odoo.data.pricelists} />
+                <DealerForm action={createDealerAction} prefill={prefillFrom(openCustomer)} existing={existingShops} odooCreditLimit={openCustomer.creditLimit} odooReceivable={openCustomer.receivable} partners={partnerOptions} zones={zones} groups={groups} pricelists={odoo.data.pricelists} />
               </>
             ) : <p className="text-xs text-muted-foreground">แก้ไขได้เฉพาะแอดมิน</p>}
           </section>
@@ -483,7 +493,6 @@ function CreditUsage({ limit, used }: { limit: number | null; used: number }) {
   return <span className={cn('text-xs', left < 0 ? 'font-medium text-destructive' : 'text-muted-foreground')}>วงเงิน {baht(limit)} · ใช้ {baht(used)} · {left < 0 ? `เกิน ${baht(-left)}` : `เหลือ ${baht(left)}`}</span>;
 }
 
-type Partner = Awaited<ReturnType<typeof getPartners>>[number];
 type DealerRow = Awaited<ReturnType<typeof listDealers>>[number];
 /** Starting values for a new dealer created from an Odoo customer. */
 type DealerPrefill = { name: string; province: string; phone: string | null; taxId: string | null; odooPartnerId: number; creditLimit: number | null };
@@ -545,7 +554,7 @@ function TypePricelistFields({ saved, savedPercents, pricelists }: { saved: Part
  * Shared create/edit form. Province list is static so it works when Odoo is down.
  * `existing` (create only) feeds the shop-name autocomplete that points at shops we already have.
  */
-function DealerForm({ action, dealer, prefill, existing, creditUsed, odooCreditLimit, partners, zones, groups, groupId, pricelists }: { action: (formData: FormData) => Promise<void>; dealer?: DealerRow; prefill?: DealerPrefill; existing?: ExistingShop[]; creditUsed?: number; odooCreditLimit?: number | null; partners: Partner[]; zones: PriceZone[]; groups: CustomerGroup[]; groupId?: string; pricelists: OdooPricelistOption[] }) {
+function DealerForm({ action, dealer, prefill, existing, creditUsed, odooCreditLimit, odooReceivable, partners, zones, groups, groupId, pricelists }: { action: (formData: FormData) => Promise<void>; dealer?: DealerRow; prefill?: DealerPrefill; existing?: ExistingShop[]; creditUsed?: number; odooCreditLimit?: number | null; odooReceivable?: number; partners: OdooPartnerOption[]; zones: PriceZone[]; groups: CustomerGroup[]; groupId?: string; pricelists: OdooPricelistOption[] }) {
   return (
     <form action={action} className="grid gap-3 md:grid-cols-2">
       {dealer && <input type="hidden" name="dealerId" value={dealer.id} />}
@@ -580,10 +589,7 @@ function DealerForm({ action, dealer, prefill, existing, creditUsed, odooCreditL
         <select name="status" defaultValue={dealer?.status ?? 'ACTIVE'} className={field}>{(Object.keys(STATUS) as Status[]).map((s) => <option key={s} value={s}>{STATUS[s]}</option>)}</select>
       </label>
       <label className="text-xs font-medium md:col-span-2">ลูกค้าใน Odoo
-        <select name="odooPartnerId" defaultValue={dealer?.odooPartnerId ?? prefill?.odooPartnerId ?? ''} className={field}>
-          <option value="">ไม่ผูก</option>
-          {partners.map((p) => <option key={p.id} value={p.id}>{p.name}{p.state_id ? ` · ${p.state_id[1].replace(/\s*\(TH\)$/, '').replace(/^จังหวัด/, '')}` : ''}{p.property_product_pricelist ? ` · ${p.property_product_pricelist[1]}` : ''}</option>)}
-        </select>
+        <OdooPartnerField options={partners} defaultValue={dealer?.odooPartnerId ?? prefill?.odooPartnerId} dealerId={dealer?.id} className={field} />
       </label>
       <label className="flex items-center gap-2 rounded-lg border border-border p-2 text-xs md:col-span-2 has-[:checked]:border-primary has-[:checked]:bg-primary/5">
         <input type="checkbox" name="creditEnabled" defaultChecked={dealer?.creditEnabled ?? false} />
@@ -593,10 +599,19 @@ function DealerForm({ action, dealer, prefill, existing, creditUsed, odooCreditL
         <MoneyInput unstyled name="creditLimit" defaultValue={dealer ? dealer.creditLimit : prefill?.creditLimit} placeholder="ว่าง = ไม่จำกัด" className={field} />
         {odooCreditLimit !== undefined && <OdooLimitNote web={dealer ? (dealer.creditLimit == null ? null : Number(dealer.creditLimit)) : prefill?.creditLimit ?? null} odoo={odooCreditLimit} />}
       </label>
-      <label className="text-xs font-medium">ยอดค้างยกมา (บาท)
-        <MoneyInput unstyled name="creditOpening" defaultValue={dealer ? Number(dealer.creditOpening) || null : null} placeholder="0" className={field} />
-        {creditUsed !== undefined && <span className="font-normal text-muted-foreground">ใช้ไป {baht(creditUsed)}</span>}
-      </label>
+      {odooReceivable !== undefined ? (
+        <div className="text-xs font-medium">ยอดค้างยกมา (จาก Odoo)
+          {/* Kept as the fallback used when Odoo cannot be reached. */}
+          <input type="hidden" name="creditOpening" value={dealer ? Number(dealer.creditOpening) || '' : ''} />
+          <p className={cn(field, 'bg-muted/50 tabular-nums')}>{baht(odooReceivable)}</p>
+          <span className="font-normal text-muted-foreground">Total Receivable ของลูกค้าใน Odoo{creditUsed !== undefined ? ` · ใช้ไปรวมออเดอร์เครดิตที่ยังไม่ออกใบแจ้งหนี้ ${baht(creditUsed)}` : ''}</span>
+        </div>
+      ) : (
+        <label className="text-xs font-medium">ยอดค้างยกมา (บาท)
+          <MoneyInput unstyled name="creditOpening" defaultValue={dealer ? Number(dealer.creditOpening) || null : null} placeholder="0" className={field} />
+          <span className="font-normal text-muted-foreground">{creditUsed !== undefined ? `ใช้ไป ${baht(creditUsed)} · ` : ''}ผูกลูกค้า Odoo แล้วจะใช้ Total Receivable แทน</span>
+        </label>
+      )}
       <label className="text-xs font-medium">โทร<input name="phone" defaultValue={dealer?.phone ?? prefill?.phone ?? ''} maxLength={30} className={field} /></label>
       <label className="text-xs font-medium">LINE ID<input name="lineId" defaultValue={dealer?.lineId ?? ''} maxLength={60} className={field} /></label>
       <label className="text-xs font-medium">เลขผู้เสียภาษี (13 หลัก ห้ามซ้ำกับร้านอื่น)<input name="taxId" inputMode="numeric" defaultValue={dealer?.taxId ?? prefill?.taxId ?? ''} maxLength={20} placeholder="0-1055-56123-45-6" className={field} /></label>

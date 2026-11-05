@@ -2,7 +2,7 @@ import type { Metadata } from 'next';
 import Link from 'next/link';
 import { FileText, KeyRound, Store, Truck, Wallet } from 'lucide-react';
 import { baht } from '@/lib/shop/catalog';
-import { getCreditLine } from '@/lib/shop/credit-line';
+import { getCreditSummary } from '@/lib/shop/credit-line';
 import { getSessionId } from '@/lib/shop/session';
 import { listOrders } from '@/lib/shop/store';
 import { creditOutstanding, canPayCredit } from '@/lib/shop/credit-payment';
@@ -29,7 +29,8 @@ export default async function AccountPage({ searchParams }: { searchParams: Prom
   const dealer = user.dealer && !isBackofficeRole(user.role as Role) ? await getDealer(user.dealer.id) : null;
   const lineConfig = dealer ? await getLineConfig() : null;
   const sid = await getSessionId();
-  const [creditLine, orders] = await Promise.all([profile.credit ? getCreditLine(profile) : null, listOrders(sid)]);
+  const [credit, orders] = await Promise.all([profile.credit ? getCreditSummary(profile) : null, listOrders(sid)]);
+  const creditLine = credit?.line ?? null;
   // Open invoices from Odoo (posted, not fully paid) across the shop's orders, soonest due first.
   const openInvoices = orders.flatMap((o) => (o.odoo?.progress?.invoices ?? []).filter((inv) => inv.amountResidual > 0).map((inv) => ({ ...inv, orderId: o.id, orderRef: o.ref })))
     .sort((a, b) => (a.dueDate ?? '9999').localeCompare(b.dueDate ?? '9999'));
@@ -85,6 +86,12 @@ export default async function AccountPage({ searchParams }: { searchParams: Prom
                 )}
               </>
             ) : <p className="text-muted-foreground">ยังไม่ได้กำหนดวงเงิน ติดต่อฝ่ายขาย</p>}
+            {credit?.odooReceivable != null && (
+              <p className="mt-3 flex items-baseline justify-between gap-3 border-t border-border pt-3 text-xs text-muted-foreground">
+                <span>ยอดค้างยกมา (ตามบัญชี)</span>
+                <span className="text-sm font-semibold text-foreground tabular-nums">{baht(credit.odooReceivable)}</span>
+              </p>
+            )}
             <p className="mt-3 border-t border-border pt-3 text-xs text-muted-foreground">ยอดค้างชำระรวม <span className="font-semibold text-foreground">{baht(outstandingTotal)}</span> · {openInvoices.length} ใบแจ้งหนี้ · ยอดที่โอนแล้วรอตรวจจะหักเมื่อบัญชีลงรับใน Odoo</p>
           </div>
           {openInvoices.length > 0 && (

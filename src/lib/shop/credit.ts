@@ -37,17 +37,25 @@ export function isDealerScope(scope: string, dealerId: string, odooPartnerId: nu
   return odooPartnerId !== null && scope.startsWith('staff:') && scope.endsWith(`:${odooPartnerId}`);
 }
 
+/** Credit orders already in Odoo's Total Receivable: a posted invoice exists (status follows Odoo). */
+const IN_RECEIVABLE = new Set(['INVOICED']);
+
 /**
  * Web credit used by a dealer: carried-over debt plus every CREDIT order of the dealer that is not yet paid or cancelled.
  * Placing a credit order takes from the line; the order turning PAID or CANCELLED gives it back.
+ * `odooReceivable` (the linked partner's Total Receivable) replaces the manual `creditOpening`; invoiced orders
+ * are then skipped because their posted invoices are already in it. Null/undefined = Odoo not linked or unreachable.
  */
 export function webCreditUsed(
   dealer: { id: string; odooPartnerId: number | null; creditOpening: number },
   orders: { scope: string; paymentMethod: string; status: string; total: number }[],
+  odooReceivable?: number | null,
 ): number {
-  let used = dealer.creditOpening;
+  const fromOdoo = odooReceivable != null;
+  let used = fromOdoo ? odooReceivable : dealer.creditOpening;
   for (const order of orders) {
-    if (order.paymentMethod === 'CREDIT' && !RELEASED.has(order.status) && isDealerScope(order.scope, dealer.id, dealer.odooPartnerId)) used += order.total;
+    if (order.paymentMethod !== 'CREDIT' || RELEASED.has(order.status) || (fromOdoo && IN_RECEIVABLE.has(order.status))) continue;
+    if (isDealerScope(order.scope, dealer.id, dealer.odooPartnerId)) used += order.total;
   }
   return round2(used);
 }
@@ -56,9 +64,10 @@ export function webCreditUsed(
 export function webCreditLine(
   dealer: { id: string; odooPartnerId: number | null; creditLimit: number | string | null; creditOpening: number | string },
   orders: { scope: string; paymentMethod: string; status: string; total: number }[],
+  odooReceivable?: number | null,
 ): CreditLine | null {
   if (dealer.creditLimit == null) return null;
-  const used = webCreditUsed({ id: dealer.id, odooPartnerId: dealer.odooPartnerId, creditOpening: Number(dealer.creditOpening) || 0 }, orders);
+  const used = webCreditUsed({ id: dealer.id, odooPartnerId: dealer.odooPartnerId, creditOpening: Number(dealer.creditOpening) || 0 }, orders, odooReceivable);
   return { limit: Number(dealer.creditLimit), used };
 }
 

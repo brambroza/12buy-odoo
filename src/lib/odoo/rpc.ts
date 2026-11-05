@@ -63,7 +63,7 @@ const log = logger('odoo');
 /** Calls slower than this are logged at warn level even when debug logging is off. */
 const SLOW_MS = 3000;
 
-type RpcConfig = { url: string; db: string; username: string; apiKey: string };
+export type RpcConfig = { url: string; db: string; username: string; apiKey: string };
 
 let requestId = 0;
 let cachedUid: number | null = null;
@@ -207,6 +207,46 @@ export async function odooRead<T>(model: string, method: string, args: unknown[]
 /** Convenience wrapper around `search_read`. */
 export function odooSearchRead<T>(model: string, domain: unknown[], fields: string[], extra: Record<string, unknown> = {}) {
   return odooRead<T[]>(model, 'search_read', [domain], { fields, ...extra });
+}
+
+/** Read-only Odoo client bound to one connection (another company's database), with its own uid and queue. */
+export type OdooReadClient = {
+  read<T>(model: string, method: string, args?: unknown[], kwargs?: Record<string, unknown>): Promise<T>;
+  searchRead<T>(model: string, domain: unknown[], fields: string[], extra?: Record<string, unknown>): Promise<T[]>;
+};
+
+/**
+ * Builds a read-only client for a connection other than the shop's (e.g. a company whose sales
+ * commission is computed here). Same read allow-list and 429 backoff as `odooRead`, but calls are
+ * serialized on a queue of their own and the uid is cached per client, so two companies never mix.
+ * There is no write method on purpose.
+ */
+export function createOdooReadClient(conn: RpcConfig): OdooReadClient {
+  const url = conn.url.trim().replace(/\/+$/, '');
+  let uid: number | null = null;
+  let clientQueue: Promise<unknown> = Promise.resolve();
+  const call = <T>(service: string, method: string, args: unknown[]): Promise<T> => {
+    const run = () => jsonRpcTo<T>(url, service, method, args);
+    const result = clientQueue.then(run, run);
+    clientQueue = result.catch(() => undefined);
+    return result;
+  };
+  const login = async (): Promise<number> => {
+    if (uid) return uid;
+    const value = await call<number | false>('common', 'authenticate', [conn.db, conn.username, conn.apiKey, {}]);
+    if (!value) throw new Error('Odoo authentication failed');
+    uid = value;
+    return value;
+  };
+  const read = async <T>(model: string, method: string, args: unknown[] = [], kwargs: Record<string, unknown> = {}): Promise<T> => {
+    if (!READ_METHODS.has(method)) throw new Error(`Blocked: '${model}.${method}' is not a read-only method`);
+    const id = await login();
+    return call<T>('object', 'execute_kw', [conn.db, id, conn.apiKey, model, method, args, kwargs]);
+  };
+  return {
+    read,
+    searchRead: <T>(model: string, domain: unknown[], fields: string[], extra: Record<string, unknown> = {}) => read<T[]>(model, 'search_read', [domain], { fields, ...extra }),
+  };
 }
 
 /** True when writes to Odoo are switched on (`ODOO_READ_ONLY=false`). */

@@ -5,7 +5,7 @@ import { usePathname } from 'next/navigation';
 import { useRef, useState } from 'react';
 import gsap from 'gsap';
 import { useGSAP } from '@gsap/react';
-import { BarChart3, Gauge, History, LayoutDashboard, Megaphone, Menu, PanelLeftClose, PanelLeftOpen, MapPinned, Tags, Store, Inbox, Smartphone, UserPlus, ShieldCheck, LogOut, UsersRound, TicketPercent, BadgePercent, Truck, UserRound, KeyRound, ChevronDown, Plug } from 'lucide-react';
+import { BarChart3, Gauge, History, LayoutDashboard, Megaphone, Menu, PanelLeftClose, PanelLeftOpen, MapPinned, Tags, Store, Inbox, Smartphone, UserPlus, ShieldCheck, LogOut, UsersRound, TicketPercent, BadgePercent, Truck, UserRound, KeyRound, ChevronDown, Plug, Coins } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { SIDEBAR_COOKIE } from '@/lib/backoffice-ui';
 import { AdminMotion } from '@/components/admin/admin-motion';
@@ -16,10 +16,11 @@ import { NotificationBell } from '@/components/admin/notification-bell';
 import { OdooHealthBadge } from '@/components/admin/odoo-health-badge';
 import { DealerAvatar } from '@/components/shop/dealer-avatar';
 import { ROLE_LABELS, isAdminRole, type Role } from '@/lib/auth/roles';
+import { can, type PermissionKey } from '@/lib/auth/permissions';
 import { logoutAction } from '@/app/login/actions';
 import { BrandLogo } from '@/components/landing/brand-logo';
 
-const NAV_ITEMS: { href: string; label: string; icon: typeof LayoutDashboard; group?: string; adminOnly?: boolean }[] = [
+const NAV_ITEMS: { href: string; label: string; icon: typeof LayoutDashboard; group?: string; adminOnly?: boolean; permission?: PermissionKey }[] = [
   { href: '/admin', label: 'แดชบอร์ด', icon: Gauge, group: 'ดีลเลอร์' },
   { href: '/admin/reports', label: 'รายงานยอดขาย', icon: BarChart3 },
   { href: '/admin/orders', label: 'ออเดอร์จากเว็บ', icon: Inbox },
@@ -35,7 +36,9 @@ const NAV_ITEMS: { href: string; label: string; icon: typeof LayoutDashboard; gr
   { href: '/admin/users', label: 'ผู้ใช้งานระบบ', icon: ShieldCheck, adminOnly: true },
   { href: '/admin/settings', label: 'ตั้งค่าระบบ (Odoo · LINE)', icon: Plug, adminOnly: true },
   { href: '/admin/audit', label: 'ประวัติการแก้ไข', icon: History, adminOnly: true },
-  { href: '/shop', label: 'เปิดหน้าดีลเลอร์', icon: Smartphone },
+  { href: '/admin/commission', label: 'ค่าคอมพนักงานขาย', icon: Coins, group: 'ค่าคอม', permission: 'commission.view' },
+  { href: '/admin/commission/me', label: 'ค่าคอมของฉัน', icon: Coins, group: 'ค่าคอม', permission: 'commission.view_own' },
+  { href: '/shop', label: 'เปิดหน้าดีลเลอร์', icon: Smartphone, group: 'อื่นๆ' },
   // Legacy "Odoo Sync (เดิม)" demo (/dashboard, /sale-orders, /customers, /products) is kept reachable by URL
   // for reference but no longer listed: dealer ordering replaced it.
 ];
@@ -53,7 +56,9 @@ function Brand() {
 }
 
 function NavLinks({ pathname, role, onNavigate }: { pathname: string; role: Role; onNavigate?: () => void }) {
-  const items = NAV_ITEMS.filter((i) => !i.adminOnly || isAdminRole(role));
+  const items = NAV_ITEMS.filter((i) => (!i.adminOnly || isAdminRole(role)) && (!i.permission || can(role, i.permission)))
+    // Staff who can see everyone's commission do not need the "mine" link as a separate menu.
+    .filter((i, _, all) => i.href !== '/admin/commission/me' || !all.some((o) => o.href === '/admin/commission'));
   return (
     <nav className="flex flex-col gap-1">
       {items.flatMap((item, i) => {
@@ -65,7 +70,8 @@ function NavLinks({ pathname, role, onNavigate }: { pathname: string; role: Role
             <Icon className="size-4" /> {item.label}
           </Link>
         );
-        return item.group ? [<p key={`g-${i}`} className={cn('px-3 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground', i > 0 && 'mt-4')}>{item.group}</p>, link] : [link];
+        const showGroup = item.group && item.group !== items[i - 1]?.group;
+        return showGroup ? [<p key={`g-${i}`} className={cn('px-3 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground', i > 0 && 'mt-4')}>{item.group}</p>, link] : [link];
       })}
     </nav>
   );
@@ -165,7 +171,7 @@ export function BackofficeShell({ user, sidebarOpen: initialSidebarOpen = true, 
     <div className="flex min-h-screen">
       <aside ref={aside} style={{ width: initialSidebarOpen ? SIDEBAR_WIDTH : 0, borderRightWidth: initialSidebarOpen ? 1 : 0 }}
         aria-hidden={!sidebarOpen} inert={!sidebarOpen}
-        className="sticky top-0 hidden h-screen shrink-0 overflow-hidden border-border bg-card md:block">
+        className="sticky top-0 hidden h-screen shrink-0 overflow-hidden border-border bg-card md:block print:hidden">
         <div className="flex h-full w-60 flex-col gap-6 overflow-y-auto p-4">
           <Brand />
           <NavLinks pathname={pathname} role={role} />
@@ -173,7 +179,7 @@ export function BackofficeShell({ user, sidebarOpen: initialSidebarOpen = true, 
         </div>
       </aside>
       <div className="flex min-h-screen min-w-0 flex-1 flex-col">
-        <header className="flex h-14 items-center gap-3 border-b border-border bg-card px-4 md:px-6">
+        <header className="flex h-14 items-center gap-3 border-b border-border bg-card px-4 md:px-6 print:hidden">
           <Sheet open={open} onOpenChange={setOpen}>
             <SheetTrigger render={<Button variant="ghost" size="icon" className="md:hidden"><Menu className="size-5" /></Button>} />
             <SheetContent side="left" className="flex w-64 flex-col p-4">
@@ -194,7 +200,7 @@ export function BackofficeShell({ user, sidebarOpen: initialSidebarOpen = true, 
           </div>
           <form id="backoffice-logout" action={logoutAction} className="hidden" />
         </header>
-        <main id="main" tabIndex={-1} className="min-w-0 flex-1 bg-muted/30 px-3 py-4 outline-none sm:p-4 md:p-6"><AdminMotion>{children}</AdminMotion></main>
+        <main id="main" tabIndex={-1} className="min-w-0 flex-1 bg-muted/30 px-3 py-4 outline-none sm:p-4 md:p-6 print:bg-white print:p-0"><AdminMotion>{children}</AdminMotion></main>
       </div>
     </div>
   );

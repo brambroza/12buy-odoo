@@ -85,5 +85,10 @@ export const PERMISSIONS = [
   { key: 'audit.view', group: 'ตั้งค่า', label: 'ดูประวัติการแก้ไข (audit log)', roles: ADMINS },
   { key: 'users.manage', group: 'ผู้ใช้และสิทธิ์', label: 'เพิ่ม/แก้ไขผู้ใช้ทีมงาน เปลี่ยนบทบาท เปิด-ปิดใช้งาน รีเซ็ตรหัสผ่าน', roles: ADMINS },
   { key: 'users.super', group: 'ผู้ใช้และสิทธิ์', label: 'จัดการบัญชีผู้ดูแลระบบสูงสุด', roles: ['SUPER_ADMIN'] as readonly Role[] },
+  { key: 'commission.view', group: 'ค่าคอมพนักงานขาย', label: 'ดูยอดเก็บได้ ยอดขายตามกลุ่มราคา และผลค่าคอมทุกคน', roles: ADMINS },
+  { key: 'commission.manage', group: 'ค่าคอมพนักงานขาย', label: 'ตั้งค่าบริษัท/Odoo พนักงานขาย กลุ่มราคา อัตรา ขั้นบันไดเกินดิว และเป้า', roles: ADMINS },
+  { key: 'commission.run', group: 'ค่าคอมพนักงานขาย', label: 'ดึงข้อมูลจาก Odoo คำนวณ ปรับยอด และส่งอนุมัติรอบค่าคอม', roles: ADMINS },
+  { key: 'commission.approve', group: 'ค่าคอมพนักงานขาย', label: 'อนุมัติ/ตีกลับรอบค่าคอม (ต้องไม่ใช่ผู้ส่ง) และบันทึกจ่ายแล้ว', roles: ADMINS },
+  { key: 'commission.view_own', group: 'ค่าคอมพนักงานขาย', label: 'ดูยอดเก็บและค่าคอมของตัวเอง (ต้องผูกบัญชีกับพนักงานขายใน Odoo)', roles: SALES_SIDE },
   { key: 'profile.self', group: 'บัญชีของตัวเอง', label: 'แก้ชื่อ เบอร์โทร รูปโปรไฟล์ และเปลี่ยนรหัสผ่าน', roles: ALL_STAFF },
 ] as const satisfies readonly Permission[];
