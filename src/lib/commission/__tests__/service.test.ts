@@ -5,7 +5,7 @@ const repo = vi.hoisted(() => ({
   ensureRun: vi.fn(), getRun: vi.fn(), updateRun: vi.fn(), listBookedFor: vi.fn(), replaceLedger: vi.fn(), listLedger: vi.fn(), listRates: vi.fn(), listSteps: vi.fn(),
   listPricelists: vi.fn(), listTargets: vi.fn(), listAdjustments: vi.fn(), listReps: vi.fn(), listDebtHolds: vi.fn(), applyDebtPlan: vi.fn(),
 }));
-const odoo = vi.hoisted(() => ({ fetchCollections: vi.fn(), fetchOverdueInvoices: vi.fn(), fetchPaidInvoiceIds: vi.fn() }));
+const odoo = vi.hoisted(() => ({ fetchCollections: vi.fn(), fetchCredits: vi.fn(), fetchOverdueInvoices: vi.fn(), fetchPaidInvoiceIds: vi.fn() }));
 vi.mock('../repo', () => repo);
 vi.mock('../odoo', () => odoo);
 vi.mock('@/lib/settings/crypto', () => ({ decryptSecret: (v: string) => `plain-${v}` }));
@@ -28,6 +28,7 @@ beforeEach(() => {
   vi.resetAllMocks();
   repo.updateRun.mockResolvedValue(true);
   for (const fn of [repo.listRates, repo.listSteps, repo.listPricelists, repo.listTargets, repo.listAdjustments, repo.listReps, repo.listLedger, repo.listBookedFor, repo.listDebtHolds, odoo.fetchOverdueInvoices]) fn.mockResolvedValue([]);
+  odoo.fetchCredits.mockResolvedValue({ credits: [], refunds: { count: 0, amount: 0 } });
   odoo.fetchPaidInvoiceIds.mockResolvedValue(new Set());
 });
 
@@ -115,6 +116,19 @@ describe('calculatePeriod', () => {
     expect(patch.snapshot).toHaveProperty('rates');
     expect(patch.snapshot.statement).toMatchObject({ centralPercent: 5, debtDays: 120 });
     expect(patch.results.reps[0]).toMatchObject({ centralPercent: 5, central: 0, summary: expect.any(Array) });
+  });
+
+  it('shows credit notes with the results, and still calculates when Odoo cannot be read', async () => {
+    repo.ensureRun.mockResolvedValue(runRow({ syncedAt: new Date() }));
+    repo.listLedger.mockResolvedValue([line({ originPeriod: '2026-10' })]);
+    repo.getRun.mockResolvedValue(runRow({ syncedAt: new Date() }));
+    odoo.fetchCredits.mockResolvedValue({ credits: [{ id: 1, name: 'RINV/1', date: '2026-10-05', partnerName: 'ร้าน', originName: null, odooUserId: 8, repName: 'A', base: 500, gross: 535 }], refunds: { count: 0, amount: 0 } });
+    await service.calculatePeriod(source, '2026-10');
+    expect(repo.updateRun.mock.calls[0][2].results.reps[0]).toMatchObject({ creditNoteBase: 500, creditNoteCount: 1 });
+    odoo.fetchCredits.mockRejectedValue(new Error('timeout'));
+    repo.updateRun.mockClear();
+    expect(await service.calculatePeriod(source, '2026-10')).toMatchObject({ ok: true });
+    expect(repo.updateRun.mock.calls[0][2].results.issues).toContainEqual({ message: expect.stringContaining('ดึงใบลดหนี้ (CN)') });
   });
 });
 

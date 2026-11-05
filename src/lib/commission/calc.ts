@@ -7,8 +7,8 @@
  */
 import { OTHER_SUMMARY, statementSettings, summaryKeyOf } from './statement';
 import type {
-  CommissionAdjustment, CommissionPricelist, CommissionRate, CommissionRep, CommissionTarget, DebtHold, LedgerLine, LineResult, OverdueStep, PriceGroup, RepResult, RunResults,
-  StatementSettings,
+  CommissionAdjustment, CommissionPricelist, CommissionRate, CommissionRep, CommissionTarget, CreditNote, DebtHold, ExcludedAmount, ExcludedReason, LedgerLine, LineResult,
+  OverdueStep, PriceGroup, RepResult, RunResults, StatementSettings, StepAmount,
 } from './types';
 import { PRICE_GROUP_LABELS } from './types';
 
@@ -49,9 +49,20 @@ export function pickRate(rates: readonly CommissionRate[], line: Pick<LedgerLine
 
 /** Pay-out % for `days` after the due date on `date`; 0 when no step covers it (beyond the last step). */
 export function pickStepPercent(steps: readonly OverdueStep[], days: number, date: string): number {
+  return pickStep(steps, days, date)?.percent ?? 0;
+}
+
+/** The step covering `days` after the due date on `date`, or null (beyond the last step / none in force). */
+export function pickStep(steps: readonly OverdueStep[], days: number, date: string): OverdueStep | null {
   const valid = steps.filter((s) => isValidOn(s, date) && s.minDays <= days && (s.maxDays === null || days <= s.maxDays));
   valid.sort((a, b) => b.validFrom.localeCompare(a.validFrom));
-  return valid[0]?.percent ?? 0;
+  return valid[0] ?? null;
+}
+
+/** "0–10 วัน", "121 วันขึ้นไป"; null = no step covered the days. */
+export function stepRangeLabel(step: Pick<OverdueStep, 'minDays' | 'maxDays'> | null): string {
+  if (!step) return 'เกินขั้นสุดท้าย / ไม่มีขั้นบันได';
+  return step.maxDays === null ? `${step.minDays} วันขึ้นไป` : `${step.minDays}–${step.maxDays} วัน`;
 }
 
 /** Problems in a set of steps valid on the same day: overlapping ranges or gaps between them. */
@@ -90,7 +101,17 @@ export type CalcInput = {
   statement?: StatementSettings;
   /** Overdue-invoice holds; those held or given back in `period` count. */
   holds?: readonly Pick<DebtHold, 'odooUserId' | 'amount' | 'heldPeriod' | 'releasedPeriod' | 'invoiceName'>[];
+  /** Credit notes and customer refunds of the period: shown with the results, never deducted. */
+  credits?: readonly CreditNote[];
+  refunds?: { count: number; amount: number };
 };
+
+/** Why a collected line earned no commission, or null when it earned some (before the target gate). */
+export function excludedReasonOf(line: Pick<LedgerLine, 'productId'>, result: Pick<LineResult, 'rateId' | 'stepPercent'> | undefined): ExcludedReason | null {
+  if (line.productId === null) return 'NO_PRODUCT';
+  if (!result?.rateId) return 'NO_RATE';
+  return result.stepPercent === 0 ? 'OVERDUE' : null;
+}
 
 /** Commission of one line; returns the rule pieces so the screen can explain the figure. */
 export function lineCommission(line: LedgerLine, input: Pick<CalcInput, 'rates' | 'steps'>, pricelist: CommissionPricelist | undefined): LineResult & { issue?: string } {
@@ -99,7 +120,9 @@ export function lineCommission(line: LedgerLine, input: Pick<CalcInput, 'rates' 
   const group = pricelist?.priceGroup ?? null;
   const rate = pickRate(input.rates, line, group);
   const specialPercent = pricelist?.isSpecial ? pricelist.specialPercent : 100;
-  const stepPercent = pickStepPercent(input.steps, line.overdueDays ?? 0, line.cashDate);
+  const step = pickStep(input.steps, line.overdueDays ?? 0, line.cashDate);
+  const stepPercent = step?.percent ?? 0;
+  const stepRange = step ? { minDays: step.minDays, maxDays: step.maxDays } : null;
   if (!rate) {
     const where = [line.brand || 'ไม่มียี่ห้อ', line.family || 'ไม่มีกลุ่ม', `${line.pricelistName ?? 'ไม่มี pricelist'} (${group ? PRICE_GROUP_LABELS[group] : 'pricelist ยังไม่จัดกลุ่ม'})`].join(' / ');
     // A rate that would match but starts after the cash date is the usual set-up slip: say so.
@@ -109,9 +132,10 @@ export function lineCommission(line: LedgerLine, input: Pick<CalcInput, 'rates' 
     return { ...empty, specialPercent, stepPercent, issue: `ไม่มีอัตราค่าคอมสำหรับ ${where}${hint}` };
   }
   const basic = rate.kind === 'PERCENT' ? (line.base * rate.value) / 100 : line.qty * rate.value;
+  const beforeStep = (basic * specialPercent) / 100;
   const result = {
     lineKey: line.lineKey, odooUserId: line.odooUserId, rateId: rate.id, rateLabel: rateLabel(rate), specialPercent, stepPercent,
-    commission: (basic * specialPercent * stepPercent) / 10_000,
+    commission: (beforeStep * stepPercent) / 100, beforeStep, stepRange,
   };
   // No step at all on the cash date (not merely beyond the last step) pays 0 silently otherwise.
   if (!input.steps.some((s) => isValidOn(s, line.cashDate))) return { ...result, issue: `ไม่มีขั้นบันไดเกินดิวที่มีผลวันที่เงินเข้า ${line.cashDate} จึงได้ 0% (ตรวจวันที่เริ่มใช้ของขั้นบันได)` };
@@ -136,12 +160,15 @@ export function calculateRun(input: CalcInput): RunResults {
   const lines: LineResult[] = [];
   /** Per statement row: commission of normal lines, of all RETRO lines, of negative RETRO lines. */
   type Bucket = { normal: number; retro: number; retroNegative: number; base: number; rates: Set<string> };
-  type Acc = { name: string; base: number; gross: number; lines: number; buckets: Map<string, Bucket>; held: number; released: number };
+  type Acc = {
+    name: string; base: number; gross: number; lines: number; buckets: Map<string, Bucket>; held: number; released: number;
+    counted: number; before: number; excluded: Map<ExcludedReason, ExcludedAmount>; creditBase: number; credits: number; steps: Map<string, StepAmount>;
+  };
   const acc = new Map<number, Acc>();
   const accFor = (id: number, name: string | null) => {
     let a = acc.get(id);
     if (!a) {
-      a = { name: names.get(id) ?? name ?? `Odoo user #${id}`, base: 0, gross: 0, lines: 0, buckets: new Map(), held: 0, released: 0 };
+      a = { name: names.get(id) ?? name ?? `Odoo user #${id}`, base: 0, gross: 0, lines: 0, buckets: new Map(), held: 0, released: 0, counted: 0, before: 0, excluded: new Map(), creditBase: 0, credits: 0, steps: new Map() };
       acc.set(id, a);
     }
     return a;
@@ -150,6 +177,7 @@ export function calculateRun(input: CalcInput): RunResults {
   const named = new Set([...input.rates.map((r) => r.odooPricelistId), ...statement.summaryLines.map((r) => r.pricelistId)].filter((id): id is number => id != null));
   const unmapped = new Set<string>();
   let unassignedBase = 0;
+  let notInvoiceGross = 0;
 
   for (const line of input.lines) {
     const pricelist = line.pricelistId !== null ? pricelists.get(line.pricelistId) : undefined;
@@ -161,12 +189,32 @@ export function calculateRun(input: CalcInput): RunResults {
     for (const message of line.issues) issues.push({ lineKey: line.lineKey, message });
     if (line.odooUserId === null || input.inactive?.has(line.odooUserId)) {
       unassignedBase += line.base;
+      if (line.invoiceId === null) notInvoiceGross += line.gross;
       continue;
     }
     const a = accFor(line.odooUserId, line.repName);
     a.base += line.base;
     a.gross += line.gross;
     a.lines += 1;
+    // What the money earned, or why it earned nothing, so the screen needs no cross-checking.
+    const reason = excludedReasonOf(line, lineResult);
+    if (reason) {
+      const e = a.excluded.get(reason) ?? { reason, base: 0, lines: 0 };
+      e.base += line.base;
+      e.lines += 1;
+      a.excluded.set(reason, e);
+    } else a.counted += line.base;
+    a.before += lineResult.commission;
+    if (lineResult.rateId) {
+      const range = lineResult.stepRange ?? null;
+      const key = range ? `${range.minDays}-${range.maxDays ?? ''}` : 'none';
+      const st = a.steps.get(key) ?? { minDays: range?.minDays ?? null, maxDays: range?.maxDays ?? null, percent: lineResult.stepPercent, base: 0, lines: 0, beforeStep: 0, commission: 0 };
+      st.base += line.base;
+      st.lines += 1;
+      st.beforeStep += lineResult.beforeStep ?? 0;
+      st.commission += lineResult.commission;
+      a.steps.set(key, st);
+    }
     const bucket = a.buckets.get(lineResult.summaryKey!) ?? { normal: 0, retro: 0, retroNegative: 0, base: 0, rates: new Set<string>() };
     bucket.base += line.base;
     if (lineResult.rateId) bucket.rates.add(lineResult.rateLabel);
@@ -190,6 +238,13 @@ export function calculateRun(input: CalcInput): RunResults {
     const a = accFor(hold.odooUserId, null);
     if (taken) a.held += hold.amount;
     if (givenBack) a.released += hold.amount;
+  }
+
+  for (const note of input.credits ?? []) {
+    if (note.odooUserId === null || input.inactive?.has(note.odooUserId)) continue;
+    const a = accFor(note.odooUserId, note.repName);
+    a.creditBase += note.base;
+    a.credits += 1;
   }
 
   const adjustments = new Map<number, number>();
@@ -216,13 +271,18 @@ export function calculateRun(input: CalcInput): RunResults {
     const total = round2(subtotal - central - debtHold + adj + carryIn);
     return {
       odooUserId, repName: a.name, base, gross: round2(a.gross), lines: a.lines, target, targetMet: target !== null && targetMet, commission,
+      counted: round2(a.counted), excluded: [...a.excluded.values()].map((e) => ({ ...e, base: round2(e.base) })), commissionBeforeTarget: round2(a.before),
+      creditNoteBase: round2(a.creditBase), creditNoteCount: a.credits,
+      steps: [...a.steps.values()].sort((x, y) => (x.minDays ?? Infinity) - (y.minDays ?? Infinity))
+        .map((st) => ({ ...st, base: round2(st.base), beforeStep: round2(st.beforeStep), commission: round2(st.commission) })),
       summary, debtRelease, subtotal, centralPercent: statement.centralPercent, central, debtHold,
       adjustments: adj, carryIn, payable: Math.max(0, total), carryOut: Math.min(0, total),
     };
   }).sort((x, y) => y.payable - x.payable || x.repName.localeCompare(y.repName));
 
   return {
-    reps, lines, issues, unassignedBase: round2(unassignedBase),
+    reps, lines, issues, unassignedBase: round2(unassignedBase), notInvoiceGross: round2(notInvoiceGross),
+    credits: input.credits ? [...input.credits] : undefined, refunds: input.refunds,
     totalPayable: round2(reps.reduce((s, r) => s + r.payable, 0)),
   };
 }

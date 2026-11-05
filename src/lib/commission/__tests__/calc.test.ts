@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { blockingIssues, calculateRun, isValidOn, lineCommission, pickRate, pickStepPercent, rateLabel, stepProblems, type CalcInput } from '../calc';
+import { blockingIssues, calculateRun, isValidOn, lineCommission, pickRate, pickStepPercent, rateLabel, stepProblems, stepRangeLabel, type CalcInput } from '../calc';
 import { statementSettings } from '../statement';
 import type { CommissionPricelist, CommissionRate, LedgerLine, OverdueStep } from '../types';
 
@@ -154,6 +154,41 @@ describe('calculateRun', () => {
   it('shows reps that only have an adjustment, named from Odoo when unknown', () => {
     const r = run([], { adjustments: [{ odooUserId: 77, amount: 500 }], reps: [] });
     expect(r.reps[0]).toMatchObject({ odooUserId: 77, repName: 'Odoo user #77', payable: 500, lines: 0 });
+  });
+});
+
+describe('calculateRun breakdown', () => {
+  it('splits what each rep collected into counted and not counted, with the reason', () => {
+    const r = run([
+      line({}), // counted 100,000
+      line({ brand: 'X' }), // no rate
+      line({ overdueDays: 40 }), // beyond the last step: 0%
+      line({ productId: null, base: 0 }),
+      line({ odooUserId: null, invoiceId: null, productId: null, base: 0, gross: 500 }), // deposit, no rep
+    ], { credits: [{ id: 1, name: 'RINV/1', date: '2026-10-05', partnerName: 'ร้าน', originName: 'INV/1', odooUserId: 8, repName: 'สมชาย', base: 2_000, gross: 2_140 }] });
+    expect(r.reps[0]).toMatchObject({
+      base: 300_000, counted: 100_000, commission: 990, commissionBeforeTarget: 990, creditNoteBase: 2_000, creditNoteCount: 1,
+      excluded: [{ reason: 'NO_RATE', base: 100_000, lines: 1 }, { reason: 'OVERDUE', base: 100_000, lines: 1 }, { reason: 'NO_PRODUCT', base: 0, lines: 1 }],
+    });
+    expect(r.notInvoiceGross).toBe(500);
+    expect(r.credits).toHaveLength(1);
+  });
+
+  it('groups commission by overdue step so the statement can show what the steps did', () => {
+    const r = run([line({ overdueDays: 3 }), line({ overdueDays: 12 }), line({ overdueDays: 18 }), line({ overdueDays: 40 })]);
+    expect(r.reps[0].steps).toEqual([
+      { minDays: 0, maxDays: 10, percent: 110, base: 100_000, lines: 1, beforeStep: 900, commission: 990 },
+      { minDays: 11, maxDays: 15, percent: 100, base: 100_000, lines: 1, beforeStep: 900, commission: 900 },
+      { minDays: 16, maxDays: 20, percent: 90, base: 100_000, lines: 1, beforeStep: 900, commission: 810 },
+      { minDays: null, maxDays: null, percent: 0, base: 100_000, lines: 1, beforeStep: 900, commission: 0 },
+    ]);
+    expect(stepRangeLabel({ minDays: 121, maxDays: null })).toBe('121 วันขึ้นไป');
+    expect(stepRangeLabel(null)).toContain('เกินขั้นสุดท้าย');
+  });
+
+  it('keeps the commission earned before a missed target', () => {
+    const r = run([line({})], { targets: [{ id: 't', sourceId: 's', odooUserId: 8, period: '2026-10', amount: 500_000 }] });
+    expect(r.reps[0]).toMatchObject({ commission: 0, commissionBeforeTarget: 990, counted: 100_000 });
   });
 });
 

@@ -4,14 +4,14 @@ import { audit } from '@/lib/auth/audit';
 import { can } from '@/lib/auth/permissions';
 import type { Role } from '@/lib/auth/roles';
 import { getCurrentUser } from '@/lib/auth/session';
-import { pickStepPercent } from '@/lib/commission/calc';
+import { excludedReasonOf, pickStepPercent, stepRangeLabel } from '@/lib/commission/calc';
 import { fetchSales } from '@/lib/commission/odoo';
 import { isPeriod, periodRange } from '@/lib/commission/period';
 import { byRepAndGroup, type RepGroupRow } from '@/lib/commission/report';
 import { getRun, getSource, listLedger, listPricelists, listSteps } from '@/lib/commission/repo';
 import { clientFor } from '@/lib/commission/service';
 import { statementSettings } from '@/lib/commission/statement';
-import { OWNER_FROM_LABELS, PAYMENT_KIND_LABELS, PRICE_GROUP_LABELS, type LineResult, type RepResult, type StoredLedgerLine } from '@/lib/commission/types';
+import { EXCLUDED_LABELS, OWNER_FROM_LABELS, PAYMENT_KIND_LABELS, PRICE_GROUP_LABELS, type LineResult, type RepResult, type StoredLedgerLine } from '@/lib/commission/types';
 
 export const dynamic = 'force-dynamic';
 
@@ -41,6 +41,7 @@ const LEDGER_COLUMNS: Column<CollectionRow>[] = [
   { header: 'อัตรา', value: (r) => r.result?.rateLabel ?? '' },
   { header: '% ราคาพิเศษ', value: (r) => r.result?.specialPercent ?? '' },
   { header: 'ค่าคอม', value: (r) => (r.result ? Math.round(r.result.commission * 100) / 100 : '') },
+  { header: 'ผล', value: (r) => { if (!r.result) return ''; const reason = excludedReasonOf(r, r.result); return reason ? `ไม่คิด: ${EXCLUDED_LABELS[reason]}` : 'นำมาคิด'; } },
   { header: 'ตรวจสอบ', value: (r) => r.issues.join(' · ') },
 ];
 
@@ -49,8 +50,13 @@ const REP_COLUMNS: Column<RepResult>[] = [
   { header: 'Odoo user id', value: (r) => r.odooUserId },
   { header: 'ยอดเก็บ ก่อน VAT', value: (r) => r.base },
   { header: 'ยอดเก็บ รวม VAT', value: (r) => r.gross },
+  { header: 'นำมาคิดค่าคอม ก่อน VAT', value: (r) => r.counted ?? r.base },
+  ...(Object.keys(EXCLUDED_LABELS) as (keyof typeof EXCLUDED_LABELS)[]).map((reason): Column<RepResult> => ({
+    header: `ไม่คิด: ${EXCLUDED_LABELS[reason]}`, value: (r) => r.excluded?.find((e) => e.reason === reason)?.base ?? 0,
+  })),
   { header: 'เป้า', value: (r) => (r.target === null ? 'ยังไม่ตั้ง' : r.target) },
   { header: 'ถึงเป้า', value: (r) => (r.target === 0 ? 'ไม่ใช้เป้า' : r.targetMet ? 'ถึง' : 'ไม่ถึง') },
+  { header: 'ค่าคอมตามอัตรา (ก่อนเป้า)', value: (r) => r.commissionBeforeTarget ?? r.commission },
   { header: 'ค่าคอม', value: (r) => r.commission },
   { header: 'คืนลูกหนี้ค้าง', value: (r) => r.debtRelease ?? 0 },
   { header: 'หักส่วนกลาง', value: (r) => -(r.central ?? 0) },
@@ -59,6 +65,8 @@ const REP_COLUMNS: Column<RepResult>[] = [
   { header: 'ยกมาหัก', value: (r) => r.carryIn },
   { header: 'จ่าย', value: (r) => r.payable },
   { header: 'ยกไปหัก', value: (r) => r.carryOut },
+  { header: 'CN รอบนี้ ก่อน VAT (ไม่หัก)', value: (r) => r.creditNoteBase ?? 0 },
+  { header: 'CN (ใบ)', value: (r) => r.creditNoteCount ?? 0 },
 ];
 
 /** One row per rep with the statement rows as columns, in the order of the client's sheet. */
@@ -76,7 +84,22 @@ function statementColumns(reps: readonly RepResult[], debtDays: number): Column<
     { header: 'ยอดติดลบยกมา', value: (r) => r.carryIn },
     { header: 'คงเหลือ', value: (r) => r.payable + r.carryOut },
     { header: 'จ่าย', value: (r) => r.payable },
+    ...stepColumns(reps),
   ];
+}
+
+/** Commission per overdue step (e.g. "เกินดิว 0–10 วัน × 110%"), so the sheet shows what the steps did. */
+function stepColumns(reps: readonly RepResult[]): Column<RepResult>[] {
+  const keys = new Map<string, string>();
+  for (const rep of reps) {
+    for (const st of rep.steps ?? []) {
+      const key = `${st.minDays}-${st.maxDays}-${st.percent}`;
+      if (!keys.has(key)) keys.set(key, `เกินดิว ${stepRangeLabel(st.minDays === null ? null : { minDays: st.minDays, maxDays: st.maxDays })} × ${st.percent}%`);
+    }
+  }
+  return [...keys].map(([key, header]): Column<RepResult> => ({
+    header, value: (r) => r.steps?.find((st) => `${st.minDays}-${st.maxDays}-${st.percent}` === key)?.commission ?? 0,
+  }));
 }
 
 const SALES_COLUMNS: Column<RepGroupRow>[] = [

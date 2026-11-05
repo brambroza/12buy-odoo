@@ -168,11 +168,41 @@ export type LineResult = {
   commission: number;
   /** Statement row the line is counted in. */
   summaryKey?: string;
+  /** Commission at the rate (× special %) before the overdue step, and the step range used (null = none). */
+  beforeStep?: number;
+  stepRange?: { minDays: number; maxDays: number | null } | null;
 };
+
+/** A rep's commission per overdue step: how late the money came in and what that did to the pay. */
+export type StepAmount = { minDays: number | null; maxDays: number | null; percent: number; base: number; lines: number; beforeStep: number; commission: number };
 
 /** One row of a rep's statement. */
 /** A statement row's commission, with its base before VAT and the rates used (from the rates tab). */
 export type SummaryAmount = { key: string; label: string; amount: number; base?: number; rates?: string[] };
+
+/** Why collected money earned no commission. */
+export type ExcludedReason = 'NO_RATE' | 'OVERDUE' | 'NO_PRODUCT';
+export const EXCLUDED_LABELS: Record<ExcludedReason, string> = {
+  NO_RATE: 'ไม่มีอัตราค่าคอม',
+  OVERDUE: 'จ่ายช้าเกินขั้นบันได (ได้ 0%)',
+  NO_PRODUCT: 'บิลไม่มีรายการสินค้า',
+};
+export type ExcludedAmount = { reason: ExcludedReason; base: number; lines: number };
+
+/** A credit note issued in the period, shown next to the rep's figures (not deducted). */
+export type CreditNote = {
+  id: number;
+  name: string;
+  date: string;
+  partnerName: string;
+  /** Invoice it reverses, when Odoo links one. */
+  originName: string | null;
+  odooUserId: number | null;
+  repName: string | null;
+  /** Amount before VAT (positive). */
+  base: number;
+  gross: number;
+};
 
 /** Result per rep for a run. */
 export type RepResult = {
@@ -186,6 +216,16 @@ export type RepResult = {
   targetMet: boolean;
   /** Commission after the target gate (sum of `summary`). */
   commission: number;
+  /** Collected base that earned commission (before the target gate) and what did not, by reason. */
+  counted?: number;
+  excluded?: ExcludedAmount[];
+  /** Commission the lines earned before the target gate (equals `commission` when the target is met). */
+  commissionBeforeTarget?: number;
+  /** Credit notes issued this period for this rep's customers: shown only, never deducted. */
+  creditNoteBase?: number;
+  creditNoteCount?: number;
+  /** Lines with a rate, grouped by the overdue step they fell in (before the target gate). */
+  steps?: StepAmount[];
   /** Commission per statement row, in statement order. */
   summary: SummaryAmount[];
   /** Holds given back this period because the overdue invoice was collected. */
@@ -212,6 +252,11 @@ export type RunResults = {
   issues: { lineKey?: string; message: string }[];
   /** Base of lines that no rep owns (not paid to anyone). */
   unassignedBase: number;
+  /** Cash applied to something other than an invoice (deposits, write-offs), with VAT; paid to no one. */
+  notInvoiceGross?: number;
+  /** Credit notes issued in the period (shown only), and money refunded to customers. */
+  credits?: CreditNote[];
+  refunds?: { count: number; amount: number };
   totalPayable: number;
 };
 
@@ -245,4 +290,7 @@ export type RunSnapshot = {
   statement?: StatementSettings;
   /** Holds taken or given back in this period. */
   holds?: DebtHold[];
+  /** Credit notes and customer refunds of the period, read from Odoo when calculating. */
+  credits?: CreditNote[];
+  refunds?: { count: number; amount: number };
 };

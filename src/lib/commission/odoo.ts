@@ -13,7 +13,7 @@ import type { OdooReadClient } from '@/lib/odoo/rpc';
 import { buildLedger, lastCategorySegment, ownerOf, type LedgerInput, type RawInvoice, type RawInvoiceLine, type RawPartial, type RawReceipt } from './ledger';
 import { addDays } from './period';
 import type { OpenInvoice } from './statement';
-import type { LedgerLine } from './types';
+import type { CreditNote, LedgerLine } from './types';
 
 type Ref = [number, string] | null;
 type M2O = [number, string] | false;
@@ -172,6 +172,33 @@ export async function fetchCollections(client: OdooReadClient, period: string, r
     receipts: receipts.length,
     refunds: { count: refunds.length, amount: refunds.reduce((s, r) => s + (Number(r.amount) || 0), 0) },
   };
+}
+
+/**
+ * Credit notes dated in the period and money paid back to customers, so the screen can show them
+ * next to the commission. They are never deducted: commission is paid on cash in, and a credit note
+ * set against an invoice is not cash, so that invoice simply collects less.
+ */
+export async function fetchCredits(client: OdooReadClient, range: { start: string; end: string }): Promise<{ credits: CreditNote[]; refunds: { count: number; amount: number } }> {
+  const notes = await searchAll<{ id: number; amount_untaxed: number; amount_total: number; reversed_entry_id: M2O }>(client, 'account.move', [
+    ['move_type', '=', 'out_refund'], ['state', '=', 'posted'], ['invoice_date', '>=', range.start], ['invoice_date', '<=', range.end],
+  ], ['id', 'amount_untaxed', 'amount_total', 'reversed_entry_id']);
+  const refunds = await searchAll<{ id: number; amount: number }>(client, 'account.payment', [
+    ['payment_type', '=', 'outbound'], ['partner_type', '=', 'customer'], ['state', 'in', ['paid', 'reconciled']], ['date', '>=', range.start], ['date', '<=', range.end],
+  ], ['id', 'amount']);
+  const context = await readInvoiceContext(client, notes.map((n) => n.id));
+  const linesByMove = new Map<number, RawInvoiceLine[]>();
+  for (const line of context.invoiceLines) linesByMove.set(line.moveId, [...(linesByMove.get(line.moveId) ?? []), line]);
+  const credits = notes.flatMap((n): CreditNote[] => {
+    const note = context.invoices.get(n.id);
+    if (!note) return [];
+    const owner = ownerOf(note, linesByMove.get(n.id) ?? [], context);
+    return [{
+      id: n.id, name: note.name, date: note.invoiceDate ?? range.start, partnerName: note.partnerName, originName: ref(n.reversed_entry_id)?.[1] ?? null,
+      odooUserId: owner.user?.[0] ?? null, repName: owner.user?.[1] ?? null, base: Math.abs(Number(n.amount_untaxed) || 0), gross: Math.abs(Number(n.amount_total) || 0),
+    }];
+  });
+  return { credits, refunds: { count: refunds.length, amount: refunds.reduce((sum, r) => sum + (Number(r.amount) || 0), 0) } };
 }
 
 /**

@@ -6,6 +6,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { CommissionHeader, NoSource, Notice } from '@/components/admin/commission-header';
+import { StepTable } from '@/components/admin/commission-statement';
 import { IconSubmit } from '@/components/admin/icon-submit';
 import { EmptyRow, TableCard } from '@/components/admin/list-kit';
 import { UrlDrawer } from '@/components/admin/url-drawer';
@@ -13,16 +14,16 @@ import { can } from '@/lib/auth/permissions';
 import type { Role } from '@/lib/auth/roles';
 import { requirePermission } from '@/lib/auth/session';
 import { findUserById } from '@/lib/auth/users';
-import { blockingIssues } from '@/lib/commission/calc';
+import { blockingIssues, excludedReasonOf } from '@/lib/commission/calc';
 import { commissionContext, ctxQuery } from '@/lib/commission/context';
 import { isPeriod, payDate, periodLabel, thaiDay } from '@/lib/commission/period';
 import { getRun, listAdjustments, listLedger, listReps } from '@/lib/commission/repo';
-import { OWNER_FROM_LABELS, PAYMENT_KIND_LABELS, RUN_STATUS_LABELS, RUN_STATUS_TONE } from '@/lib/commission/types';
+import { EXCLUDED_LABELS, OWNER_FROM_LABELS, PAYMENT_KIND_LABELS, RUN_STATUS_LABELS, RUN_STATUS_TONE, type RepResult, type RunResults } from '@/lib/commission/types';
 import { baht } from '@/lib/shop/catalog';
 import { cn } from '@/lib/utils';
 import { addAdjustmentAction, calculateAction, deleteAdjustmentAction, runStepAction, syncPeriodAction } from '../../actions';
 
-type Search = { source?: string; rep?: string; saved?: string; error?: string };
+type Search = { source?: string; rep?: string; show?: string; saved?: string; error?: string };
 const fmt = new Intl.DateTimeFormat('th-TH', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'Asia/Bangkok' });
 
 /**
@@ -56,7 +57,11 @@ export default async function CommissionRunPage({ params, searchParams }: { para
   const repName = new Map(reps.map((r) => [r.odooUserId, r.name]));
   const drillRep = sp.rep ? Number(sp.rep) : null;
   const lineResults = new Map((results?.lines ?? []).map((l) => [l.lineKey, l]));
-  const drillLines = drillRep !== null ? ledger.filter((l) => l.odooUserId === drillRep) : [];
+  const repLines = drillRep !== null ? ledger.filter((l) => l.odooUserId === drillRep) : [];
+  const show = sp.show === 'counted' || sp.show === 'excluded' ? sp.show : 'all';
+  const drillLines = repLines.filter((l) => show === 'all' || (excludedReasonOf(l, lineResults.get(l.lineKey)) === null) === (show === 'counted'));
+  const drillCredits = drillRep !== null ? (results?.credits ?? []).filter((c) => c.odooUserId === drillRep) : [];
+  const drillResult = drillRep !== null ? results?.reps.find((r) => r.odooUserId === drillRep) : undefined;
   const close = `${path}?${ctxQuery(ctx)}`;
   const step = (name: string, label: string, icon: ReactNode, variant: 'default' | 'outline' = 'default') => (
     <form action={runStepAction}>{hidden}<input type="hidden" name="step" value={name} />
@@ -104,11 +109,7 @@ export default async function CommissionRunPage({ params, searchParams }: { para
 
       {results && (
         <>
-          <section className="grid gap-3 sm:grid-cols-3">
-            <Tile label="ค่าคอมที่ต้องจ่าย" value={baht(results.totalPayable)} sub={`${results.reps.filter((r) => r.payable > 0).length} คน`} />
-            <Tile label="ฐานค่าคอม (ก่อน VAT)" value={baht(results.reps.reduce((s, r) => s + r.base, 0))} sub={`ไม่มีเจ้าของ ${baht(results.unassignedBase)}`} />
-            <Tile label="รายการต้องตรวจ" value={String(results.issues.length)} sub={blocking.length ? `${blocking.length} รายการทำให้ส่งอนุมัติไม่ได้` : 'ไม่มีรายการที่ขวางการส่งอนุมัติ'} warn={blocking.length > 0} />
-          </section>
+          <RunSummary results={results} />
 
           {issueCounts.size > 0 && (
             <details className="rounded-xl border border-amber-300 bg-amber-500/5 p-3 text-sm" open={blocking.length > 0}>
@@ -126,35 +127,65 @@ export default async function CommissionRunPage({ params, searchParams }: { para
                 <TableRow>
                   <TableHead>พนักงานขาย</TableHead>
                   <TableHead className="text-right">ยอดเก็บ ก่อน VAT</TableHead>
+                  <TableHead>ไม่นำมาคิด เพราะ</TableHead>
                   <TableHead className="text-right">เป้า</TableHead>
                   <TableHead className="text-right">ค่าคอม</TableHead>
-                  <TableHead className="text-right">หักส่วนกลาง / ลูกหนี้</TableHead>
-                  <TableHead className="text-right">ปรับ / ยกมา</TableHead>
-                  <TableHead className="text-right">จ่าย</TableHead>
+                  <TableHead className="text-right">หัก / ปรับ</TableHead>
+                  <TableHead className="text-right">จ่ายจริง</TableHead>
+                  <TableHead className="text-right">CN รอบนี้ (ไม่หัก)</TableHead>
                   <TableHead className="w-10" />
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {results.reps.length === 0 && <EmptyRow colSpan={8}>ไม่มีพนักงานที่มียอดในรอบนี้</EmptyRow>}
-                {results.reps.map((r) => (
-                  <TableRow key={r.odooUserId}>
-                    <TableCell data-label="พนักงานขาย"><Link href={`${path}?${ctxQuery(ctx, { rep: String(r.odooUserId) })}`} scroll={false} className="font-medium text-primary hover:underline">{r.repName}</Link><span className="block text-xs text-muted-foreground">{r.lines} บรรทัด</span></TableCell>
-                    <TableCell data-label="ยอดเก็บ" className="text-right tabular-nums">{baht(r.base)}</TableCell>
-                    <TableCell data-label="เป้า" className="text-right text-xs tabular-nums">
-                      {r.target === null ? <span className="text-destructive">ยังไม่ตั้ง</span> : r.target === 0 ? 'ไม่ใช้เป้า' : <>{baht(r.target)}<span className={cn('block', r.targetMet ? 'text-emerald-700' : 'text-destructive')}>{r.targetMet ? 'ถึงเป้า' : 'ไม่ถึงเป้า'}</span></>}
-                    </TableCell>
-                    <TableCell data-label="ค่าคอม" className="text-right tabular-nums">{baht(r.commission)}{r.debtRelease ? <span className="block text-xs text-emerald-700">คืนลูกหนี้ +{baht(r.debtRelease)}</span> : null}</TableCell>
-                    <TableCell data-label="หัก" className="text-right text-xs tabular-nums text-destructive">{r.central ? baht(-r.central) : '—'}{r.debtHold ? <span className="block">ลูกหนี้ {baht(-r.debtHold)}</span> : null}</TableCell>
-                    <TableCell data-label="ปรับ/ยกมา" className="text-right text-xs tabular-nums">{r.adjustments ? baht(r.adjustments) : '—'}{r.carryIn ? <span className="block text-destructive">ยกมา {baht(r.carryIn)}</span> : null}</TableCell>
-                    <TableCell data-label="จ่าย" className="text-right font-semibold tabular-nums">{baht(r.payable)}{r.carryOut < 0 && <span className="block text-xs font-normal text-destructive">ยกไปหัก {baht(r.carryOut)}</span>}</TableCell>
-                    <TableCell>
-                      <Link href={`${path}/statement?${ctxQuery(ctx, { rep: String(r.odooUserId) })}`} title="ใบสรุปค่าคอม" aria-label={`ใบสรุปค่าคอมของ ${r.repName}`} className="inline-flex size-8 items-center justify-center rounded-lg text-muted-foreground hover:bg-muted hover:text-foreground"><FileText className="size-4" /></Link>
-                    </TableCell>
-                  </TableRow>
-                ))}
+                {results.reps.length === 0 && <EmptyRow colSpan={9}>ไม่มีพนักงานที่มียอดในรอบนี้</EmptyRow>}
+                {results.reps.map((r) => {
+                  const drill = (extra: Record<string, string> = {}) => `${path}?${ctxQuery(ctx, { rep: String(r.odooUserId), ...extra })}`;
+                  const excludedBase = (r.excluded ?? []).reduce((sum, e) => sum + e.base, 0);
+                  return (
+                    <TableRow key={r.odooUserId}>
+                      <TableCell data-label="พนักงานขาย"><Link href={drill()} scroll={false} className="font-medium text-primary hover:underline">{r.repName}</Link><span className="block text-xs text-muted-foreground">{r.lines} บรรทัด · กดเพื่อดูทีละบิล</span></TableCell>
+                      <TableCell data-label="ยอดเก็บ" className="text-right tabular-nums">
+                        {baht(r.base)}
+                        {r.counted !== undefined && <span className="block text-xs text-emerald-700">นำมาคิด {baht(r.counted)}</span>}
+                      </TableCell>
+                      <TableCell data-label="ไม่นำมาคิด" className="text-xs whitespace-normal">
+                        {!r.excluded?.length ? <span className="text-muted-foreground">—</span> : (
+                          <Link href={drill({ show: 'excluded' })} scroll={false} className="block hover:underline">
+                            <span className="font-medium text-amber-800">{baht(excludedBase)}</span>
+                            {r.excluded.map((e) => <span key={e.reason} className="block text-muted-foreground">{EXCLUDED_LABELS[e.reason]} {baht(e.base)} ({e.lines} บรรทัด)</span>)}
+                          </Link>
+                        )}
+                      </TableCell>
+                      <TableCell data-label="เป้า" className="text-right text-xs tabular-nums">
+                        {r.target === null ? <span className="text-destructive">ยังไม่ตั้ง</span> : r.target === 0 ? 'ไม่ใช้เป้า' : <>{baht(r.target)}<span className={cn('block', r.targetMet ? 'text-emerald-700' : 'text-destructive')}>{r.targetMet ? 'ถึงเป้า' : `ไม่ถึงเป้า ขาด ${baht(r.target - r.base)}`}</span></>}
+                      </TableCell>
+                      <TableCell data-label="ค่าคอม" className="text-right tabular-nums">
+                        {baht(r.commission)}
+                        {r.commissionBeforeTarget !== undefined && r.commissionBeforeTarget !== r.commission && <span className="block text-xs text-destructive">ถ้าถึงเป้าจะได้ {baht(r.commissionBeforeTarget)}</span>}
+                        {r.debtRelease ? <span className="block text-xs text-emerald-700">คืนลูกหนี้ +{baht(r.debtRelease)}</span> : null}
+                      </TableCell>
+                      <TableCell data-label="หัก / ปรับ" className="text-right text-xs tabular-nums">
+                        {r.central ? <span className="block text-destructive">ส่วนกลาง {r.centralPercent}% {baht(-r.central)}</span> : null}
+                        {r.debtHold ? <span className="block text-destructive">ลูกหนี้ค้าง {baht(-r.debtHold)}</span> : null}
+                        {r.adjustments ? <span className="block">ปรับ {baht(r.adjustments)}</span> : null}
+                        {r.carryIn ? <span className="block text-destructive">ยกมา {baht(r.carryIn)}</span> : null}
+                        {!r.central && !r.debtHold && !r.adjustments && !r.carryIn && '—'}
+                      </TableCell>
+                      <TableCell data-label="จ่ายจริง" className="text-right font-semibold tabular-nums">{baht(r.payable)}{r.carryOut < 0 && <span className="block text-xs font-normal text-destructive">ยกไปหัก {baht(r.carryOut)}</span>}</TableCell>
+                      <TableCell data-label="CN" className="text-right text-xs tabular-nums">{r.creditNoteCount ? <Link href={drill()} scroll={false} className="hover:underline">{baht(r.creditNoteBase ?? 0)}<span className="block text-muted-foreground">{r.creditNoteCount} ใบ</span></Link> : '—'}</TableCell>
+                      <TableCell>
+                        <Link href={`${path}/statement?${ctxQuery(ctx, { rep: String(r.odooUserId) })}`} title="ใบสรุปค่าคอม" aria-label={`ใบสรุปค่าคอมของ ${r.repName}`} className="inline-flex size-8 items-center justify-center rounded-lg text-muted-foreground hover:bg-muted hover:text-foreground"><FileText className="size-4" /></Link>
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
               </TableBody>
             </Table>
           </TableCard>
+          <p className="text-xs text-muted-foreground">
+            ยอดเก็บ = เงินลูกค้าเข้าบัญชีในรอบนี้ (ก่อน VAT) · ค่าคอม = ยอดที่นำมาคิด × อัตรา × % ราคาพิเศษ × % ขั้นบันไดเกินดิว ·
+            CN ไม่หักค่าคอมซ้ำ เพราะบิลที่ถูกลดหนี้จะเก็บเงินได้น้อยลงเองอยู่แล้ว
+          </p>
         </>
       )}
 
@@ -186,7 +217,15 @@ export default async function CommissionRunPage({ params, searchParams }: { para
       </section>
 
       {drillRep !== null && (
-        <UrlDrawer title={`${repName.get(drillRep) ?? results?.reps.find((r) => r.odooUserId === drillRep)?.repName ?? `#${drillRep}`} · รายละเอียดรอบ ${period}`} closeHref={close} size="xl">
+        <UrlDrawer title={`${repName.get(drillRep) ?? drillResult?.repName ?? `#${drillRep}`} · รายละเอียดรอบ ${period}`} closeHref={close} size="xl">
+          {drillResult && <RepExplain rep={drillResult} />}
+          {drillResult && <StepTable rep={drillResult} />}
+          <nav className="flex flex-wrap gap-1 text-xs" aria-label="กรองรายการ">
+            {([['all', `ทั้งหมด (${repLines.length})`], ['counted', 'นำมาคิดค่าคอม'], ['excluded', 'ไม่นำมาคิด']] as const).map(([key, text]) => (
+              <Link key={key} href={`${path}?${ctxQuery(ctx, { rep: String(drillRep), show: key === 'all' ? undefined : key })}`} scroll={false}
+                className={cn('rounded-full border px-3 py-1', show === key ? 'border-primary bg-primary text-primary-foreground' : 'border-border hover:bg-muted')}>{text}</Link>
+            ))}
+          </nav>
           <TableCard>
             <Table>
               <TableHeader className="bg-muted/50">
@@ -198,10 +237,11 @@ export default async function CommissionRunPage({ params, searchParams }: { para
                   <TableHead className="text-right">ก่อน VAT</TableHead>
                   <TableHead className="text-right">อัตรา × พิเศษ × ขั้น</TableHead>
                   <TableHead className="text-right">ค่าคอม</TableHead>
+                  <TableHead>ผล</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {drillLines.length === 0 && <EmptyRow colSpan={7}>ไม่มีรายการ</EmptyRow>}
+                {drillLines.length === 0 && <EmptyRow colSpan={8}>ไม่มีรายการ</EmptyRow>}
                 {drillLines.map((l) => {
                   const r = lineResults.get(l.lineKey);
                   return (
@@ -213,24 +253,108 @@ export default async function CommissionRunPage({ params, searchParams }: { para
                       <TableCell data-label="ก่อน VAT" className="text-right tabular-nums">{baht(l.base)}</TableCell>
                       <TableCell data-label="อัตรา" className="text-right text-xs tabular-nums">{r ? `${r.rateLabel} × ${r.specialPercent}% × ${r.stepPercent}%` : 'ยังไม่คำนวณ'}</TableCell>
                       <TableCell data-label="ค่าคอม" className="text-right font-semibold tabular-nums">{r ? baht(r.commission) : '—'}</TableCell>
+                      <TableCell data-label="ผล" className="text-xs whitespace-normal">
+                        {(() => {
+                          if (!r) return '—';
+                          const reason = excludedReasonOf(l, r);
+                          return reason ? <Badge variant="outline" className="border-transparent bg-amber-500/15 text-amber-800">ไม่คิด: {EXCLUDED_LABELS[reason]}</Badge> : <Badge variant="outline" className="border-transparent bg-emerald-500/15 text-emerald-800">นำมาคิด</Badge>;
+                        })()}
+                      </TableCell>
                     </TableRow>
                   );
                 })}
               </TableBody>
             </Table>
           </TableCard>
+          {drillCredits.length > 0 && (
+            <section className="space-y-1 text-sm">
+              <h3 className="font-semibold">ใบลดหนี้ (CN) ที่ออกรอบนี้ · แสดงให้ทราบ ไม่หักค่าคอม</h3>
+              <ul className="divide-y divide-border rounded-xl border border-border">
+                {drillCredits.map((c) => (
+                  <li key={c.id} className="flex flex-wrap items-center gap-x-3 px-3 py-1.5 text-xs">
+                    <span className="font-medium">{c.name}</span><span>{thaiDay(c.date)}</span><span className="flex-1 text-muted-foreground">{c.partnerName}{c.originName ? ` · ลดหนี้บิล ${c.originName}` : ''}</span>
+                    <span className="tabular-nums">ก่อน VAT {baht(c.base)}</span>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          )}
         </UrlDrawer>
       )}
     </div>
   );
 }
 
-function Tile({ label, value, sub, warn }: { label: string; value: string; sub: string; warn?: boolean }) {
+const sumOf = (reps: RepResult[], pick: (r: RepResult) => number) => reps.reduce((sum, r) => sum + pick(r), 0);
+
+/**
+ * The period in plain words, top to bottom: cash in, what was counted and what was not (and why),
+ * commission, deductions, what is paid, and the credit notes shown for reference.
+ */
+function RunSummary({ results }: { results: RunResults }) {
+  const reps = results.reps;
+  const collected = sumOf(reps, (r) => r.base) + results.unassignedBase;
+  const counted = sumOf(reps, (r) => r.counted ?? r.base);
+  const excluded = new Map<string, number>();
+  for (const r of reps) for (const e of r.excluded ?? []) excluded.set(EXCLUDED_LABELS[e.reason], (excluded.get(EXCLUDED_LABELS[e.reason]) ?? 0) + e.base);
+  if (results.unassignedBase) excluded.set('ไม่มีพนักงานขายเจ้าของบิล', results.unassignedBase);
+  const before = sumOf(reps, (r) => r.commissionBeforeTarget ?? r.commission);
+  const commission = sumOf(reps, (r) => r.commission);
+  const deducted = sumOf(reps, (r) => r.central + r.debtHold);
+  const other = sumOf(reps, (r) => r.adjustments + r.carryIn + r.debtRelease);
+  const credits = results.credits ?? [];
+  const row = (label: string, value: number, tone?: 'muted' | 'bad' | 'good' | 'strong', note?: string) => (
+    <li className={cn('flex items-baseline gap-2 py-1', tone === 'strong' && 'border-t border-border pt-2 font-bold')}>
+      <span className={cn('flex-1', tone === 'muted' && 'pl-4 text-muted-foreground')}>{label}{note && <span className="block text-xs font-normal text-muted-foreground">{note}</span>}</span>
+      <span className={cn('tabular-nums', tone === 'bad' && 'text-destructive', tone === 'good' && 'text-emerald-700')}>{baht(value)}</span>
+    </li>
+  );
   return (
-    <div className="rounded-xl border border-border bg-card p-4">
-      <p className="text-xs text-muted-foreground">{label}</p>
-      <p className={cn('mt-1 text-xl font-bold tabular-nums', warn && 'text-amber-700')}>{value}</p>
-      <p className="text-xs text-muted-foreground">{sub}</p>
-    </div>
+    <section className="grid gap-3 lg:grid-cols-2">
+      <div className="rounded-xl border border-border bg-card p-4 text-sm">
+        <h2 className="mb-1 font-semibold">สรุปรอบนี้ (ก่อน VAT)</h2>
+        <ul>
+          {row('เงินลูกค้าเข้าบัญชีในรอบนี้', collected)}
+          {row('นำมาคิดค่าคอม', counted, 'good')}
+          {[...excluded].map(([label, value]) => row(`ไม่นำมาคิด: ${label}`, value, 'muted'))}
+          {results.notInvoiceGross ? row('เงินเข้าที่ไม่ใช่ค่าบิล (มัดจำ/ปรับปรุง) รวม VAT', results.notInvoiceGross, 'muted', 'ไม่คิดค่าคอม') : null}
+          {row('ค่าคอมตามอัตรา', before)}
+          {before !== commission && row('ไม่ได้เพราะไม่ถึงเป้า', commission - before, 'bad')}
+          {deducted ? row('หัก ส่วนกลาง / ลูกหนี้ค้างชำระ', -deducted, 'bad') : null}
+          {other ? row('ปรับปรุง / คืนลูกหนี้ / ยกมา', other) : null}
+          {row('ค่าคอมที่ต้องจ่าย', results.totalPayable, 'strong', `${reps.filter((r) => r.payable > 0).length} คน`)}
+        </ul>
+      </div>
+      <div className="rounded-xl border border-border bg-card p-4 text-sm">
+        <h2 className="mb-1 font-semibold">ใบลดหนี้ (CN) และเงินคืนลูกค้า · แสดงให้ทราบ ไม่หักค่าคอม</h2>
+        <ul>
+          {row(`CN ที่ออกในรอบนี้ ${credits.length} ใบ`, credits.reduce((sum, c) => sum + c.base, 0))}
+          {credits.some((c) => c.odooUserId === null) && row('CN ที่ไม่มีพนักงานขาย', credits.filter((c) => c.odooUserId === null).reduce((sum, c) => sum + c.base, 0), 'muted')}
+          {row(`เงินคืนลูกค้า ${results.refunds?.count ?? 0} รายการ (รวม VAT)`, results.refunds?.amount ?? 0)}
+        </ul>
+        <p className="mt-2 text-xs text-muted-foreground">
+          {results.credits === undefined ? 'ยังไม่มีข้อมูล CN กด “คำนวณ” ใหม่เพื่อดึงจาก Odoo · ' : ''}
+          ค่าคอมคิดจากเงินที่เข้าบัญชีจริง บิลที่ถูกลดด้วย CN จึงมียอดเก็บน้อยลงเอง ไม่ต้องหักซ้ำ ถ้าต้องหักเพิ่มใช้ “รายการปรับยอด” พร้อมเหตุผล
+        </p>
+      </div>
+    </section>
+  );
+}
+
+/** One rep's figures as a sentence chain, at the top of the per-invoice view. */
+function RepExplain({ rep }: { rep: RepResult }) {
+  const excludedBase = (rep.excluded ?? []).reduce((sum, e) => sum + e.base, 0);
+  return (
+    <p className="rounded-xl bg-muted/60 p-3 text-sm leading-relaxed">
+      เก็บเงินได้ <b>{baht(rep.base)}</b> นำมาคิด <b className="text-emerald-700">{baht(rep.counted ?? rep.base)}</b>
+      {excludedBase > 0 && <> ไม่คิด <b className="text-amber-800">{baht(excludedBase)}</b> ({(rep.excluded ?? []).map((e) => `${EXCLUDED_LABELS[e.reason]} ${baht(e.base)}`).join(', ')})</>}
+      {' '}ได้ค่าคอมตามอัตรา <b>{baht(rep.commissionBeforeTarget ?? rep.commission)}</b>
+      {rep.commissionBeforeTarget !== undefined && rep.commissionBeforeTarget !== rep.commission && <span className="text-destructive"> แต่ไม่ถึงเป้า {baht(rep.target ?? 0)} จึงได้ {baht(rep.commission)}</span>}
+      {rep.central > 0 && <> หักส่วนกลาง {baht(rep.central)}</>}
+      {rep.debtHold > 0 && <> หักลูกหนี้ค้าง {baht(rep.debtHold)}</>}
+      {rep.adjustments !== 0 && <> ปรับ {baht(rep.adjustments)}</>}
+      {' '}จ่ายจริง <b>{baht(rep.payable)}</b>
+      {rep.creditNoteCount ? <span className="text-muted-foreground"> · CN รอบนี้ {rep.creditNoteCount} ใบ {baht(rep.creditNoteBase ?? 0)} (ไม่หัก)</span> : null}
+    </p>
   );
 }

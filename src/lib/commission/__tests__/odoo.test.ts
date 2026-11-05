@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { OdooReadClient } from '@/lib/odoo/rpc';
 import { ISSUE } from '../ledger';
-import { fetchCategories, fetchCollections, fetchOdooUsers, fetchOverdueInvoices, fetchPaidInvoiceIds, fetchPricelists, fetchSales, searchProducts } from '../odoo';
+import { fetchCategories, fetchCollections, fetchCredits, fetchOdooUsers, fetchOverdueInvoices, fetchPaidInvoiceIds, fetchPricelists, fetchSales, searchProducts } from '../odoo';
 
 type Row = Record<string, unknown> & { id: number };
 
@@ -139,6 +139,19 @@ describe('fetchSales', () => {
   it('lists invoiced sales by invoice date with credit notes negative', async () => {
     const lines = await fetchSales(fakeClient(base), '2026-10', { start: '2026-09-21', end: '2026-10-20' });
     expect(lines.map((l) => [l.invoiceName, l.base])).toEqual([['INV/0002', 10_000], ['RINV/0001', -5_000]]);
+  });
+});
+
+describe('fetchCredits', () => {
+  it('lists credit notes of the period with their rep and the customer refunds', async () => {
+    const data = { ...base, 'account.move': base['account.move'].map((m) => ({ ...m, amount_untaxed: -Math.abs(Number(m.amount_total)) / 1.07, reversed_entry_id: m.move_type === 'out_refund' ? [100, 'INV/0001'] : false })) };
+    const { credits, refunds } = await fetchCredits(fakeClient(data), { start: '2026-09-21', end: '2026-10-20' });
+    expect(credits.map((c) => c.name)).toEqual(['RINV/0001']);
+    // No salesperson on the credit note: falls back to the customer's rep, as for invoices.
+    expect(credits[0]).toMatchObject({ originName: 'INV/0001', odooUserId: 9, repName: 'สมหญิง', base: 5_000 });
+    expect(credits[0].base).toBeGreaterThan(0);
+    expect(refunds).toEqual({ count: 1, amount: 300 });
+    expect(await fetchCredits(fakeClient({}), { start: '2026-09-21', end: '2026-10-20' })).toEqual({ credits: [], refunds: { count: 0, amount: 0 } });
   });
 });
 

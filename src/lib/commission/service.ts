@@ -7,7 +7,7 @@ import { createOdooReadClient, type OdooReadClient } from '@/lib/odoo/rpc';
 import { decryptSecret } from '@/lib/settings/crypto';
 import { blockingIssues, calculateRun } from './calc';
 import { retroDiff } from './ledger';
-import { fetchCollections, fetchOverdueInvoices, fetchPaidInvoiceIds } from './odoo';
+import { fetchCollections, fetchCredits, fetchOverdueInvoices, fetchPaidInvoiceIds } from './odoo';
 import { periodRange, shiftPeriod } from './period';
 import * as repo from './repo';
 import { planDebt, statementSettings } from './statement';
@@ -131,7 +131,15 @@ export async function calculatePeriod(source: CommissionSource, period: string):
   if (!run.syncedAt) return { ok: false, reason: 'ดึงข้อมูลจาก Odoo ก่อนคำนวณ' };
   const [ledger, snapshot, reps, carryIn] = await Promise.all([repo.listLedger(source.id, period), loadSnapshot(source, run), repo.listReps(source.id), carryInFor(source.id, period)]);
   const inactive = new Set(reps.filter((r) => !r.active).map((r) => r.odooUserId));
+  // Credit notes are for display only; if Odoo cannot be read the run still calculates, with a note.
+  let creditError: string | null = null;
+  const credits = await fetchCredits(clientFor(source), periodRange(period, source.cutoffDay)).catch((error: unknown) => {
+    creditError = error instanceof Error ? error.message : String(error);
+    return null;
+  });
+  if (credits) Object.assign(snapshot, credits);
   const results = calculateRun({ lines: ledger, ...snapshot, reps, inactive, carryIn, period });
+  if (creditError) results.issues.push({ message: `ดึงใบลดหนี้ (CN) จาก Odoo ไม่ได้ จึงไม่แสดงยอด CN: ${creditError}` });
   const moved = await repo.updateRun(run.id, ['DRAFT'], { calculatedAt: new Date(), results, snapshot, totalPayable: results.totalPayable });
   if (!moved) return { ok: false, reason: 'สถานะรอบเปลี่ยนระหว่างคำนวณ ลองใหม่' };
   return { ok: true, run: (await repo.getRun(source.id, period))! };

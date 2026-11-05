@@ -1,4 +1,5 @@
-import type { CommissionAdjustment, DebtHold, RepResult } from '@/lib/commission/types';
+import { Fragment } from 'react';
+import { EXCLUDED_LABELS, type CommissionAdjustment, type DebtHold, type RepResult } from '@/lib/commission/types';
 import { thaiDay } from '@/lib/commission/period';
 import { cn } from '@/lib/utils';
 
@@ -61,9 +62,18 @@ export function CommissionStatement({ company, periodText, payText, rep, debtDay
           {rep.carryOut < 0 && <tr><td colSpan={3} className="pt-1 text-right text-xs text-destructive">ยอดติดลบ ยกไปหักรอบถัดไป · จ่ายรอบนี้ 0.00</td></tr>}
         </tfoot>
       </table>
-      <p className="text-xs text-muted-foreground">
-        ยอดเก็บก่อน VAT {money.format(rep.base)}{rep.target ? ` · เป้า ${money.format(rep.target)} (${rep.targetMet ? 'ถึงเป้า' : 'ไม่ถึงเป้า ไม่ได้ค่าคอมรอบนี้'})` : rep.target === 0 ? ' · ไม่ใช้เป้า' : ''}
-      </p>
+      <StepTable rep={rep} />
+      <div className="rounded-lg border border-border p-2 text-xs">
+        <p className="mb-1 font-medium">ที่มาของตัวเลข (ก่อน VAT)</p>
+        <dl className="grid grid-cols-[1fr_auto] gap-x-4">
+          <dt>เงินลูกค้าเข้าบัญชีในรอบนี้</dt><dd className="text-right tabular-nums">{money.format(rep.base)}</dd>
+          <dt>นำมาคิดค่าคอม</dt><dd className="text-right tabular-nums">{money.format(rep.counted ?? rep.base)}</dd>
+          {(rep.excluded ?? []).map((e) => <Fragment key={e.reason}><dt className="pl-3 text-muted-foreground">ไม่คิด: {EXCLUDED_LABELS[e.reason]}</dt><dd className="text-right tabular-nums text-muted-foreground">{money.format(e.base)}</dd></Fragment>)}
+          <dt>เป้า</dt><dd className="text-right">{rep.target === null ? 'ยังไม่ตั้ง' : rep.target === 0 ? 'ไม่ใช้เป้า' : `${money.format(rep.target)} · ${rep.targetMet ? 'ถึงเป้า' : 'ไม่ถึงเป้า ไม่ได้ค่าคอมรอบนี้'}`}</dd>
+          {rep.commissionBeforeTarget !== undefined && rep.commissionBeforeTarget !== rep.commission && <><dt>ค่าคอมตามอัตรา (ถ้าถึงเป้า)</dt><dd className="text-right tabular-nums">{money.format(rep.commissionBeforeTarget)}</dd></>}
+          {rep.creditNoteCount ? <><dt className="text-muted-foreground">ใบลดหนี้ (CN) รอบนี้ {rep.creditNoteCount} ใบ · ไม่หักค่าคอม</dt><dd className="text-right tabular-nums text-muted-foreground">{money.format(rep.creditNoteBase ?? 0)}</dd></> : null}
+        </dl>
+      </div>
       {holds.length > 0 && (
         <div className="space-y-1">
           <h3 className="text-xs font-semibold">ลูกหนี้ค้างชำระ (หัก / คืน)</h3>
@@ -100,5 +110,54 @@ function Line({ label, value, strong, deduct, double }: { label: string; value: 
       <td className={cn('py-1 text-right', strong && 'font-semibold')}>{label} :</td>
       <td className={cn('py-1 text-right tabular-nums', strong && 'font-bold', deduct && 'text-destructive')}>{value}</td>
     </tr>
+  );
+}
+
+/**
+ * Commission per overdue step: how late customers paid and what that did to the pay
+ * (e.g. 0–10 days × 110%, beyond the last step × 0%). Lines without a rate are not listed.
+ */
+export function StepTable({ rep }: { rep: Pick<RepResult, 'steps'> }) {
+  if (!rep.steps?.length) return null;
+  const total = rep.steps.reduce((sum, s) => ({ base: sum.base + s.base, beforeStep: sum.beforeStep + s.beforeStep, commission: sum.commission + s.commission }), { base: 0, beforeStep: 0, commission: 0 });
+  const range = (s: NonNullable<RepResult['steps']>[number]) => (s.minDays === null ? 'เกินขั้นสุดท้าย' : s.maxDays === null ? `${s.minDays} วันขึ้นไป` : `${s.minDays}–${s.maxDays} วัน`);
+  return (
+    <div className="text-xs">
+      <p className="mb-1 font-medium">ขั้นบันไดเกินดิว (นับจากวันครบกำหนดถึงวันเงินเข้า)</p>
+      <table className="w-full border-collapse">
+        <thead>
+          <tr className="border-y border-border bg-muted/50">
+            <th className="py-1 text-left font-medium">จ่ายหลังครบกำหนด</th>
+            <th className="py-1 text-right font-medium">ยอดก่อน VAT</th>
+            <th className="py-1 text-right font-medium">ค่าคอมตามอัตรา</th>
+            <th className="py-1 text-right font-medium">× % จ่าย</th>
+            <th className="py-1 text-right font-medium">= ค่าคอม</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rep.steps.map((s) => (
+            <tr key={`${s.minDays}-${s.maxDays}`} className="border-b border-border/60">
+              <td className="py-1">{range(s)} <span className="text-muted-foreground">({s.lines} บรรทัด)</span></td>
+              <td className="py-1 text-right tabular-nums">{money.format(s.base)}</td>
+              <td className="py-1 text-right tabular-nums">{money.format(s.beforeStep)}</td>
+              <td className={cn('py-1 text-right tabular-nums', s.percent > 100 && 'text-emerald-700', s.percent < 100 && 'text-destructive')}>{s.percent}%</td>
+              <td className="py-1 text-right font-medium tabular-nums">{money.format(s.commission)}</td>
+            </tr>
+          ))}
+        </tbody>
+        <tfoot>
+          <tr className="font-semibold">
+            <td className="py-1">รวม</td>
+            <td className="py-1 text-right tabular-nums">{money.format(total.base)}</td>
+            <td className="py-1 text-right tabular-nums">{money.format(total.beforeStep)}</td>
+            <td />
+            <td className="py-1 text-right tabular-nums">{money.format(total.commission)}</td>
+          </tr>
+        </tfoot>
+      </table>
+      {rep.steps.some((s) => s.percent !== 100) && (
+        <p className="mt-1 text-muted-foreground">ผลของขั้นบันได: {total.commission - total.beforeStep >= 0 ? 'ได้เพิ่ม' : 'ลดลง'} {money.format(Math.abs(total.commission - total.beforeStep))} บาท (ก่อนเงื่อนไขเป้า)</p>
+      )}
+    </div>
   );
 }
