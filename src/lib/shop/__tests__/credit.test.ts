@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { creditAfterOrder, isDealerScope, orderCreditView, parseOrderScope, tightestCredit, webCreditLine, webCreditUsed } from '../credit';
+import { creditAfterOrder, isDealerScope, isOverdueLocked, orderCreditView, overdueFromInvoices, overdueFromWebOrders, overdueLockMessage, parseOrderScope, tightestCredit, webCreditLine, webCreditUsed } from '../credit';
 
 describe('creditAfterOrder', () => {
   it('is the limit minus what is owed minus this order', () => {
@@ -101,5 +101,50 @@ describe('orderCreditView', () => {
   it('is null without a limit', () => {
     expect(orderCreditView(null, 1_000, true)).toBeNull();
     expect(orderCreditView({ limit: null, used: 5 }, 1_000, false)).toBeNull();
+  });
+});
+
+describe('overdueFromInvoices', () => {
+  const today = '2026-11-06';
+  it('sums invoices due before today that still owe more than 1 baht', () => {
+    const result = overdueFromInvoices([
+      { residual: 10_000, dueDate: '2026-10-31' },
+      { residual: 2_500.5, dueDate: '2026-11-05' },
+      { residual: 9_000, dueDate: today },
+      { residual: 0.4, dueDate: '2026-09-01' },
+      { residual: 5_000, dueDate: null },
+      { residual: -3_000, dueDate: '2026-10-01', refund: true },
+    ], today);
+    expect(result).toEqual({ amount: 12_500.5, count: 2, oldestDueDate: '2026-10-31', source: 'odoo' });
+    expect(isOverdueLocked(result)).toBe(true);
+  });
+  it('does not lock when nothing is past due', () => {
+    const result = overdueFromInvoices([{ residual: 1_000, dueDate: '2026-12-01' }], today);
+    expect(result.count).toBe(0);
+    expect(isOverdueLocked(result)).toBe(false);
+    expect(isOverdueLocked(null)).toBe(false);
+  });
+});
+
+describe('overdueFromWebOrders', () => {
+  const dealer = { id: 'd1', odooPartnerId: 42 };
+  const inv = (amountResidual: number, dueDate: string | null, paymentState = 'not_paid') => ({ amountResidual, dueDate, paymentState });
+  it("counts unpaid past-due invoices of the dealer's open credit orders only", () => {
+    const result = overdueFromWebOrders(dealer, [
+      { scope: 'dealer:d1', paymentMethod: 'CREDIT', status: 'INVOICED', odoo: { progress: { invoices: [inv(4_000, '2026-10-20'), inv(1_000, '2026-12-01')] } } },
+      { scope: 'staff:u9:42', paymentMethod: 'CREDIT', status: 'INVOICED', odoo: { progress: { invoices: [inv(2_000, '2026-11-01T00:00:00')] } } },
+      { scope: 'dealer:d1', paymentMethod: 'CREDIT', status: 'INVOICED', odoo: { progress: { invoices: [inv(7_000, '2026-10-01', 'in_payment')] } } },
+      { scope: 'dealer:d1', paymentMethod: 'CREDIT', status: 'PAID', odoo: { progress: { invoices: [inv(7_000, '2026-10-01')] } } },
+      { scope: 'dealer:d2', paymentMethod: 'CREDIT', status: 'INVOICED', odoo: { progress: { invoices: [inv(7_000, '2026-10-01')] } } },
+      { scope: 'dealer:d1', paymentMethod: 'CASH', status: 'INVOICED', odoo: { progress: { invoices: [inv(7_000, '2026-10-01')] } } },
+      { scope: 'dealer:d1', paymentMethod: 'CREDIT', status: 'PREPARING', odoo: null },
+    ], '2026-11-06');
+    expect(result).toEqual({ amount: 6_000, count: 2, oldestDueDate: '2026-10-20', source: 'web' });
+  });
+});
+
+describe('overdueLockMessage', () => {
+  it('states count and amount and that cash still works', () => {
+    expect(overdueLockMessage({ amount: 12_500.5, count: 2, oldestDueDate: '2026-10-31', source: 'odoo' })).toBe('มียอดเลยกำหนดชำระ 2 ใบ รวม 12,500.50 บาท · ชำระก่อนจึงจะสั่งแบบเครดิตได้ (สั่งเงินสดได้ตามปกติ)');
   });
 });

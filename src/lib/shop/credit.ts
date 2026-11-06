@@ -94,3 +94,61 @@ export function orderCreditView(line: CreditLine | null, orderTotal: number, cou
   const after = round2(before - orderTotal);
   return { limit: line.limit, used, before, after, over: after < 0 };
 }
+
+/**
+ * Unpaid credit past its due date. `source` says where it was counted: Odoo's open invoices of the customer,
+ * or (Odoo unreachable) the invoices of the dealer's web orders from the last status sync.
+ */
+export type OverdueSummary = { amount: number; count: number; oldestDueDate: string | null; source: 'odoo' | 'web' };
+
+/** Invoice payment states that no longer owe anything. */
+const SETTLED = new Set(['paid', 'in_payment', 'reversed']);
+
+/** Below this (rounding left on a partly paid invoice) an invoice does not count as overdue. */
+const OVERDUE_TOLERANCE = 1;
+
+function summarize(rows: { residual: number; dueDate: string }[], source: OverdueSummary['source']): OverdueSummary {
+  const oldest = rows.reduce<string | null>((min, r) => (min === null || r.dueDate < min ? r.dueDate : min), null);
+  return { amount: round2(rows.reduce((sum, r) => sum + r.residual, 0)), count: rows.length, oldestDueDate: oldest, source };
+}
+
+/**
+ * Overdue from Odoo's open invoices: each invoice still owing more than the tolerance whose due date is before
+ * `today` (`YYYY-MM-DD`, Thai day). Credit notes are not netted: accounting applies them to an invoice in Odoo.
+ */
+export function overdueFromInvoices(invoices: readonly { residual: number; dueDate: string | null; refund?: boolean }[], today: string): OverdueSummary {
+  const rows = invoices
+    .filter((inv) => !inv.refund && inv.residual > OVERDUE_TOLERANCE && inv.dueDate && inv.dueDate.slice(0, 10) < today)
+    .map((inv) => ({ residual: inv.residual, dueDate: inv.dueDate!.slice(0, 10) }));
+  return summarize(rows, 'odoo');
+}
+
+/**
+ * Overdue counted from the dealer's own web credit orders (fallback when Odoo cannot be read): invoices from the
+ * last status sync that are past due and unpaid. Orders not invoiced yet have no due date and never count.
+ */
+export function overdueFromWebOrders(
+  dealer: { id: string; odooPartnerId: number | null },
+  orders: readonly { scope: string; paymentMethod: string; status: string; odoo?: { progress?: { invoices: { amountResidual: number; dueDate: string | null; paymentState: string }[] } } | null }[],
+  today: string,
+): OverdueSummary {
+  const rows: { residual: number; dueDate: string }[] = [];
+  for (const order of orders) {
+    if (order.paymentMethod !== 'CREDIT' || RELEASED.has(order.status) || !isDealerScope(order.scope, dealer.id, dealer.odooPartnerId)) continue;
+    for (const inv of order.odoo?.progress?.invoices ?? []) {
+      if (SETTLED.has(inv.paymentState) || inv.amountResidual <= OVERDUE_TOLERANCE || !inv.dueDate || inv.dueDate.slice(0, 10) >= today) continue;
+      rows.push({ residual: inv.amountResidual, dueDate: inv.dueDate.slice(0, 10) });
+    }
+  }
+  return summarize(rows, 'web');
+}
+
+/** Credit ordering is locked while anything is overdue; cash orders stay open. */
+export function isOverdueLocked(overdue: OverdueSummary | null): boolean {
+  return Boolean(overdue && overdue.count > 0);
+}
+
+/** Message shown at checkout and on the account page while credit is locked. */
+export function overdueLockMessage(overdue: OverdueSummary): string {
+  return `มียอดเลยกำหนดชำระ ${overdue.count} ใบ รวม ${new Intl.NumberFormat('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(overdue.amount)} บาท · ชำระก่อนจึงจะสั่งแบบเครดิตได้ (สั่งเงินสดได้ตามปกติ)`;
+}

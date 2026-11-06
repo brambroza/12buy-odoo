@@ -7,7 +7,7 @@ import { audit } from '@/lib/auth/audit';
 import { requirePermission } from '@/lib/auth/session';
 import { flash } from '@/lib/flash';
 import { isValidOn, rateLabel, stepProblems } from '@/lib/commission/calc';
-import { fetchOdooUsers, fetchPricelists } from '@/lib/commission/odoo';
+import { fetchPricelists, fetchRepDirectory } from '@/lib/commission/odoo';
 import { isIsoDate, isPeriod, shiftPeriod, todayBangkok } from '@/lib/commission/period';
 import { statementSettings } from '@/lib/commission/statement';
 import * as repo from '@/lib/commission/repo';
@@ -114,20 +114,26 @@ export async function saveSourceAction(formData: FormData) {
 
 // ---------- reps ----------
 
-/** Pulls the company's internal Odoo users as reps (new ones added, names refreshed). */
+/**
+ * Pulls the reps from Odoo: customer tags "Sale …" (the real salespeople) plus internal users without
+ * a matching tag (used when a customer has no tag). New ones are added and names refreshed; a user rep
+ * that now matches a tag is turned off and its web login moved to the tag rep.
+ */
 export async function syncRepsAction(formData: FormData) {
   const actor = await requirePermission('commission.manage');
   const path = `${BASE}/reps`;
   const source = await sourceOf(path, formData);
-  let added = 0;
+  let result = { added: 0, merged: 0 };
   try {
-    added = await repo.upsertReps(source.id, await fetchOdooUsers(service.clientFor(source)));
+    const directory = await fetchRepDirectory(service.clientFor(source));
+    const reps = [...[...directory.tags.values()].map(([id, name]) => ({ id, name })), ...directory.users];
+    result = await repo.upsertReps(source.id, reps, new Map([...directory.userReps].map(([userId, rep]) => [userId, rep[0]])));
   } catch (error) {
-    fail(path, formData, `ดึงผู้ใช้จาก Odoo ไม่สำเร็จ: ${errorText(error)}`);
+    fail(path, formData, `ดึงพนักงานขายจาก Odoo ไม่สำเร็จ: ${errorText(error)}`);
   }
-  await audit(actor.id, 'commission.reps.sync', 'CommissionSource', source.id, { added });
+  await audit(actor.id, 'commission.reps.sync', 'CommissionSource', source.id, result);
   revalidatePath(path);
-  back(path, formData, { saved: `ดึงพนักงานขายแล้ว เพิ่มใหม่ ${added} คน` });
+  back(path, formData, { saved: `ดึงพนักงานขายแล้ว เพิ่มใหม่ ${result.added} คน${result.merged ? ` · ย้ายไปใช้ tag Sale ${result.merged} คน` : ''}` });
 }
 
 /** Links a rep to a web login and turns them on/off. */
@@ -365,14 +371,15 @@ export async function copyTargetsAction(formData: FormData) {
   back(path, formData, { saved: `คัดลอกเป้า ${values.size} คนจากรอบก่อน` });
 }
 
-/** Imports targets pasted from Excel: one rep per line, "name or Odoo user id <tab/comma> amount". */
+/** Imports targets pasted from Excel: one rep per line, "rep name or rep key <tab/comma> amount". */
 export async function importTargetsAction(formData: FormData) {
   const actor = await requirePermission('commission.manage');
   const path = `${BASE}/targets`;
   const source = await sourceOf(path, formData);
   const period = periodOf(path, formData);
   await assertPeriodOpen(path, formData, source.id, period);
-  const reps = await repo.listReps(source.id);
+  // Active reps only, so a name like "Tip" finds the tag rep, not the switched-off Odoo user rep.
+  const reps = (await repo.listReps(source.id)).filter((r) => r.active);
   const result = parseTargetLines(field(formData, 'paste'), reps);
   if (result.errors.length) fail(path, formData, result.errors.slice(0, 3).join(' · '));
   if (!result.values.size) fail(path, formData, 'ไม่มีบรรทัดที่นำเข้าได้');

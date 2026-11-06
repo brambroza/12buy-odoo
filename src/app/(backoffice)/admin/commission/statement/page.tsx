@@ -94,9 +94,8 @@ export default async function CommissionStatementSettingsPage({ searchParams }: 
                     <TableCell data-label="กลุ่มราคา">
                       <select name={`group_${i}`} defaultValue={row?.pricelistId ? `pl:${row.pricelistId}|${pricelistName(row)}` : row?.priceGroup ?? '*'} aria-label="กลุ่มราคา" className={cell}>
                         <option value="*">ทุกกลุ่ม</option>
-                        <optgroup label="กลุ่มราคา (จัดในเมนูกลุ่มราคา)">
-                          {Object.entries(PRICE_GROUP_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
-                        </optgroup>
+                        {/* Price groups need the hidden pricelist-group page; keep only a row's saved one. */}
+                        {row && !row.pricelistId && row.priceGroup !== '*' && <option value={row.priceGroup}>{PRICE_GROUP_LABELS[row.priceGroup]} (ต้องจัดกลุ่ม pricelist)</option>}
                         <optgroup label="Pricelist จาก Odoo">
                           {/* Keep a saved pricelist selectable even when Odoo no longer lists it. */}
                           {row?.pricelistId && !pricelists.some((p) => p.id === row.pricelistId) && <option value={`pl:${row.pricelistId}|${pricelistName(row)}`}>{pricelistName(row)}</option>}

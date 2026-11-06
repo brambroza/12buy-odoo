@@ -9,8 +9,8 @@ import { flash } from '@/lib/flash';
 import { billTotals, cashDiscountPerUnit, cashPercentOf, orderPricelistId, resolvePrice, withCoupon } from '@/lib/shop/pricing';
 import { checkCartCoupon } from '@/lib/shop/cart-coupon';
 import { normalizeCode } from '@/lib/shop/coupon';
-import { creditAfterOrder } from '@/lib/shop/credit';
-import { getCreditLine } from '@/lib/shop/credit-line';
+import { creditAfterOrder, isOverdueLocked, overdueLockMessage } from '@/lib/shop/credit';
+import { getCreditSummary } from '@/lib/shop/credit-line';
 import { canSeeProduct, getDealerProfile, visibilityScope } from '@/lib/shop/dealer';
 import { ensureSessionId } from '@/lib/shop/session';
 import * as store from '@/lib/shop/store';
@@ -213,7 +213,8 @@ async function placeOrder(sid: string, input: CheckoutInput, shipTo: string, sli
   const totals = withCoupon(billTotals(lines, paymentMethod), coupon?.discount ?? 0);
   if (paymentMethod === 'CREDIT') {
     // Web limit and Odoo credit_limit both apply. Odoo unreachable: only the web limit; sales still confirms the order.
-    const credit = await getCreditLine(profile);
+    const { line: credit, overdue } = await getCreditSummary(profile);
+    if (isOverdueLocked(overdue)) redirect('/shop/cart?error=' + encodeURIComponent(overdueLockMessage(overdue!)));
     if (creditAfterOrder(credit, totals.total).over) redirect('/shop/cart?error=' + encodeURIComponent('ยอดนี้เกินวงเงินเครดิต เลือกชำระเงินสด หรือลดจำนวน'));
   }
   let slipName: string | null = null;

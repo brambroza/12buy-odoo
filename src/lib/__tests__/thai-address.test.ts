@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import data from '@/data/thai-address.json';
-import { findPostalCode, formatThaiAddress, levelLabels, listDistricts, listProvinces, listSubdistricts, parseThaiAddress, type ThaiAddressData } from '@/lib/thai-address';
+import { findPostalCode, formatThaiAddress, guessThaiAddress, levelLabels, listDistricts, listProvinces, listSubdistricts, parseThaiAddress, type ThaiAddressData } from '@/lib/thai-address';
 
 const d = data as ThaiAddressData;
 
@@ -36,5 +36,29 @@ describe('parseThaiAddress', () => {
     expect(parseThaiAddress(null)).toBeNull();
     expect(parseThaiAddress({ line: 'x' })).toBeNull();
     expect(parseThaiAddress({ line: 'x', subdistrict: 'a', district: 'b', province: 'c', postalCode: '10000', extra: 1 })).toEqual({ line: 'x', subdistrict: 'a', district: 'b', province: 'c', postalCode: '10000' });
+  });
+});
+
+describe('guessThaiAddress', () => {
+  it('reads an Odoo-style street/street2/city/zip line', () => {
+    expect(guessThaiAddress(d, '1/2 ม.3 ศรีภูมิ เมืองเชียงใหม่ เชียงใหม่ 50200'))
+      .toEqual({ line: '1/2 ม.3', subdistrict: 'ศรีภูมิ', district: 'เมืองเชียงใหม่', province: 'เชียงใหม่', postalCode: '50200' });
+  });
+
+  it('strips ต./แขวง prefixes and understands อ.เมือง and กทม.', () => {
+    expect(guessThaiAddress(d, '99 ถ.สุขุมวิท แขวงคลองเตย เขตคลองเตย กทม. 10110'))
+      .toEqual({ line: '99 ถ.สุขุมวิท', subdistrict: 'คลองเตย', district: 'คลองเตย', province: 'กรุงเทพมหานคร', postalCode: '10110' });
+    expect(guessThaiAddress(d, '12 ม.1 ต.ศรีภูมิ อ.เมือง จ.เชียงใหม่')?.district).toBe('เมืองเชียงใหม่');
+  });
+
+  it('round-trips the formatted address', () => {
+    const address = { line: '55/7 ถ.มิตรภาพ', subdistrict: 'ในเมือง', district: 'เมืองนครราชสีมา', province: 'นครราชสีมา', postalCode: '30000' };
+    expect(guessThaiAddress(d, formatThaiAddress(address))).toEqual(address);
+  });
+
+  it('returns null when the subdistrict or district is missing', () => {
+    expect(guessThaiAddress(d, '')).toBeNull();
+    expect(guessThaiAddress(d, '123 ถ.ตัวอย่าง')).toBeNull();
+    expect(guessThaiAddress(d, '123 เชียงใหม่ 50200')).toBeNull();
   });
 });

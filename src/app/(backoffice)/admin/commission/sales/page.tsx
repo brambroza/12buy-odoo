@@ -104,7 +104,7 @@ export default async function CommissionSalesPage({ searchParams }: { searchPara
               </TableBody>
             </Table>
           </TableCard>
-          <p className="text-xs text-muted-foreground">“ยังไม่จัดกลุ่ม” = pricelist ที่ยังไม่ได้ตั้งเป็นปลีก/ส่งในหน้า “กลุ่มราคา” · ยอดเก็บมาจากข้อมูลที่ดึงล่าสุดในหน้า “ยอดเก็บได้”</p>
+          <p className="text-xs text-muted-foreground">“ยังไม่จัดกลุ่ม” = pricelist ที่ยังไม่ได้จัดเป็นปลีก/ส่ง · ยอดเก็บมาจากข้อมูลที่ดึงล่าสุดในหน้า “ยอดเก็บได้”</p>
         </>
       )}
     </div>

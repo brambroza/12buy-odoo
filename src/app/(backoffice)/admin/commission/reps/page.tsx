@@ -7,27 +7,30 @@ import { EmptyRow, ListPagination, ListSearch, TableCard } from '@/components/ad
 import { listHref, matchesSearch, paginate, searchText } from '@/lib/admin/list';
 import { requirePermission } from '@/lib/auth/session';
 import { commissionContext } from '@/lib/commission/context';
+import { isTagRep } from '@/lib/commission/ledger';
 import { listReps, listStaffUsers } from '@/lib/commission/repo';
 import { syncRepsAction, updateRepAction } from '../actions';
 
 const PATH = '/admin/commission/reps';
 type Search = { source?: string; period?: string; q?: string; page?: string; saved?: string; error?: string };
 
-/** Odoo salespeople of the company, linked (optionally) to a web login so they can see their own commission. */
+/** Reps of the company (customer tags "Sale …", plus Odoo users as fallback), optionally linked to a web login to see their own commission. */
 export default async function CommissionRepsPage({ searchParams }: { searchParams: Promise<Search> }) {
   await requirePermission('commission.manage');
   const params = await searchParams;
   const ctx = await commissionContext(params);
   const [reps, users] = ctx.source ? await Promise.all([listReps(ctx.source.id), listStaffUsers()]) : [[], []];
   const q = searchText(params.q);
-  const filtered = reps.filter((r) => matchesSearch(q, r.name, r.odooUserId));
+  // Tag reps first (the real salespeople), then Odoo-user fallbacks; switched-off ones last.
+  const sorted = [...reps].sort((a, b) => Number(b.active) - Number(a.active) || Number(isTagRep(b.odooUserId)) - Number(isTagRep(a.odooUserId)) || a.name.localeCompare(b.name));
+  const filtered = sorted.filter((r) => matchesSearch(q, r.name));
   const page = paginate(filtered, params.page);
   const userName = new Map(users.map((u) => [u.id, `${u.name} (${u.email})`]));
 
   return (
     <div className="space-y-4">
       <CommissionHeader ctx={ctx} path={PATH} title="พนักงานขาย" showPeriod={false}
-        description="ดึงผู้ใช้ภายในจาก Odoo ของบริษัท ยอดเป็นของ Salesperson บนใบแจ้งหนี้ ถ้าว่างใช้ของใบสั่งขาย แล้วค่อยของลูกค้า"
+        description="เซลล์ตัวจริงคือ tag “Sale …” บนลูกค้าใน Odoo (มีหลาย tag ใช้ tag แรก) · ลูกค้าที่ไม่มี tag ยอดเป็นของ Salesperson ในใบแจ้งหนี้ / ใบสั่งขาย / ลูกค้า (ถ้าชื่อตรงกับ tag เช่น user Tip = Sale Tip จะรวมเป็นคนเดียวกัน)"
         actions={ctx.source && (
           <form action={syncRepsAction}>
             <input type="hidden" name="source" value={ctx.source.id} />
@@ -38,12 +41,12 @@ export default async function CommissionRepsPage({ searchParams }: { searchParam
       <Notice saved={params.saved} error={params.error} />
       {!ctx.source ? <NoSource /> : (
         <>
-          <ListSearch action={PATH} q={params.q} placeholder="ชื่อ หรือ Odoo user id" keep={{ source: ctx.source.id, period: ctx.period }} />
+          <ListSearch action={PATH} q={params.q} placeholder="ชื่อพนักงานขาย" keep={{ source: ctx.source.id, period: ctx.period }} />
           <TableCard>
             <Table>
               <TableHeader className="bg-muted/50">
                 <TableRow>
-                  <TableHead>พนักงานขาย (Odoo)</TableHead>
+                  <TableHead>พนักงานขาย</TableHead>
                   <TableHead>ผูกกับบัญชีเว็บ (ดูค่าคอมของตัวเอง)</TableHead>
                   <TableHead>คิดค่าคอม</TableHead>
                   <TableHead className="w-12" />
@@ -53,7 +56,7 @@ export default async function CommissionRepsPage({ searchParams }: { searchParam
                 {page.items.length === 0 && <EmptyRow colSpan={4}>{reps.length ? 'ไม่พบ' : 'ยังไม่มีพนักงานขาย กด “ดึงจาก Odoo”'}</EmptyRow>}
                 {page.items.map((r) => (
                   <TableRow key={r.id}>
-                    <TableCell data-label="พนักงานขาย" className="font-medium">{r.name}<span className="block text-xs font-normal text-muted-foreground">Odoo user #{r.odooUserId}</span></TableCell>
+                    <TableCell data-label="พนักงานขาย" className="font-medium">{r.name}<span className="block text-xs font-normal text-muted-foreground">{isTagRep(r.odooUserId) ? `tag ลูกค้า “Sale ${r.name}”` : `Salesperson Odoo (ใช้เมื่อลูกค้าไม่มี tag) #${r.odooUserId}`}</span></TableCell>
                     <TableCell data-label="บัญชีเว็บ" colSpan={3}>
                       <form action={updateRepAction} className="flex flex-wrap items-center gap-3">
                         <input type="hidden" name="source" value={ctx.source!.id} />

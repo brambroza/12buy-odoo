@@ -37,14 +37,19 @@ export type LedgerInput = {
   /** sale.order.line id → sale.order id. */
   saleLineOrder: Map<number, number>;
   orders: Map<number, { pricelist: Ref; user: Ref }>;
-  partners: Map<number, { pricelist: Ref; user: Ref }>;
+  /** Customers with their "Sale …" tags (rep key + rep name, in Odoo's order). */
+  partners: Map<number, { pricelist: Ref; user: Ref; tags?: [number, string][] }>;
+  /** Odoo user id → rep key of the "Sale …" tag with the same name (so a salesperson fallback lands on the same rep). */
+  userReps?: Map<number, [number, string]>;
   /** product id → category name (last segment, e.g. `YK-PCR`). */
   productCategory: Map<number, string>;
 };
 
 export const ISSUE = {
   notInvoice: 'เงินเข้าตัดกับรายการที่ไม่ใช่ใบแจ้งหนี้ (มัดจำ/ปรับปรุง) ไม่คิดค่าคอม',
-  noRep: 'ไม่พบพนักงานขาย (ใบแจ้งหนี้/ใบสั่งขาย/ลูกค้า)',
+  noRep: 'ไม่พบเซลล์ (ลูกค้าไม่มี tag Sale และไม่มี Salesperson)',
+  noRepTag: 'ลูกค้าไม่มี tag Sale ใช้ Salesperson ใน Odoo แทน',
+  multiRepTag: (names: string[]) => `ลูกค้ามีหลาย tag Sale (${names.join(', ')}) ใช้ tag แรก`,
   pricelistFromPartner: 'บิลไม่มีใบสั่งขาย ใช้ pricelist ประจำลูกค้า',
   noPricelist: 'ไม่พบ pricelist',
   noDueDate: 'ใบแจ้งหนี้ไม่มีวันครบกำหนด นับเกินดิว 0 วัน',
@@ -77,8 +82,20 @@ export function paymentKindOf(invoice: Pick<RawInvoice, 'invoiceDate' | 'dueDate
   return !invoice.dueDate || !invoice.invoiceDate || invoice.dueDate <= invoice.invoiceDate ? 'CASH' : 'CREDIT';
 }
 
-/** Rep of an invoice: its salesperson, else the first sale order's, else the customer's. */
-export function ownerOf(invoice: RawInvoice, lines: RawInvoiceLine[], input: Pick<LedgerInput, 'saleLineOrder' | 'orders' | 'partners'>): { user: Ref; from: OwnerFrom } {
+/**
+ * Rep keys: a rep is a customer tag "Sale …" (the real salesperson; key = −tag id) or, for customers
+ * without one, an Odoo user (key = user id). Negative keys keep the two apart in every table.
+ */
+export const tagRepKey = (tagId: number) => -tagId;
+export const isTagRep = (key: number) => key < 0;
+/** `Sale Tip` / `sales Tip` → `Tip`; null when the tag is not a rep tag. */
+export function repTagName(tagName: string): string | null {
+  const match = /^sales?\b\s*(.*)$/i.exec(tagName.trim());
+  return match && match[1].trim() ? match[1].trim() : null;
+}
+
+/** The Odoo salesperson: the invoice's, else the first sale order's, else the customer's. */
+function salespersonOf(invoice: RawInvoice, lines: RawInvoiceLine[], input: Pick<LedgerInput, 'saleLineOrder' | 'orders' | 'partners'>): { user: Ref; from: OwnerFrom } {
   if (invoice.invoiceUser) return { user: invoice.invoiceUser, from: 'invoice' };
   for (const line of lines) {
     const orderId = line.saleLineIds.map((id) => input.saleLineOrder.get(id)).find((id) => id !== undefined);
@@ -87,6 +104,18 @@ export function ownerOf(invoice: RawInvoice, lines: RawInvoiceLine[], input: Pic
   }
   const partnerUser = invoice.partnerId ? input.partners.get(invoice.partnerId)?.user : null;
   return partnerUser ? { user: partnerUser, from: 'partner' } : { user: null, from: 'none' };
+}
+
+/**
+ * Rep of an invoice: the customer's first "Sale …" tag; a customer without one falls back to the
+ * Odoo salesperson, mapped to the tag rep of the same name when there is one.
+ */
+export function ownerOf(invoice: RawInvoice, lines: RawInvoiceLine[], input: Pick<LedgerInput, 'saleLineOrder' | 'orders' | 'partners' | 'userReps'>): { user: Ref; from: OwnerFrom; issue?: string } {
+  const tags = invoice.partnerId ? input.partners.get(invoice.partnerId)?.tags ?? [] : [];
+  if (tags.length) return { user: tags[0], from: 'tag', issue: tags.length > 1 ? ISSUE.multiRepTag(tags.map((t) => t[1])) : undefined };
+  const person = salespersonOf(invoice, lines, input);
+  if (!person.user) return person;
+  return { user: input.userReps?.get(person.user[0]) ?? person.user, from: person.from, issue: ISSUE.noRepTag };
 }
 
 /** Pricelist of an invoice line: its sale order's, else the customer's default one. */
@@ -136,6 +165,7 @@ export function buildLedger(input: LedgerInput): LedgerLine[] {
     const days = overdueDays(receipt.cashDate, invoice.dueDate);
     const invoiceIssues: string[] = [];
     if (!owner.user) invoiceIssues.push(ISSUE.noRep);
+    if (owner.issue) invoiceIssues.push(owner.issue);
     if (!invoice.dueDate) invoiceIssues.push(ISSUE.noDueDate);
     const common = {
       ...base, invoiceId: invoice.id, invoiceName: invoice.name, invoiceDate: invoice.invoiceDate, dueDate: invoice.dueDate, overdueDays: days ?? 0, paymentKind: paymentKindOf(invoice),

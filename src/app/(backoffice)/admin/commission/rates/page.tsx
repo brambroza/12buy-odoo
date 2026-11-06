@@ -144,12 +144,9 @@ export default async function CommissionRatesPage({ searchParams }: { searchPara
                   <label className={label}>กลุ่มสินค้า (ว่าง = ทุกกลุ่ม)<input name="family" list="family-list" placeholder="เช่น PCR, TBR" className={input} /></label>
                 </>
               )}
-              <label className={label}>กลุ่มราคา / Pricelist
+              <label className={label}>Pricelist
                 <select name="priceGroup" defaultValue="*" className={input}>
-                  <option value="*">ทุกกลุ่ม</option>
-                  <optgroup label="กลุ่มราคา (จัดในเมนูกลุ่มราคา)">
-                    {(Object.keys(PRICE_GROUP_LABELS) as PriceGroup[]).map((g) => <option key={g} value={g}>{PRICE_GROUP_LABELS[g]}</option>)}
-                  </optgroup>
+                  <option value="*">ทุก pricelist</option>
                   {pricelists.length > 0 && (
                     <optgroup label="Pricelist จาก Odoo (เฉพาะ pricelist นี้)">
                       {pricelists.map((p) => {

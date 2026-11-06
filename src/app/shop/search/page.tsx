@@ -1,6 +1,8 @@
 import type { Metadata } from 'next';
+import Form from 'next/form';
 import Link from 'next/link';
 import { ArrowUpDown, Heart } from 'lucide-react';
+import { AutoSubmitSelect } from '@/components/shop/auto-submit-select';
 import { SizeSearch } from '@/components/shop/size-search';
 import { ProductCard } from '@/components/shop/product-card';
 import { getCatalog, searchProducts } from '@/lib/shop/catalog';
@@ -64,7 +66,7 @@ export default async function SearchPage({ searchParams }: { searchParams: Promi
         </div>
       )}
 
-      <form action="/shop/search" className="flex flex-wrap items-center gap-2 text-xs">
+      <Form action="/shop/search" className="flex flex-wrap items-center gap-2 text-xs">
         {query && <input type="hidden" name="q" value={query} />}
         {type && <input type="hidden" name="type" value={type} />}
         {params.brand && <input type="hidden" name="brand" value={params.brand} />}
@@ -72,18 +74,18 @@ export default async function SearchPage({ searchParams }: { searchParams: Promi
         <label className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-card px-2 py-1.5">
           <ArrowUpDown className="size-3.5 text-muted-foreground" aria-hidden />
           <span className="sr-only">เรียงตาม</span>
-          <select name="sort" defaultValue={sort} className="bg-transparent text-xs outline-none" aria-label="เรียงตาม">
+          <AutoSubmitSelect key={sort} name="sort" defaultValue={sort} className="bg-transparent text-xs outline-none" aria-label="เรียงตาม">
             {SORT_OPTIONS.map((o) => <option key={o.key} value={o.key}>{o.label}</option>)}
-          </select>
+          </AutoSubmitSelect>
         </label>
         <label className="inline-flex items-center gap-1 rounded-lg border border-border bg-card px-2 py-1.5">ราคา
-          <input name="min" inputMode="numeric" defaultValue={params.min ?? ''} placeholder="ต่ำสุด" aria-label="ราคาต่ำสุด" className="w-16 bg-transparent text-right outline-none" />
+          <input key={`min-${params.min ?? ''}`} name="min" inputMode="numeric" defaultValue={params.min ?? ''} placeholder="ต่ำสุด" aria-label="ราคาต่ำสุด" className="w-16 bg-transparent text-right outline-none" />
           –
-          <input name="max" inputMode="numeric" defaultValue={params.max ?? ''} placeholder="สูงสุด" aria-label="ราคาสูงสุด" className="w-16 bg-transparent text-right outline-none" />
+          <input key={`max-${params.max ?? ''}`} name="max" inputMode="numeric" defaultValue={params.max ?? ''} placeholder="สูงสุด" aria-label="ราคาสูงสุด" className="w-16 bg-transparent text-right outline-none" />
         </label>
-        <button type="submit" className="rounded-lg border border-border bg-card px-3 py-1.5 font-medium hover:bg-muted">ใช้ตัวกรอง</button>
+        <button type="submit" className="rounded-lg border border-border bg-card px-3 py-1.5 font-medium hover:bg-muted">ใช้ช่วงราคา</button>
         {(params.sort || params.min || params.max) && <Link href={href({ sort: undefined, min: undefined, max: undefined })} className="text-muted-foreground underline">ล้างตัวกรอง</Link>}
-      </form>
+      </Form>
 
       <p className="text-xs text-muted-foreground">
         {onlyFav ? <>รายการโปรด </> : query ? <>ผลค้นหา “{query}” </> : type ? <>{DEALER_TYPE_LABELS[type]} </> : <>สินค้าทั้งหมด </>}

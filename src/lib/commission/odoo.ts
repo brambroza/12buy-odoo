@@ -10,7 +10,7 @@
  * invoice number and days overdue are known even though Odoo's receipt does not print them.
  */
 import type { OdooReadClient } from '@/lib/odoo/rpc';
-import { buildLedger, lastCategorySegment, ownerOf, type LedgerInput, type RawInvoice, type RawInvoiceLine, type RawPartial, type RawReceipt } from './ledger';
+import { buildLedger, lastCategorySegment, ownerOf, repTagName, tagRepKey, type LedgerInput, type RawInvoice, type RawInvoiceLine, type RawPartial, type RawReceipt } from './ledger';
 import { addDays } from './period';
 import type { OpenInvoice } from './statement';
 import type { CreditNote, LedgerLine } from './types';
@@ -61,7 +61,38 @@ type InvoiceRow = {
 };
 type InvoiceLineRow = { id: number; move_id: M2O; product_id: M2O; name: string | false; quantity: number; price_subtotal: number; price_total: number; sale_line_ids: number[] };
 
-/** Everything after receipts: invoices, their lines, sale orders, customers and product categories. */
+export type RepDirectory = {
+  /** Customer tag id → rep key + name, for tags named "Sale …". */
+  tags: Map<number, [number, string]>;
+  /** Odoo user id → rep key of the "Sale …" tag with the same name. */
+  userReps: Map<number, [number, string]>;
+  /** Internal users without a matching tag (salesperson fallback reps). */
+  users: { id: number; name: string }[];
+};
+
+/** Customer tags "Sale …" (the real reps) and internal users, matched by name (`Sale Tip` ↔ user `Tip`). */
+export async function fetchRepDirectory(client: OdooReadClient): Promise<RepDirectory> {
+  const [tagRows, userRows] = await Promise.all([
+    client.searchRead<{ id: number; name: string }>('res.partner.category', [], ['id', 'name'], { limit: 1000, order: 'name asc' }),
+    fetchOdooUsers(client),
+  ]);
+  const tags = new Map<number, [number, string]>();
+  for (const t of tagRows) {
+    const name = repTagName(t.name);
+    if (name) tags.set(t.id, [tagRepKey(t.id), name]);
+  }
+  const byName = new Map([...tags.values()].map((rep) => [rep[1].toLowerCase(), rep]));
+  const userReps = new Map<number, [number, string]>();
+  const users: { id: number; name: string }[] = [];
+  for (const u of userRows) {
+    const rep = byName.get(u.name.trim().toLowerCase());
+    if (rep) userReps.set(u.id, rep);
+    else users.push({ id: u.id, name: u.name });
+  }
+  return { tags, userReps, users };
+}
+
+/** Everything after receipts: invoices, their lines, sale orders, customers (with rep tags) and product categories. */
 async function readInvoiceContext(client: OdooReadClient, invoiceIds: number[]) {
   const invoiceRows = invoiceIds.length ? await readAll<InvoiceRow>(client, 'account.move', invoiceIds,
     ['id', 'name', 'move_type', 'state', 'invoice_date', 'invoice_date_due', 'amount_total', 'partner_id', 'commercial_partner_id', 'invoice_user_id']) : [];
@@ -73,7 +104,8 @@ async function readInvoiceContext(client: OdooReadClient, invoiceIds: number[]) 
   const orders = orderIds.length ? await readAll<{ id: number; pricelist_id: M2O; user_id: M2O }>(client, 'sale.order', orderIds, ['pricelist_id', 'user_id']) : [];
   const partnerOf = (i: InvoiceRow) => ref(i.commercial_partner_id)?.[0] ?? ref(i.partner_id)?.[0];
   const partnerIds = invoiceRows.map(partnerOf).filter((id): id is number => id !== undefined);
-  const partners = partnerIds.length ? await readAll<{ id: number; property_product_pricelist: M2O; user_id: M2O }>(client, 'res.partner', partnerIds, ['property_product_pricelist', 'user_id']) : [];
+  const partners = partnerIds.length ? await readAll<{ id: number; property_product_pricelist: M2O; user_id: M2O; category_id?: number[] | false }>(client, 'res.partner', partnerIds, ['property_product_pricelist', 'user_id', 'category_id']) : [];
+  const reps = invoiceRows.length ? await fetchRepDirectory(client) : { tags: new Map(), userReps: new Map(), users: [] } as RepDirectory;
   const productIds = lineRows.map((l) => ref(l.product_id)?.[0]).filter((id): id is number => id !== undefined);
   const products = productIds.length ? await readAll<{ id: number; categ_id: M2O }>(client, 'product.product', productIds, ['categ_id']) : [];
 
@@ -94,7 +126,11 @@ async function readInvoiceContext(client: OdooReadClient, invoiceIds: number[]) 
     invoiceLines,
     saleLineOrder: new Map(saleLines.flatMap((l) => (ref(l.order_id) ? [[l.id, ref(l.order_id)![0]] as [number, number]] : []))),
     orders: new Map(orders.map((o) => [o.id, { pricelist: ref(o.pricelist_id), user: ref(o.user_id) }])),
-    partners: new Map(partners.map((p) => [p.id, { pricelist: ref(p.property_product_pricelist), user: ref(p.user_id) }])),
+    partners: new Map(partners.map((p) => [p.id, {
+      pricelist: ref(p.property_product_pricelist), user: ref(p.user_id),
+      tags: (Array.isArray(p.category_id) ? p.category_id : []).flatMap((id) => (reps.tags.has(id) ? [reps.tags.get(id)!] : [])),
+    }])),
+    userReps: reps.userReps,
     productCategory: new Map(products.map((p) => [p.id, lastCategorySegment(ref(p.categ_id)?.[1] ?? '')])),
   };
 }

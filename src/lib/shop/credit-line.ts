@@ -1,42 +1,59 @@
 import { findDealerByPartnerId, getDealer } from '@/lib/dealers/repo';
+import { thaiDay } from '@/lib/admin/dashboard';
+import { readOpenInvoices, type OdooOpenInvoice } from '@/lib/odoo/partner-receivables';
 import { getPartnerCredit } from './catalog';
-import { orderCreditView, parseOrderScope, tightestCredit, webCreditLine, type CreditLine, type OrderCreditView } from './credit';
+import { orderCreditView, overdueFromInvoices, overdueFromWebOrders, parseOrderScope, tightestCredit, webCreditLine, type CreditLine, type OrderCreditView, type OverdueSummary } from './credit';
 import { listOpenCreditOrders } from './store';
 import type { DealerProfile } from './types';
 
 /**
- * Web credit line of a dealer (limit set in the back office, used = carried-over debt + open credit orders).
- * `odooReceivable` is the linked partner's Total Receivable, used as the carried-over debt when known.
- * Live, not cached: every order and payment moves it. Null when the dealer has no web limit.
+ * Credit position of a dealer: the line orders are checked against, Odoo's Total Receivable and open invoices
+ * (null when Odoo could not be read) and what is overdue.
  */
-export async function getWebCredit(dealerId: string, odooReceivable?: number | null): Promise<CreditLine | null> {
-  const dealer = await getDealer(dealerId);
-  if (!dealer || dealer.creditLimit == null) return null;
-  return webCreditLine(dealer, await listOpenCreditOrders(dealer), dealer.odooPartnerId ? odooReceivable : null);
+export type CreditSummary = { line: CreditLine | null; odooReceivable: number | null; openInvoices: OdooOpenInvoice[] | null; overdue: OverdueSummary | null };
+
+/**
+ * Overdue of a customer: from Odoo's open invoices when they could be read, else from the dealer's own web
+ * credit orders (last status sync). Null when neither source exists (no Odoo link and no dealer row).
+ */
+async function overdueOf(dealer: { id: string; odooPartnerId: number | null } | null, openInvoices: OdooOpenInvoice[] | null, orders?: Awaited<ReturnType<typeof listOpenCreditOrders>> | null): Promise<OverdueSummary | null> {
+  const today = thaiDay(Date.now());
+  if (openInvoices) return overdueFromInvoices(openInvoices, today);
+  if (!dealer) return null;
+  return overdueFromWebOrders(dealer, orders ?? await listOpenCreditOrders(dealer), today);
 }
 
-/** Credit position of a dealer: the line orders are checked against plus Odoo's Total Receivable (null when unknown). */
-export type CreditSummary = { line: CreditLine | null; odooReceivable: number | null };
+/** Odoo credit and open invoices of a partner; either is null when Odoo could not be read. */
+async function readOdooCredit(partnerId: number | null) {
+  if (!partnerId) return { odoo: null, openInvoices: null };
+  const odoo = await getPartnerCredit(partnerId).catch(() => null);
+  const openInvoices = odoo ? await readOpenInvoices(odoo.commercialId ?? partnerId).catch(() => null) : null;
+  return { odoo, openInvoices };
+}
 
 /**
  * Credit line a credit order is checked against: whichever of the web limit and Odoo's `credit_limit`
- * has less room left. Odoo unreachable: only the web limit applies, with the manual carried-over debt.
+ * has less room left, plus the overdue that locks credit ordering. Odoo unreachable: only the web limit
+ * applies, with the manual carried-over debt, and overdue is counted from the dealer's web orders.
  */
 export async function getCreditSummary(profile: Pick<DealerProfile, 'credit' | 'dealerId' | 'odooPartnerId'>): Promise<CreditSummary> {
-  if (!profile.credit) return { line: null, odooReceivable: null };
-  const odoo = profile.odooPartnerId ? await getPartnerCredit(profile.odooPartnerId).catch(() => null) : null;
+  if (!profile.credit) return { line: null, odooReceivable: null, openInvoices: null, overdue: null };
+  const { odoo, openInvoices } = await readOdooCredit(profile.odooPartnerId);
   const odooReceivable = odoo ? odoo.used : null;
-  const web = profile.dealerId ? await getWebCredit(profile.dealerId, odooReceivable) : null;
-  return { line: tightestCredit(web, odoo), odooReceivable };
+  const dealer = profile.dealerId ? await getDealer(profile.dealerId) : null;
+  const orders = dealer ? await listOpenCreditOrders(dealer) : null;
+  const web = dealer && orders && dealer.creditLimit != null ? webCreditLine(dealer, orders, dealer.odooPartnerId ? odooReceivable : null) : null;
+  const overdue = await overdueOf(dealer, openInvoices, orders);
+  return { line: tightestCredit(web, odoo), odooReceivable, openInvoices, overdue };
 }
 
-/** {@link getCreditSummary} without the receivable. */
+/** {@link getCreditSummary} without the receivable and invoices. */
 export async function getCreditLine(profile: Pick<DealerProfile, 'credit' | 'dealerId' | 'odooPartnerId'>): Promise<CreditLine | null> {
   return (await getCreditSummary(profile)).line;
 }
 
 /** Credit of the dealer behind one order, for the admin confirming it. `odooError` when Odoo could not be read. */
-export type OrderCredit = { web: OrderCreditView | null; odoo: OrderCreditView | null; odooError: boolean };
+export type OrderCredit = { web: OrderCreditView | null; odoo: OrderCreditView | null; odooError: boolean; overdue: OverdueSummary | null };
 
 /**
  * Web and Odoo credit lines of whoever placed a pending credit order, each as room before/after it.
@@ -48,11 +65,12 @@ export async function getPendingOrderCredit(order: { sessionId: string; total: n
   const dealer = 'dealerId' in who ? await getDealer(who.dealerId) : await findDealerByPartnerId(who.odooPartnerId);
   const partnerId = dealer?.odooPartnerId ?? ('odooPartnerId' in who ? who.odooPartnerId : null);
   if (!dealer && !partnerId) return null;
-  let odooError = false;
-  const [orders, odoo] = await Promise.all([
-    dealer && dealer.creditLimit != null ? listOpenCreditOrders(dealer) : null,
-    partnerId ? getPartnerCredit(partnerId).catch(() => { odooError = true; return null; }) : null,
+  const [orders, { odoo, openInvoices }] = await Promise.all([
+    dealer ? listOpenCreditOrders(dealer) : null,
+    readOdooCredit(partnerId),
   ]);
-  const web = dealer && orders ? webCreditLine(dealer, orders, dealer.odooPartnerId && odoo ? odoo.used : null) : null;
-  return { web: orderCreditView(web, order.total, true), odoo: orderCreditView(odoo, order.total, false), odooError };
+  const odooError = Boolean(partnerId) && !odoo;
+  const web = dealer && orders && dealer.creditLimit != null ? webCreditLine(dealer, orders, dealer.odooPartnerId && odoo ? odoo.used : null) : null;
+  const overdue = await overdueOf(dealer, openInvoices, orders);
+  return { web: orderCreditView(web, order.total, true), odoo: orderCreditView(odoo, order.total, false), odooError, overdue };
 }

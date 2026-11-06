@@ -480,11 +480,14 @@ function CreditPaymentRow({ order: o, payment: p, odooBase }: { order: ProtoOrde
 async function CreditPanel({ order: o }: { order: ProtoOrder }) {
   const credit = await getPendingOrderCredit(o);
   if (!credit) return <p className="text-muted-foreground">ไม่พบข้อมูลวงเงินของลูกค้ารายนี้</p>;
-  const { web, odoo, odooError } = credit;
+  const { web, overdue } = credit;
   return (
     <div className="grid gap-2 sm:grid-cols-1">
       <CreditCard title="วงเงินเครดิต" view={web} usedLabel="ยอดค้างยกมา (Odoo) + ออเดอร์เครดิตค้าง" empty="ไม่ได้ตั้งวงเงินบนเว็บ" />
-     {(web?.over || odoo?.over) && (
+     {overdue && overdue.count > 0 && (
+        <p className="rounded-md bg-destructive/10 p-2 text-destructive">ลูกค้ามียอดเลยกำหนดชำระ {overdue.count} ใบ รวม {baht(overdue.amount)}{overdue.oldestDueDate ? ` (เก่าสุดครบ ${overdue.oldestDueDate})` : ''}{overdue.source === 'web' ? ' · นับจากออเดอร์เว็บ เพราะอ่าน Odoo ไม่ได้' : ''} · หน้าร้านปิดสั่งเครดิตไว้แล้ว ตรวจกับบัญชีก่อนยืนยัน</p>
+      )}
+     {(web?.over || credit.odoo?.over) && (
         <p className="rounded-md bg-destructive/10 p-2 text-destructive sm:col-span-2">ออเดอร์นี้เกินวงเงินเครดิต · ตรวจสอบกับฝ่ายขาย/บัญชีก่อนยืนยัน</p>
       )}
     </div>

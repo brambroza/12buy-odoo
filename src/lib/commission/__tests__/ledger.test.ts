@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { ISSUE, buildLedger, lastCategorySegment, retroDiff, splitCategory, type LedgerInput, type RawInvoice } from '../ledger';
+import { ISSUE, buildLedger, isTagRep, lastCategorySegment, repTagName, retroDiff, splitCategory, tagRepKey, type LedgerInput, type RawInvoice } from '../ledger';
 
 const invoice = (over: Partial<RawInvoice> = {}): RawInvoice => ({
   id: 100, name: 'INV/2026/0001', invoiceDate: '2026-09-01', dueDate: '2026-10-01', amountTotal: 107_000, partnerId: 7, partnerName: 'ร้านยางดี', invoiceUser: null, ...over,
@@ -48,7 +48,7 @@ describe('buildLedger', () => {
     expect(pcr.gross + tbr.gross).toBeCloseTo(53_500, 1);
     expect(pcr.qty).toBe(10);
     expect(tbr.qty).toBe(2);
-    expect(pcr).toMatchObject({ brand: 'AUSTONE', family: 'PCR', invoiceName: 'INV/2026/0001', overdueDays: 7, pricelistId: 5, pricelistFrom: 'order', odooUserId: 8, ownerFrom: 'order', issues: [] });
+    expect(pcr).toMatchObject({ brand: 'AUSTONE', family: 'PCR', invoiceName: 'INV/2026/0001', overdueDays: 7, pricelistId: 5, pricelistFrom: 'order', odooUserId: 8, ownerFrom: 'order', issues: [ISSUE.noRepTag] });
     expect(pcr.lineKey).toBe('P1:R11:L1');
   });
 
@@ -60,6 +60,32 @@ describe('buildLedger', () => {
     const nobody = input({ saleLineOrder: new Map(), partners: new Map() });
     expect(buildLedger(nobody)[0]).toMatchObject({ odooUserId: null, ownerFrom: 'none', pricelistFrom: 'none' });
     expect(buildLedger(nobody)[0].issues).toEqual(expect.arrayContaining([ISSUE.noRep, ISSUE.noPricelist]));
+  });
+
+  it('pays the customer\'s first "Sale" tag before any salesperson', () => {
+    const tagged = input({ partners: new Map([[7, { pricelist: [6, 'ราคาส่ง'], user: [9, 'สมหญิง'], tags: [[tagRepKey(11), 'Tip']] }]]) });
+    expect(buildLedger(tagged)[0]).toMatchObject({ odooUserId: -11, repName: 'Tip', ownerFrom: 'tag', issues: [] });
+    const twoTags = input({ partners: new Map([[7, { pricelist: null, user: null, tags: [[-10, 'Ko'], [-5, 'Yai']] }]]) });
+    expect(buildLedger(twoTags)[0]).toMatchObject({ odooUserId: -10, repName: 'Ko', ownerFrom: 'tag' });
+    expect(buildLedger(twoTags)[0].issues).toContain(ISSUE.multiRepTag(['Ko', 'Yai']));
+  });
+
+  it('falls back to the salesperson, merged into the tag rep of the same name', () => {
+    const merged = input({ userReps: new Map([[8, [-11, 'Tip']]]) });
+    expect(buildLedger(merged)[0]).toMatchObject({ odooUserId: -11, repName: 'Tip', ownerFrom: 'order', issues: [ISSUE.noRepTag] });
+    // A shared login (Sea) has no tag of its own and stays a user rep.
+    expect(buildLedger(input({ userReps: new Map([[20, [-11, 'Tip']]]) }))[0]).toMatchObject({ odooUserId: 8, repName: 'สมชาย' });
+  });
+
+  it('recognises rep tags by name', () => {
+    expect(repTagName('Sale Tip')).toBe('Tip');
+    expect(repTagName('sales  Wit ')).toBe('Wit');
+    expect(repTagName('Sale')).toBeNull();
+    expect(repTagName('Salesman')).toBeNull();
+    expect(repTagName('Wholesale')).toBeNull();
+    expect(repTagName('PCR')).toBeNull();
+    expect(isTagRep(tagRepKey(6))).toBe(true);
+    expect(isTagRep(6)).toBe(false);
   });
 
   it('reports cash applied to something that is not an invoice', () => {

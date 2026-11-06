@@ -7,8 +7,8 @@ export type PriceGroup = 'RETAIL' | 'WHOLESALE' | 'OTHER';
 export type RateKind = 'PERCENT' | 'PER_UNIT';
 export type RunStatus = 'DRAFT' | 'PENDING_APPROVAL' | 'APPROVED' | 'PAID';
 export type LedgerKind = 'COLLECTION' | 'RETRO';
-/** Where the rep of a line came from: invoice salesperson, sale order salesperson, customer salesperson. */
-export type OwnerFrom = 'invoice' | 'order' | 'partner' | 'none';
+/** Where the rep of a line came from: the customer's "Sale …" tag, else the salesperson of the invoice / sale order / customer. */
+export type OwnerFrom = 'tag' | 'invoice' | 'order' | 'partner' | 'none';
 /** Where the pricelist of a line came from: its sale order, or the customer's default pricelist. */
 export type PricelistFrom = 'order' | 'partner' | 'none';
 /** Cash sale (invoice due the day it is issued, e.g. "Immediate Payment") or credit sale. */
@@ -43,7 +43,7 @@ export const RUN_STATUS_TONE: Record<RunStatus, string> = {
   APPROVED: 'bg-primary/10 text-primary',
   PAID: 'bg-emerald-500/15 text-emerald-700',
 };
-export const OWNER_FROM_LABELS: Record<OwnerFrom, string> = { invoice: 'ใบแจ้งหนี้', order: 'ใบสั่งขาย', partner: 'ลูกค้า', none: '—' };
+export const OWNER_FROM_LABELS: Record<OwnerFrom, string> = { tag: 'tag ลูกค้า', invoice: 'Salesperson ใบแจ้งหนี้', order: 'Salesperson ใบสั่งขาย', partner: 'Salesperson ลูกค้า', none: '—' };
 
 export type CommissionSource = {
   id: string;
@@ -58,6 +58,10 @@ export type CommissionSource = {
   updatedAt: Date;
 } & StatementSettings;
 
+/**
+ * A rep. `odooUserId` is the rep key used by every commission table: −tag id for a customer tag
+ * "Sale …" (the real salesperson), the Odoo user id for a salesperson fallback (see ledger.ts).
+ */
 export type CommissionRep = { id: string; sourceId: string; odooUserId: number; name: string; userId: string | null; active: boolean };
 
 export type CommissionPricelist = {

@@ -209,6 +209,7 @@ export type Partner = {
   state_id: [number, string] | false;
   property_product_pricelist: [number, string] | false;
   street: string | false;
+  street2?: string | false;
   city: string | false;
   zip: string | false;
   phone: string | false;
@@ -225,7 +226,7 @@ export async function getPartners(): Promise<Partner[]> {
   if (partnerCache && partnerCache.expiresAt > Date.now()) return partnerCache.value;
   // Same customers as the admin list: ranked customers plus portal users' contacts without a sale order yet.
   const value = await odooSearchRead<Partner>('res.partner', ['|', ['customer_rank', '>', 0], ['user_ids.share', '=', true]],
-    ['id', 'name', 'state_id', 'property_product_pricelist', 'street', 'city', 'zip', 'phone', 'user_id', 'property_delivery_carrier_id'], { limit: 500, order: 'name asc' });
+    ['id', 'name', 'state_id', 'property_product_pricelist', 'street', 'street2', 'city', 'zip', 'phone', 'user_id', 'property_delivery_carrier_id'], { limit: 500, order: 'name asc' });
   partnerCache = { value, expiresAt: Date.now() + 2 * 60 * 1000 };
   return value;
 }
@@ -235,21 +236,26 @@ export async function getPartner(id: number): Promise<Partner | null> {
   const listed = (await getPartners()).find((p) => p.id === id);
   if (listed) return listed;
   const [row] = await odooSearchRead<Partner>('res.partner', [['id', '=', id]],
-    ['id', 'name', 'state_id', 'property_product_pricelist', 'street', 'city', 'zip', 'phone', 'user_id', 'property_delivery_carrier_id'], { limit: 1 });
+    ['id', 'name', 'state_id', 'property_product_pricelist', 'street', 'street2', 'city', 'zip', 'phone', 'user_id', 'property_delivery_carrier_id'], { limit: 1 });
   return row ?? null;
 }
 
 /** Credit position of one Odoo customer; `limit` null means Odoo enforces no limit for this partner. */
-export type PartnerCredit = { limit: number | null; used: number };
+export type PartnerCredit = { limit: number | null; used: number; commercialId?: number };
 
 /**
  * Live credit limit and receivable balance for a partner (not cached: it changes with every invoice/payment).
  * Odoo only enforces `credit_limit` when it is above 0.
  */
 export async function getPartnerCredit(partnerId: number): Promise<PartnerCredit | null> {
-  const [row] = await odooSearchRead<{ credit: number; credit_limit: number }>('res.partner', [['id', '=', partnerId]], ['credit', 'credit_limit'], { limit: 1 });
+  type CreditRead = { id: number; credit: number; credit_limit: number; commercial_partner_id: [number, string] | false };
+  const fields = ['id', 'credit', 'credit_limit', 'commercial_partner_id'];
+  let [row] = await odooSearchRead<CreditRead>('res.partner', [['id', '=', partnerId]], fields, { limit: 1 });
+  // Invoices are booked on the company (commercial partner); a dealer linked to a contact person would read 0.
+  const commercialId = row?.commercial_partner_id ? row.commercial_partner_id[0] : null;
+  if (row && commercialId && commercialId !== row.id) [row] = await odooSearchRead<CreditRead>('res.partner', [['id', '=', commercialId]], fields, { limit: 1 });
   if (!row) return null;
-  return { limit: row.credit_limit > 0 ? row.credit_limit : null, used: Math.max(0, Number(row.credit) || 0) };
+  return { limit: row.credit_limit > 0 ? row.credit_limit : null, used: Math.max(0, Number(row.credit) || 0), commercialId: row.id };
 }
 
 /** Drops the cached partner list, e.g. after the web creates a partner. */

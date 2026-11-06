@@ -160,7 +160,7 @@ export async function profileFromDealer(dealer: Dealer, settings?: admin.AdminSh
     try {
       const partner = await getPartner(dealer.odooPartnerId);
       if (partner?.property_product_pricelist) pricelistId = partner.property_product_pricelist[0];
-      if (!address && partner) address = [partner.street, partner.city, partner.zip].filter(Boolean).join(' ');
+      if (!address && partner) address = [partner.street, partner.street2, partner.city, partner.state_id ? partner.state_id[1].replace(/\s*\(TH\)$/, '') : '', partner.zip].filter(Boolean).join(' ');
     } catch {
       // Odoo unavailable: keep defaults so the shop still renders.
     }

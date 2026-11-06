@@ -47,7 +47,7 @@ const LEDGER_COLUMNS: Column<CollectionRow>[] = [
 
 const REP_COLUMNS: Column<RepResult>[] = [
   { header: 'พนักงานขาย', value: (r) => r.repName },
-  { header: 'Odoo user id', value: (r) => r.odooUserId },
+  { header: 'รหัสพนักงาน (ติดลบ = tag Sale)', value: (r) => r.odooUserId },
   { header: 'ยอดเก็บ ก่อน VAT', value: (r) => r.base },
   { header: 'ยอดเก็บ รวม VAT', value: (r) => r.gross },
   { header: 'นำมาคิดค่าคอม ก่อน VAT', value: (r) => r.counted ?? r.base },

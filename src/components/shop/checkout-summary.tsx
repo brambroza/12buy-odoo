@@ -1,5 +1,6 @@
 'use client';
 
+import Link from 'next/link';
 import { useState } from 'react';
 import { useFormStatus } from 'react-dom';
 import { Loader2 } from 'lucide-react';
@@ -19,19 +20,20 @@ type Bill = { subtotal: number; cashDiscount: number; couponDiscount: number; va
  * The total follows the chosen method (cash shows the end-of-bill discount already taken off).
  * Below `lg` the total and the submit button sit in a bar fixed above the bottom navigation.
  * `blocked` (e.g. a line over stock) disables ordering with that reason on the button.
+ * `creditLocked` (overdue invoices) disables the credit option with that message; cash stays available.
  * `cashPercent` labels the cash discount when every discounted line has the same %.
  * Cash: the dealer transfers to the accounts from Odoo's Wire Transfer provider (`bank`) and attaches the slip here first; the order is sent with it (`slip` field).
  */
-export function CheckoutSummary({ credit, creditBill, cashBill, cashPercent, creditLine, lineCount, blocked, bank }: {
-  bank: WireTransferInfo; credit: boolean; creditBill: Bill; cashBill: Bill; cashPercent: number | null; creditLine: { limit: number | null; used: number } | null; lineCount: number; blocked: string | null;
+export function CheckoutSummary({ credit, creditLocked = null, creditBill, cashBill, cashPercent, creditLine, lineCount, blocked, bank }: {
+  bank: WireTransferInfo; credit: boolean; creditLocked?: string | null; creditBill: Bill; cashBill: Bill; cashPercent: number | null; creditLine: { limit: number | null; used: number } | null; lineCount: number; blocked: string | null;
 }) {
-  const [method, setMethod] = useState<PaymentMethod>(credit ? 'CREDIT' : 'CASH');
+  const [method, setMethod] = useState<PaymentMethod>(credit && !creditLocked ? 'CREDIT' : 'CASH');
   // Reset on switching to credit: the slip picker unmounts and drops its file.
   const [slipPicked, setSlipPicked] = useState(false);
   const bill = method === 'CASH' ? cashBill : creditBill;
   const afterCredit = creditAfterOrder(creditLine, creditBill.total);
   const overCredit = method === 'CREDIT' && afterCredit.over;
-  const reason = blocked ?? (overCredit ? 'เกินวงเงิน' : method === 'CASH' && !slipPicked ? 'แนบสลิปก่อน' : null);
+  const reason = blocked ?? (method === 'CREDIT' && creditLocked ? 'ติดยอดเลยกำหนดชำระ' : overCredit ? 'เกินวงเงิน' : method === 'CASH' && !slipPicked ? 'แนบสลิปก่อน' : null);
   const usedPct = creditLine?.limit ? Math.min(100, ((creditLine.used + creditBill.total) / creditLine.limit) * 100) : 0;
 
   return (
@@ -39,11 +41,12 @@ export function CheckoutSummary({ credit, creditBill, cashBill, cashPercent, cre
       {credit && (
         <fieldset className="space-y-2">
           <legend className="text-sm font-semibold">วิธีชำระเงิน</legend>
-          <label className="flex cursor-pointer items-start gap-2 rounded-lg border border-border p-3 text-sm has-[:checked]:border-primary has-[:checked]:bg-primary/5">
-            <input type="radio" name="paymentMethod" value="CREDIT" checked={method === 'CREDIT'} onChange={() => { setMethod('CREDIT'); setSlipPicked(false); }} className="mt-1" />
-            <span className="flex-1">เครดิต<span className="block text-xs text-muted-foreground">ไม่ต้องแนบสลิป</span></span>
+          <label className={cn('flex items-start gap-2 rounded-lg border border-border p-3 text-sm has-[:checked]:border-primary has-[:checked]:bg-primary/5', creditLocked ? 'cursor-not-allowed opacity-60' : 'cursor-pointer')}>
+            <input type="radio" name="paymentMethod" value="CREDIT" checked={method === 'CREDIT'} disabled={Boolean(creditLocked)} onChange={() => { setMethod('CREDIT'); setSlipPicked(false); }} className="mt-1" />
+            <span className="flex-1">เครดิต<span className="block text-xs text-muted-foreground">{creditLocked ? 'ปิดชั่วคราว' : 'ไม่ต้องแนบสลิป'}</span></span>
             <span className="font-bold">{baht(creditBill.total)}</span>
           </label>
+          {creditLocked && <p role="alert" className="rounded-lg bg-destructive/10 px-3 py-2 text-xs text-destructive">{creditLocked} <Link href="/shop/account" className="font-semibold underline">ดูใบแจ้งหนี้</Link></p>}
           {method === 'CREDIT' && afterCredit.remaining !== null && (
             <div className="space-y-1 px-1 text-xs text-muted-foreground">
               <div className="h-1.5 overflow-hidden rounded-full bg-muted">

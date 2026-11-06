@@ -121,6 +121,20 @@ describe('fetchCollections', () => {
     expect(byReceipt('โอนเข้า')[0]).toMatchObject({ cashDate: '2026-10-12', base: 0, gross: 500, issues: [ISSUE.notInvoice] });
   });
 
+  it('gives the cash to the customer\'s "Sale" tag and merges a same-name salesperson into it', async () => {
+    const data = {
+      ...base,
+      'res.partner.category': [{ id: 4, name: 'PCR' }, { id: 11, name: 'Sale สมชาย' }, { id: 12, name: 'Sale Tip' }],
+      'res.partner': [{ id: 7, property_product_pricelist: [6, 'ราคาส่ง'], user_id: [9, 'สมหญิง'], category_id: [4, 12] }],
+    };
+    const tagged = await fetchCollections(fakeClient(data), '2026-10', { start: '2026-09-21', end: '2026-10-20' });
+    expect(tagged.lines.filter((l) => l.invoiceId).every((l) => l.odooUserId === -12 && l.repName === 'Tip' && l.ownerFrom === 'tag')).toBe(true);
+
+    const untagged = await fetchCollections(fakeClient({ ...data, 'res.partner': [{ ...data['res.partner'][0], category_id: [4] }] }), '2026-10', { start: '2026-09-21', end: '2026-10-20' });
+    // INV/0001's order salesperson สมชาย (user 8) has a tag "Sale สมชาย": same rep, not a second one.
+    expect(untagged.lines.find((l) => l.invoiceName === 'INV/0001')).toMatchObject({ odooUserId: -11, repName: 'สมชาย', ownerFrom: 'order', issues: [ISSUE.noRepTag] });
+  });
+
   it('returns nothing for an empty period without extra reads', async () => {
     const client = fakeClient({});
     expect(await fetchCollections(client, '2026-10', { start: '2026-09-21', end: '2026-10-20' })).toEqual({ lines: [], receipts: 0, refunds: { count: 0, amount: 0 } });

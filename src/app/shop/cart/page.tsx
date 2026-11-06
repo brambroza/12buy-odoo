@@ -4,7 +4,8 @@ import { TriangleAlert } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { baht, findProduct, getCatalog, getDealerCarrier } from '@/lib/shop/catalog';
-import { getCreditLine } from '@/lib/shop/credit-line';
+import { getCreditSummary } from '@/lib/shop/credit-line';
+import { isOverdueLocked, overdueLockMessage } from '@/lib/shop/credit';
 import { getWireTransferAccounts } from '@/lib/odoo/wire-transfer';
 import { billTotals, cashDiscountPerUnit, cashPercentOf, resolvePrice, uniformCashPercent, withCoupon } from '@/lib/shop/pricing';
 import { canSeeProduct, getDealerProfile } from '@/lib/shop/dealer';
@@ -15,7 +16,8 @@ import { Input } from '@/components/ui/input';
 import { describeQty, pickUnit } from '@/lib/shop/units';
 import { requireDealerAccess } from '@/lib/auth/session';
 import { isBackofficeRole, type Role } from '@/lib/auth/roles';
-import { ThaiAddressFields } from '@/components/shop/thai-address-fields';
+import { CheckoutAddress } from '@/components/shop/checkout-address';
+import { checkoutAddress } from '@/lib/shop/shipping-prefill';
 import { CartQtyStepper } from '@/components/shop/cart-qty-stepper';
 import { CartUndoToast, ClearCartButton } from '@/components/shop/cart-undo';
 import { ProductImage } from '@/components/shop/product-image';
@@ -30,6 +32,7 @@ export default async function CartPage({ searchParams }: { searchParams: Promise
   const [profile, sid, catalog, user] = await Promise.all([getDealerProfile(), getSessionId(), getCatalog(), requireDealerAccess()]);
   const delivery = await getDealerCarrier(profile.odooPartnerId);
   const canSaveAddress = Boolean(user.dealer) && !isBackofficeRole(user.role as Role);
+  const shipTo = checkoutAddress(profile);
   const lines = (await getCart(sid))
     .map((item) => ({ item, product: findProduct(catalog, item.productId) }))
     .filter((l): l is { item: typeof l.item; product: NonNullable<typeof l.product> } => Boolean(l.product))
@@ -46,7 +49,8 @@ export default async function CartPage({ searchParams }: { searchParams: Promise
   const cashPercent = uniformCashPercent(lines.map((l) => ({ cashDiscountPerUnit: l.cashOff, cashDiscountPercent: l.cashPercent })));
   const couponResult = coupon[profile.credit ? 'CREDIT' : 'CASH'] ?? coupon.CASH;
   // Live: the tighter of the web limit and Odoo's credit_limit; Odoo unreachable leaves only the web limit.
-  const [creditLine, bank] = await Promise.all([getCreditLine(profile), getWireTransferAccounts()]);
+  const [{ line: creditLine, overdue }, bank] = await Promise.all([getCreditSummary(profile), getWireTransferAccounts()]);
+  const creditLocked = isOverdueLocked(overdue) ? overdueLockMessage(overdue!) : null;
   const overStock = lines.find((l) => l.item.qty > l.product.qtyAvailable);
   const notAllowed = lines.find((l) => !l.allowed);
 
@@ -149,12 +153,7 @@ export default async function CartPage({ searchParams }: { searchParams: Promise
       </div>
       <form action={checkoutAction} className="space-y-3 rounded-xl border border-border bg-card p-4">
         <h2 className="font-semibold">จัดส่งไปที่</h2>
-        <ThaiAddressFields defaultValue={profile.shipping} legacyText={profile.shipping ? undefined : profile.address} />
-        {canSaveAddress && (
-          <label className="flex items-center gap-2 text-xs text-muted-foreground">
-            <input type="checkbox" name="saveAddress" className="size-4" /> บันทึกเป็นที่อยู่จัดส่งหลักของร้าน
-          </label>
-        )}
+        <CheckoutAddress address={shipTo.address} guessed={shipTo.guessed} legacyText={profile.address} canSave={canSaveAddress} />
         <div className="text-sm">
           <span className="text-xs text-muted-foreground">การจัดส่ง</span>
           {delivery ? (
@@ -168,7 +167,7 @@ export default async function CartPage({ searchParams }: { searchParams: Promise
           <span className="text-xs text-muted-foreground">เลขที่ใบสั่งซื้อของร้าน (ไม่บังคับ)</span>
           <input name="poRef" maxLength={40} placeholder="เช่น PO-6811-023" className="mt-1 h-10 w-full rounded-lg border border-border bg-background px-3 text-sm" />
         </label>
-        <CheckoutSummary bank={bank} credit={profile.credit} creditBill={creditBill} cashBill={cashBill} cashPercent={cashPercent} creditLine={creditLine} lineCount={lines.length} blocked={!delivery ? 'ยังไม่มีการจัดส่ง' : notAllowed ? 'ลบสินค้าที่สั่งไม่ได้ก่อน' : overStock ? 'แก้จำนวนก่อน' : couponCode && !couponResult?.ok ? 'ลบโค้ดที่ใช้ไม่ได้ก่อน' : null} />
+        <CheckoutSummary bank={bank} credit={profile.credit} creditLocked={creditLocked} creditBill={creditBill} cashBill={cashBill} cashPercent={cashPercent} creditLine={creditLine} lineCount={lines.length} blocked={!delivery ? 'ยังไม่มีการจัดส่ง' : notAllowed ? 'ลบสินค้าที่สั่งไม่ได้ก่อน' : overStock ? 'แก้จำนวนก่อน' : couponCode && !couponResult?.ok ? 'ลบโค้ดที่ใช้ไม่ได้ก่อน' : null} />
        {/*  <p className="text-[11px] text-muted-foreground">ออเดอร์เข้า Odoo เมื่อฝ่ายขายยืนยัน</p> */}
       </form>
       </div>

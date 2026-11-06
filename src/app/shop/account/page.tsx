@@ -3,6 +3,8 @@ import Link from 'next/link';
 import { FileText, KeyRound, Store, Truck, Wallet } from 'lucide-react';
 import { baht } from '@/lib/shop/catalog';
 import { getCreditSummary } from '@/lib/shop/credit-line';
+import { overdueLockMessage } from '@/lib/shop/credit';
+import { currentTime, thaiDay } from '@/lib/admin/dashboard';
 import { getSessionId } from '@/lib/shop/session';
 import { listOrders } from '@/lib/shop/store';
 import { creditOutstanding, canPayCredit } from '@/lib/shop/credit-payment';
@@ -17,6 +19,7 @@ import { TierShield } from '@/components/shop/tier-shield';
 import { AddStaffForm } from './add-staff-form';
 import { AvatarForm } from './avatar-form';
 import { ShippingForm } from './shipping-form';
+import { checkoutAddress } from '@/lib/shop/shipping-prefill';
 import { LineLinkCard } from './line-link-card';
 import { getLineConfig } from '@/lib/notify/line-config';
 
@@ -31,12 +34,23 @@ export default async function AccountPage({ searchParams }: { searchParams: Prom
   const sid = await getSessionId();
   const [credit, orders] = await Promise.all([profile.credit ? getCreditSummary(profile) : null, listOrders(sid)]);
   const creditLine = credit?.line ?? null;
-  // Open invoices from Odoo (posted, not fully paid) across the shop's orders, soonest due first.
-  const openInvoices = orders.flatMap((o) => (o.odoo?.progress?.invoices ?? []).filter((inv) => inv.amountResidual > 0).map((inv) => ({ ...inv, orderId: o.id, orderRef: o.ref })))
-    .sort((a, b) => (a.dueDate ?? '9999').localeCompare(b.dueDate ?? '9999'));
+  // Web order behind each Odoo invoice (from the status sync), for the pay button and the PDF link.
+  const orderOfInvoice = new Map(orders.flatMap((o) => (o.odoo?.progress?.invoices ?? []).filter((inv) => inv.id).map((inv) => [inv.id!, { orderId: o.id, orderRef: o.ref }] as const)));
+  // Odoo reachable: every open invoice of the customer, also those keyed in Odoo, so the total matches Odoo.
+  // Otherwise: the invoices of the shop's web orders from the last status sync.
+  const openInvoices = credit?.openInvoices
+    ? credit.openInvoices.filter((inv) => !inv.refund).map((inv) => ({ id: inv.id, name: inv.name, amountResidual: inv.residual, dueDate: inv.dueDate, ...(orderOfInvoice.get(inv.id) ?? { orderId: null, orderRef: inv.origin }) }))
+    : orders.flatMap((o) => (o.odoo?.progress?.invoices ?? []).filter((inv) => inv.amountResidual > 0).map((inv) => ({ ...inv, orderId: o.id as string | null, orderRef: o.ref as string | null })))
+      .sort((a, b) => (a.dueDate ?? '9999').localeCompare(b.dueDate ?? '9999'));
   const openCreditOrders = orders.filter((o) => canPayCredit(o));
-  const outstandingTotal = openInvoices.length ? openInvoices.reduce((s, inv) => s + inv.amountResidual, 0) : openCreditOrders.reduce((s, o) => s + creditOutstanding(o), 0);
-  const today = new Date().toISOString().slice(0, 10);
+  const invoiceTotal = openInvoices.reduce((s, inv) => s + inv.amountResidual, 0);
+  const outstandingTotal = credit?.odooReceivable ?? (openInvoices.length ? invoiceTotal : openCreditOrders.reduce((s, o) => s + creditOutstanding(o), 0));
+  // Payments or credit notes Odoo has not matched to an invoice yet: why the invoice list and Total Receivable differ.
+  const unapplied = credit?.odooReceivable != null ? Math.round((invoiceTotal - credit.odooReceivable) * 100) / 100 : 0;
+  // Web credit orders not invoiced yet: counted in "ใช้ไปแล้ว" but not in Odoo's receivable.
+  const notInvoiced = creditLine && credit?.odooReceivable != null ? Math.round((creditLine.used - credit.odooReceivable) * 100) / 100 : 0;
+  const overdue = credit?.overdue ?? null;
+  const today = thaiDay(currentTime());
   const usedPct = creditLine?.limit ? Math.min(100, Math.round((creditLine.used / creditLine.limit) * 100)) : 0;
   return (
     <div className="grid gap-6 md:grid-cols-2 md:items-start">
@@ -87,29 +101,36 @@ export default async function AccountPage({ searchParams }: { searchParams: Prom
               </>
             ) : <p className="text-muted-foreground">ยังไม่ได้กำหนดวงเงิน ติดต่อฝ่ายขาย</p>}
             {credit?.odooReceivable != null && (
-              <p className="mt-3 flex items-baseline justify-between gap-3 border-t border-border pt-3 text-xs text-muted-foreground">
-                <span>ยอดค้างยกมา (ตามบัญชี)</span>
-                <span className="text-sm font-semibold text-foreground tabular-nums">{baht(credit.odooReceivable)}</span>
+              <dl className="mt-3 grid grid-cols-[1fr_auto] gap-x-3 gap-y-1 border-t border-border pt-3 text-xs text-muted-foreground tabular-nums">
+                <dt>ยอดค้างชำระตามบัญชี (Odoo)</dt><dd className="text-right text-sm font-semibold text-foreground">{baht(credit.odooReceivable)}</dd>
+                {notInvoiced > 0 && <><dt>ออเดอร์เครดิตบนเว็บที่ยังไม่ออกใบแจ้งหนี้</dt><dd className="text-right">{baht(notInvoiced)}</dd></>}
+              </dl>
+            )}
+            {overdue && overdue.count > 0 && (
+              <p role="alert" className="mt-3 rounded-lg bg-destructive/10 px-3 py-2 text-xs text-destructive">
+                {overdueLockMessage(overdue)}{overdue.source === 'web' && ' · นับจากออเดอร์บนเว็บ (ยังอ่านข้อมูลจาก Odoo ไม่ได้)'}
               </p>
             )}
-            <p className="mt-3 border-t border-border pt-3 text-xs text-muted-foreground">ยอดค้างชำระรวม <span className="font-semibold text-foreground">{baht(outstandingTotal)}</span> · {openInvoices.length} ใบแจ้งหนี้ · ยอดที่โอนแล้วรอตรวจจะหักเมื่อบัญชีลงรับใน Odoo</p>
+            <p className="mt-3 border-t border-border pt-3 text-xs text-muted-foreground">ยอดค้างชำระรวม <span className="font-semibold text-foreground">{baht(outstandingTotal)}</span> · {openInvoices.length} ใบแจ้งหนี้{unapplied > 0 ? ` · มีรับชำระ/ลดหนี้ ${baht(unapplied)} ที่บัญชียังไม่ตัดกับใบแจ้งหนี้` : ''} · ยอดที่โอนแล้วรอตรวจจะหักเมื่อบัญชีลงรับใน Odoo</p>
           </div>
           {openInvoices.length > 0 && (
             <div className="rounded-xl border border-border bg-card text-sm">
               <h3 className="flex items-center gap-2 border-b border-border px-4 py-2 text-xs font-semibold uppercase text-muted-foreground"><FileText className="size-3.5" /> ใบแจ้งหนี้ค้างชำระ</h3>
               <ul className="divide-y divide-border">
                 {openInvoices.map((inv) => {
-                  const overdue = inv.dueDate !== null && inv.dueDate < today;
+                  const late = inv.dueDate !== null && inv.dueDate.slice(0, 10) < today;
                   return (
-                    <li key={`${inv.orderId}-${inv.name}`} className="flex items-center justify-between gap-3 px-4 py-2.5">
+                    <li key={`${inv.orderId ?? 'odoo'}-${inv.name}`} className="flex items-center justify-between gap-3 px-4 py-2.5">
                       <div className="min-w-0">
-                        <p className="truncate font-medium">{inv.name} <span className="text-xs font-normal text-muted-foreground">· {inv.orderRef}</span></p>
-                        <p className={overdue ? 'text-xs text-destructive' : 'text-xs text-muted-foreground'}>{inv.dueDate ? `${overdue ? 'เลยกำหนด' : 'ครบกำหนด'} ${new Date(inv.dueDate).toLocaleDateString('th-TH', { dateStyle: 'medium' })}` : 'ไม่ระบุวันครบกำหนด'}</p>
+                        <p className="truncate font-medium">{inv.name} {inv.orderRef && <span className="text-xs font-normal text-muted-foreground">· {inv.orderRef}</span>}</p>
+                        <p className={late ? 'text-xs text-destructive' : 'text-xs text-muted-foreground'}>{inv.dueDate ? `${late ? 'เลยกำหนด' : 'ครบกำหนด'} ${new Date(inv.dueDate).toLocaleDateString('th-TH', { dateStyle: 'medium' })}` : 'ไม่ระบุวันครบกำหนด'}</p>
                       </div>
                       <div className="flex shrink-0 items-center gap-2">
                         <span className="font-semibold">{baht(inv.amountResidual)}</span>
-                        {inv.id && <a href={`/api/orders/${inv.orderId}/invoice/${inv.id}`} target="_blank" rel="noreferrer" className="text-xs text-primary underline">PDF</a>}
-                        <Link href={`/shop/orders/${inv.orderId}#credit-payment`} className="rounded-full bg-primary px-2.5 py-1 text-xs font-semibold text-primary-foreground">ชำระ</Link>
+                        {inv.id && inv.orderId && <a href={`/api/orders/${inv.orderId}/invoice/${inv.id}`} target="_blank" rel="noreferrer" className="text-xs text-primary underline">PDF</a>}
+                        {inv.orderId
+                          ? <Link href={`/shop/orders/${inv.orderId}#credit-payment`} className="rounded-full bg-primary px-2.5 py-1 text-xs font-semibold text-primary-foreground">ชำระ</Link>
+                          : <span className="text-[11px] text-muted-foreground">บิลจาก Odoo · ชำระกับฝ่ายบัญชี</span>}
                       </div>
                     </li>
                   );
@@ -123,7 +144,7 @@ export default async function AccountPage({ searchParams }: { searchParams: Prom
       {dealer && (
         <section className="space-y-3">
           <h2 className="flex items-center gap-2 font-bold"><Truck className="size-4" /> ที่อยู่จัดส่ง</h2>
-          <ShippingForm address={profile.address} shipping={profile.shipping} phone={profile.phone} />
+          <ShippingForm address={profile.address} shipping={checkoutAddress(profile).address} phone={profile.phone} />
           <p className="text-xs text-muted-foreground">ใช้เป็นค่าเริ่มต้นตอนสั่งซื้อ แก้เฉพาะออเดอร์ได้ที่หน้าตะกร้า</p>
         </section>
       )}

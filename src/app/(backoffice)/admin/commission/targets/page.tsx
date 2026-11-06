@@ -86,7 +86,7 @@ export default async function CommissionTargetsPage({ searchParams }: { searchPa
               </form>
               <form action={importTargetsAction} className="space-y-2 rounded-xl border border-border bg-card p-3 text-sm">
                 {hidden}
-                <label className="block text-xs font-medium">นำเข้าจาก Excel: คัดลอก 2 คอลัมน์ (ชื่อพนักงานขาย หรือ Odoo user id, ยอดเป้า) มาวาง
+                <label className="block text-xs font-medium">นำเข้าจาก Excel: คัดลอก 2 คอลัมน์ (ชื่อพนักงานขาย เช่น Tip, ยอดเป้า) มาวาง
                   <textarea name="paste" rows={4} placeholder={'สมชาย ใจดี\t500000\nสมหญิง รักงาน\t350000'} className="mt-1 w-full rounded-lg border border-border bg-background p-2 font-mono text-xs" />
                 </label>
                 <Button type="submit" size="sm" variant="outline"><Upload /> นำเข้า</Button>

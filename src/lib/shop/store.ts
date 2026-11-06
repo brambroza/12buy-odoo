@@ -178,20 +178,20 @@ export async function countStalePending(maxAgeMs: number, now = Date.now()): Pro
   return count ?? 0;
 }
 
-export type OpenCreditOrder = { scope: string; paymentMethod: string; status: string; total: number };
+export type OpenCreditOrder = { scope: string; paymentMethod: string; status: string; total: number; odoo?: ProtoOrder['odoo'] | null };
 
 /**
  * CREDIT orders still holding credit (not PAID, not CANCELLED). With `dealer`, only that dealer's
  * scopes: its logins (`dealer:<id>`) and staff ordering for its Odoo partner (`staff:<user>:<partner>`).
  */
 export async function listOpenCreditOrders(dealer?: { id: string; odooPartnerId: number | null }): Promise<OpenCreditOrder[]> {
-  let query = db().from('ShopOrder').select('scope, paymentMethod, status, total').eq('paymentMethod', 'CREDIT').not('status', 'in', '("PAID","CANCELLED")');
+  let query = db().from('ShopOrder').select('scope, paymentMethod, status, total, odoo').eq('paymentMethod', 'CREDIT').not('status', 'in', '("PAID","CANCELLED")');
   if (dealer) {
     const scopes = [`scope.eq.${quoteFilterValue(`dealer:${dealer.id}`)}`];
     if (dealer.odooPartnerId) scopes.push(`scope.like.${quoteFilterValue(`staff:%:${dealer.odooPartnerId}`)}`);
     query = query.or(scopes.join(','));
   }
-  const rows = unwrap(await query) as { scope: string; paymentMethod: string; status: string; total: number | string }[];
+  const rows = unwrap(await query) as { scope: string; paymentMethod: string; status: string; total: number | string; odoo: ProtoOrder['odoo'] | null }[];
   return rows.map((r) => ({ ...r, total: money(r.total) }));
 }
 

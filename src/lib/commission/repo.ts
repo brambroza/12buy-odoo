@@ -56,20 +56,35 @@ export async function listRepsOfUser(userId: string): Promise<CommissionRep[]> {
   return rows<CommissionRep>(await db().from('CommissionRep').select('*').eq('userId', userId).eq('active', true));
 }
 
-/** Adds Odoo users not yet known and refreshes the names of the others; links and flags are kept. */
-export async function upsertReps(sourceId: string, users: { id: number; name: string }[]): Promise<number> {
+/**
+ * Adds reps not yet known (by rep key) and refreshes the names of the others; links and flags are kept.
+ * `merged` maps an old user rep key to the tag rep that replaces it: the user rep is turned off and its
+ * web login moved to the tag rep when that one has none.
+ */
+export async function upsertReps(sourceId: string, reps: { id: number; name: string }[], merged: Map<number, number> = new Map()): Promise<{ added: number; merged: number }> {
   const existing = new Map((await listReps(sourceId)).map((r) => [r.odooUserId, r]));
   let added = 0;
-  for (const user of users) {
-    const rep = existing.get(user.id);
-    if (rep) {
-      if (rep.name !== user.name) unwrap(await db().from('CommissionRep').update({ name: user.name }).eq('id', rep.id));
+  for (const rep of reps) {
+    const current = existing.get(rep.id);
+    if (current) {
+      if (current.name !== rep.name) unwrap(await db().from('CommissionRep').update({ name: rep.name }).eq('id', current.id));
     } else {
-      unwrap(await db().from('CommissionRep').insert({ id: newId(), sourceId, odooUserId: user.id, name: user.name, userId: null, active: true }));
+      const row = { id: newId(), sourceId, odooUserId: rep.id, name: rep.name, userId: null, active: true };
+      unwrap(await db().from('CommissionRep').insert(row));
+      existing.set(rep.id, { ...row } as CommissionRep);
       added += 1;
     }
   }
-  return added;
+  let moved = 0;
+  for (const [oldKey, newKey] of merged) {
+    const old = existing.get(oldKey);
+    const target = existing.get(newKey);
+    if (!old?.active || !target) continue;
+    if (old.userId && !target.userId) unwrap(await db().from('CommissionRep').update({ userId: old.userId }).eq('id', target.id));
+    unwrap(await db().from('CommissionRep').update({ active: false, userId: null }).eq('id', old.id));
+    moved += 1;
+  }
+  return { added, merged: moved };
 }
 
 export async function updateRep(id: string, sourceId: string, patch: { userId?: string | null; active?: boolean }): Promise<void> {

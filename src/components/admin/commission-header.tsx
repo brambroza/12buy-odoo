@@ -12,7 +12,6 @@ const TABS = [
   { href: '/admin/commission/targets', label: 'เป้า' },
   { href: '/admin/commission/rates', label: 'อัตราค่าคอม' },
   { href: '/admin/commission/steps', label: 'ขั้นบันไดเกินดิว' },
-  { href: '/admin/commission/pricelists', label: 'กลุ่มราคา' },
   { href: '/admin/commission/statement', label: 'ใบสรุปค่าคอม' },
   { href: '/admin/commission/reps', label: 'พนักงานขาย' },
   { href: '/admin/commission/sources', label: 'บริษัท / Odoo' },
