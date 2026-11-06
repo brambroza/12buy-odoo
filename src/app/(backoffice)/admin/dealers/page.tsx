@@ -21,6 +21,7 @@ import { UrlDrawer } from '@/components/admin/url-drawer';
 import { ExportMenu } from '@/components/admin/export-menu';
 import { DealerNameField, type ExistingShop } from '@/components/admin/dealer-name-field';
 import { OdooPartnerField, type OdooPartnerOption } from '@/components/admin/odoo-partner-field';
+import { SyncOdooButton } from '@/components/admin/sync-odoo-button';
 import { formatTaxId } from '@/lib/tax-id';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { EmptyRow, FilterChip, IconLink, ListPagination, ListSearch, TableCard } from '@/components/admin/list-kit';
@@ -30,7 +31,7 @@ import { listHref, matchesSearch, paginate, searchText } from '@/lib/admin/list'
 import { TierShield } from '@/components/shop/tier-shield';
 import { cn } from '@/lib/utils';
 import { updateOdooCustomerAction } from '../customer-actions';
-import { createDealerAction, createDealerUserAction, openAsDealerAction, pullOdooCreditLimitAction, resetPasswordAction, toggleUserActiveAction, updateDealerAction } from '../dealer-actions';
+import { createDealerAction, createDealerUserAction, openAsDealerAction, pullOdooCreditLimitAction, resetPasswordAction, syncDealersWithOdooAction, toggleUserActiveAction, updateDealerAction } from '../dealer-actions';
 
 const TYPES = Object.keys(DEALER_TYPE_LABELS) as DealerType[];
 const TIERS = Object.keys(DEALER_TIER_LABELS) as DealerTier[];
@@ -173,7 +174,12 @@ export default async function DealersPage({ searchParams }: { searchParams: Prom
           {canEdit && <div className="mt-1"><ExportMenu kind="dealers" label="ส่งออกดีลเลอร์" size="xs" /></div>}
           <p className="text-sm text-muted-foreground">อนุมัติร้าน กำหนดประเภท/ระดับ สร้างบัญชีเข้าสู่ระบบ และตั้งกลุ่มราคา (pricelist) วงเงินเครดิต การจัดส่งของลูกค้าใน Odoo ในที่เดียว · กดแถวเพื่อแก้ไข · โซนราคาคำนวณจากจังหวัด</p>
         </div>
-        {canEdit && <Button nativeButton={false} render={<Link href={href({ new: '1' })} scroll={false} />} size="sm"><Plus /> เพิ่มดีลเลอร์</Button>}
+        {canEdit && (
+          <div className="flex flex-wrap items-center gap-2">
+            <form action={syncDealersWithOdooAction}><SyncOdooButton /></form>
+            <Button nativeButton={false} render={<Link href={href({ new: '1' })} scroll={false} />} size="sm"><Plus /> เพิ่มดีลเลอร์</Button>
+          </div>
+        )}
       </div>
 
       <div className="flex flex-wrap items-center gap-2">
@@ -291,6 +297,14 @@ export default async function DealersPage({ searchParams }: { searchParams: Prom
               {d.creditEnabled && <CreditUsage limit={d.creditLimit == null ? null : Number(d.creditLimit)} used={creditUsed(d)} />}
               <form action={openAsDealerAction} className="ml-auto"><input type="hidden" name="dealerId" value={d.id} /><Button type="submit" size="sm" variant="outline">เปิดมุมมองดีลเลอร์</Button></form>
             </div>
+
+            {canEdit && !d.odooPartnerId && (
+              <form action={syncDealersWithOdooAction} className="flex flex-wrap items-center gap-2 rounded-lg border border-amber-500/40 bg-amber-500/10 p-2 text-xs text-amber-800">
+                <input type="hidden" name="dealerId" value={d.id} />
+                <span className="flex-1">ร้านนี้ยังไม่ได้ผูกลูกค้า Odoo · กด sync เพื่อหาลูกค้าที่เลขผู้เสียภาษีตรงกันแล้วผูกให้ หรือเลือกเองในช่อง “ลูกค้าใน Odoo”</span>
+                <SyncOdooButton label="Sync ร้านนี้กับ Odoo" />
+              </form>
+            )}
 
             <section className="space-y-2">
               <h2 className="text-sm font-semibold">ข้อมูลร้าน</h2>

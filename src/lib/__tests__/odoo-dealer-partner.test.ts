@@ -7,7 +7,7 @@ vi.mock('@/lib/odoo/rpc', () => rpc);
 vi.mock('@/lib/dealers/repo', () => repo);
 vi.mock('@/lib/shop/catalog', () => ({ clearPartnerCache: vi.fn() }));
 
-const { ensureDealerPartner, odooStateName, partnerValues } = await import('@/lib/odoo/dealer-partner');
+const { ensureDealerPartner, linkDealersToOdoo, odooStateName, partnerValues } = await import('@/lib/odoo/dealer-partner');
 
 function dealer(overrides: Partial<Dealer> = {}): Dealer {
   return {
@@ -76,5 +76,29 @@ describe('ensureDealerPartner', () => {
     expect(await ensureDealerPartner(dealer(), 9)).toBe(901);
     expect(rpc.odooWrite.mock.calls[0][2][0][0]).toMatchObject({ state_id: 1524, country_id: 217, property_product_pricelist: 9 });
     expect(repo.updateDealer).toHaveBeenCalledWith('d1', { odooPartnerId: 901 });
+  });
+});
+
+describe('linkDealersToOdoo', () => {
+  beforeEach(() => vi.resetAllMocks());
+  afterEach(() => vi.resetAllMocks());
+
+  it('links unlinked dealers by tax id, skips linked ones and never creates a partner', async () => {
+    rpc.odooSearchRead.mockResolvedValueOnce([{ id: 274, name: 'โฟร์เฟรนด์', vat: '0125557002790' }]);
+    const results = await linkDealersToOdoo([dealer({ id: 'd1', taxId: '0125557002790' }), dealer({ id: 'd2', odooPartnerId: 5 })], new Map());
+    expect(results).toEqual([{ dealerId: 'd1', name: 'โก อะลอง จำกัด', kind: 'linked', partnerId: 274 }]);
+    expect(repo.updateDealer).toHaveBeenCalledWith('d1', { odooPartnerId: 274 });
+    expect(rpc.odooSearchRead).toHaveBeenCalledTimes(1);
+    expect(rpc.odooWrite).not.toHaveBeenCalled();
+  });
+
+  it('leaves dealers with no match, several matches or a partner another dealer holds', async () => {
+    rpc.odooSearchRead
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([{ id: 1, name: 'a' }, { id: 2, name: 'b' }])
+      .mockResolvedValueOnce([{ id: 9, name: 'c' }]);
+    const results = await linkDealersToOdoo([dealer({ id: 'a' }), dealer({ id: 'b' }), dealer({ id: 'c' })], new Map([[9, 'ร้านเดิม']]));
+    expect(results.map((r) => r.kind)).toEqual(['none', 'ambiguous', 'taken']);
+    expect(repo.updateDealer).not.toHaveBeenCalled();
   });
 });

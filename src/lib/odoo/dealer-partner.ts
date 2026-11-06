@@ -94,3 +94,35 @@ export async function ensureDealerPartner(dealer: Dealer, pricelistId: number | 
   clearPartnerCache();
   return partnerId;
 }
+
+/** Outcome of matching one unlinked dealer to Odoo: linked to a partner, several candidates, or none found. */
+export type DealerLinkResult =
+  | { dealerId: string; name: string; kind: 'linked'; partnerId: number }
+  | { dealerId: string; name: string; kind: 'ambiguous'; partnerIds: number[] }
+  | { dealerId: string; name: string; kind: 'taken'; partnerId: number; takenBy: string }
+  | { dealerId: string; name: string; kind: 'none' };
+
+/**
+ * Links each unlinked dealer to the one Odoo company with its tax id (or exact name when it has none).
+ * Read-only on Odoo, never creates a partner. A partner already linked to another dealer is left alone,
+ * as are dealers with several candidates: the admin picks those in the dealer form.
+ */
+export async function linkDealersToOdoo(dealers: Dealer[], linked: Map<number, string>): Promise<DealerLinkResult[]> {
+  const taken = new Map(linked);
+  const results: DealerLinkResult[] = [];
+  for (const dealer of dealers) {
+    if (dealer.odooPartnerId) continue;
+    const base = { dealerId: dealer.id, name: dealer.name };
+    const matches = await findExistingPartners(dealer);
+    if (!matches.length) { results.push({ ...base, kind: 'none' }); continue; }
+    if (matches.length > 1) { results.push({ ...base, kind: 'ambiguous', partnerIds: matches.map((m) => m.id) }); continue; }
+    const partnerId = matches[0].id;
+    const takenBy = taken.get(partnerId);
+    if (takenBy) { results.push({ ...base, kind: 'taken', partnerId, takenBy }); continue; }
+    await updateDealer(dealer.id, { odooPartnerId: partnerId });
+    taken.set(partnerId, dealer.name);
+    results.push({ ...base, kind: 'linked', partnerId });
+  }
+  if (results.some((r) => r.kind === 'linked')) clearPartnerCache();
+  return results;
+}

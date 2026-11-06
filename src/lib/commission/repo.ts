@@ -8,6 +8,7 @@ import type {
   CommissionAdjustment, CommissionPricelist, CommissionRate, CommissionRep, CommissionRun, CommissionSource, CommissionTarget, DebtHold, LedgerKind, LedgerLine,
   OverdueStep, PriceGroup, RunStatus, StatementSettings, StoredLedgerLine,
 } from './types';
+import type { PeriodOverride } from './period';
 import type { NewHold } from './statement';
 
 const num = (v: unknown) => Number(v ?? 0);
@@ -17,6 +18,8 @@ const now = () => new Date().toISOString();
 
 const toSource = (r: CommissionSource): CommissionSource => ({
   ...r, summaryLines: Array.isArray(r.summaryLines) ? r.summaryLines : [], centralPercent: num(r.centralPercent), debtDays: num(r.debtDays), debtPercent: num(r.debtPercent),
+  // Missing before migration 20261106120000: pay on the last day of the next month.
+  payDay: r.payDay == null ? 0 : num(r.payDay), payMonths: r.payMonths == null ? 1 : num(r.payMonths),
 });
 
 export async function listSources(): Promise<CommissionSource[]> {
@@ -33,7 +36,7 @@ export async function updateStatementSettings(id: string, settings: StatementSet
   unwrap(await db().from('CommissionSource').update({ ...settings, updatedAt: now() }).eq('id', id));
 }
 
-export type SourceInput = { name: string; url: string; db: string; username: string; apiKeyEnc: string; cutoffDay: number; active: boolean };
+export type SourceInput = { name: string; url: string; db: string; username: string; apiKeyEnc: string; cutoffDay: number; payDay: number; payMonths: number; active: boolean };
 
 export async function createSource(input: SourceInput): Promise<string> {
   const id = newId();
@@ -43,6 +46,31 @@ export async function createSource(input: SourceInput): Promise<string> {
 
 export async function updateSource(id: string, patch: Partial<SourceInput>): Promise<void> {
   unwrap(await db().from('CommissionSource').update(toRow({ ...patch, updatedAt: now() })).eq('id', id));
+}
+
+// ---------- period dates ----------
+
+const toOverride = (r: PeriodOverride & { endDate: string | null; payDate: string | null }): PeriodOverride => ({
+  period: r.period, endDate: r.endDate ? String(r.endDate).slice(0, 10) : null, payDate: r.payDate ? String(r.payDate).slice(0, 10) : null, note: r.note ?? null, updatedAt: r.updatedAt ?? null,
+});
+
+/** Periods of a company with their own end / pay date. Empty until migration 20261106120000 has run. */
+export async function listPeriodOverrides(sourceId: string): Promise<PeriodOverride[]> {
+  const result = await db().from('CommissionPeriod').select('period,endDate,payDate,note,updatedAt').eq('sourceId', sourceId).order('period');
+  if (result.error && /CommissionPeriod|schema cache|does not exist/i.test(result.error.message)) return [];
+  return rows<PeriodOverride & { endDate: string | null; payDate: string | null }>(result).map(toOverride);
+}
+
+/** Sets (or, with both dates null, clears) one period's own end and pay date. */
+export async function savePeriodOverride(sourceId: string, input: { period: string; endDate: string | null; payDate: string | null; note: string | null }, actorId: string): Promise<void> {
+  if (!input.endDate && !input.payDate) {
+    unwrap(await db().from('CommissionPeriod').delete().eq('sourceId', sourceId).eq('period', input.period));
+    return;
+  }
+  unwrap(await db().from('CommissionPeriod').upsert(
+    { id: newId(), sourceId, ...input, updatedById: actorId, updatedAt: now() },
+    { onConflict: 'sourceId,period' },
+  ));
 }
 
 // ---------- reps ----------

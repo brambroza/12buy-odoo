@@ -8,7 +8,7 @@ import { listHref } from '@/lib/admin/list';
 import { requirePermission } from '@/lib/auth/session';
 import { commissionContext, ctxQuery } from '@/lib/commission/context';
 import { fetchSales } from '@/lib/commission/odoo';
-import { periodLabel, periodRange } from '@/lib/commission/period';
+import { periodDates, periodLabel } from '@/lib/commission/period';
 import { byRepAndGroup, totalsByRep, type RepGroupRow } from '@/lib/commission/report';
 import { listLedger, listPricelists } from '@/lib/commission/repo';
 import { tryClientFor } from '@/lib/commission/service';
@@ -37,7 +37,7 @@ export default async function CommissionSalesPage({ searchParams }: { searchPara
     if (!client) error = 'ถอดรหัส API key ของบริษัทนี้ไม่ได้ บันทึกการเชื่อมต่อใหม่ที่หน้า “บริษัท / Odoo”';
     else {
       try {
-        sales = await fetchSales(client, ctx.period, periodRange(ctx.period, source.cutoffDay));
+        sales = await fetchSales(client, ctx.period, periodDates(ctx.calendar, ctx.period));
       } catch (e) {
         error = `อ่านยอดขายจาก Odoo ไม่ได้: ${e instanceof Error ? e.message : 'ไม่ทราบสาเหตุ'}`;
       }
@@ -56,7 +56,7 @@ export default async function CommissionSalesPage({ searchParams }: { searchPara
   return (
     <div className="space-y-4">
       <CommissionHeader ctx={ctx} path={PATH} title="ยอดขายตามกลุ่มราคา ต่อพนักงานขาย"
-        description={source ? `${periodLabel(ctx.period, source.cutoffDay)} · ยอดขาย = ใบแจ้งหนี้ตามวันที่ออก หักใบลดหนี้ (อ่านจาก Odoo ตอนเปิดหน้า) · ยอดเก็บ = เงินเข้าในรอบเดียวกัน` : undefined}
+        description={source ? `${periodLabel(ctx.period, ctx.calendar)} · ยอดขาย = ใบแจ้งหนี้ตามวันที่ออก หักใบลดหนี้ (อ่านจาก Odoo ตอนเปิดหน้า) · ยอดเก็บ = เงินเข้าในรอบเดียวกัน` : undefined}
         actions={source && <Button size="sm" variant="outline" nativeButton={false} render={<a href={`/api/admin/commission/export?${ctxQuery(ctx, { kind: 'sales' })}`} />}><Download /> Excel</Button>} />
       <Notice saved={params.saved} error={params.error ?? error} />
       {!source ? <NoSource /> : (

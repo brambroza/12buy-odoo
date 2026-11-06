@@ -12,7 +12,7 @@ import { isValidOn, rateLabel } from '@/lib/commission/calc';
 import { commissionContext, ctxQuery } from '@/lib/commission/context';
 import { splitCategory } from '@/lib/commission/ledger';
 import { fetchCategories, fetchPricelists, searchProducts } from '@/lib/commission/odoo';
-import { periodRange, thaiDay, todayBangkok } from '@/lib/commission/period';
+import { periodDates, thaiDay, todayBangkok } from '@/lib/commission/period';
 import { listPricelists, listRates } from '@/lib/commission/repo';
 import { tryClientFor } from '@/lib/commission/service';
 import { PRICE_GROUP_LABELS, type PriceGroup } from '@/lib/commission/types';
@@ -34,7 +34,7 @@ export default async function CommissionRatesPage({ searchParams }: { searchPara
   const today = todayBangkok();
   const source = ctx.source;
   // New rates start on the first day of the selected period, so they cover cash already in it.
-  const periodStart = source ? periodRange(ctx.period, source.cutoffDay).start : today;
+  const periodStart = source ? periodDates(ctx.calendar, ctx.period).start : today;
   const rates = source ? await listRates(source.id) : [];
   const client = source ? tryClientFor(source) : null;
   const [categories, products, odooPricelists, mapped] = client && source

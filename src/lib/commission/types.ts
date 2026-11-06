@@ -53,6 +53,9 @@ export type CommissionSource = {
   username: string;
   apiKeyEnc: string;
   cutoffDay: number;
+  /** Default pay day: day of month (0 = last day), `payMonths` months after the period's month. */
+  payDay: number;
+  payMonths: number;
   active: boolean;
   createdAt: Date;
   updatedAt: Date;

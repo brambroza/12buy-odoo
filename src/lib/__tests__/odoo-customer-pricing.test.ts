@@ -80,7 +80,9 @@ describe('Odoo writes', () => {
   it('looks a customer up only among company customers', async () => {
     rpc.odooSearchRead.mockResolvedValue([]);
     expect(await getOdooCustomer(5)).toBeNull();
-    expect(rpc.odooSearchRead.mock.calls[0][1]).toEqual([['id', '=', 5], ['parent_id', '=', false], '|', ['customer_rank', '>', 0], ['user_ids.share', '=', true]]);
+    expect(rpc.odooSearchRead.mock.calls[0][1]).toEqual([['id', '=', 5], ['parent_id', '=', false],
+      '|', '|', ['customer_rank', '>', 0], ['user_ids.share', '=', true],
+      '&', '&', ['is_company', '=', true], ['supplier_rank', '=', 0], ['ref_company_ids', '=', false]]);
   });
 });
 

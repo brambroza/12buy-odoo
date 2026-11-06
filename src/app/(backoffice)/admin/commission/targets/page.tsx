@@ -37,7 +37,7 @@ export default async function CommissionTargetsPage({ searchParams }: { searchPa
   return (
     <div className="space-y-4">
       <CommissionHeader ctx={ctx} path={PATH} title="เป้ายอดเก็บ"
-        description={source ? `รอบ ${periodLabel(ctx.period, source.cutoffDay)} · ยอดเก็บก่อน VAT ไม่ถึงเป้า = ไม่ได้ค่าคอมรอบนั้น · ว่าง = ยังไม่ตั้ง (ส่งอนุมัติไม่ได้) · 0 = ไม่ใช้เป้า` : undefined} />
+        description={source ? `รอบ ${periodLabel(ctx.period, ctx.calendar)} · ยอดเก็บก่อน VAT ไม่ถึงเป้า = ไม่ได้ค่าคอมรอบนั้น · ว่าง = ยังไม่ตั้ง (ส่งอนุมัติไม่ได้) · 0 = ไม่ใช้เป้า` : undefined} />
       <Notice saved={params.saved} error={params.error} />
       {locked && <p className="rounded-lg bg-muted p-3 text-sm">รอบนี้อนุมัติแล้ว แก้เป้าไม่ได้</p>}
       {!source ? <NoSource /> : (

@@ -8,7 +8,7 @@ import { decryptSecret } from '@/lib/settings/crypto';
 import { blockingIssues, calculateRun } from './calc';
 import { retroDiff } from './ledger';
 import { fetchCollections, fetchCredits, fetchOverdueInvoices, fetchPaidInvoiceIds } from './odoo';
-import { periodRange, shiftPeriod } from './period';
+import { calendarOf, periodDates, shiftPeriod, type PeriodCalendar } from './period';
 import * as repo from './repo';
 import { planDebt, statementSettings } from './statement';
 import type { CommissionRun, CommissionSource, DebtHold, LedgerLine, RunSnapshot } from './types';
@@ -42,6 +42,17 @@ export function forgetClient(sourceId: string): void {
 const LOCKED: CommissionRun['status'][] = ['APPROVED', 'PAID'];
 const OPEN: CommissionRun['status'][] = ['DRAFT', 'PENDING_APPROVAL'];
 
+/** Period calendar of a company: its rule plus periods with their own end / pay date. */
+export async function periodCalendar(source: CommissionSource): Promise<PeriodCalendar> {
+  return calendarOf(source, await repo.listPeriodOverrides(source.id));
+}
+
+/** First and last day (inclusive) of a period, own end dates included. */
+async function rangeOf(source: CommissionSource, period: string): Promise<{ start: string; end: string }> {
+  const { start, end } = periodDates(await periodCalendar(source), period);
+  return { start, end };
+}
+
 export type SyncResult =
   | { ok: true; lines: number; receipts: number; retro: number; refunds: { count: number; amount: number }; held: number; released: number }
   | { ok: false; reason: string };
@@ -55,13 +66,13 @@ export async function syncPeriod(source: CommissionSource, period: string): Prom
   const run = await repo.ensureRun(source.id, period);
   if (LOCKED.includes(run.status)) return { ok: false, reason: 'รอบนี้อนุมัติแล้ว ดึงข้อมูลใหม่ไม่ได้ (การเปลี่ยนแปลงใน Odoo จะถูกปรับปรุงในรอบถัดไป)' };
   const client = clientFor(source);
-  const fetched = await fetchCollections(client, period, periodRange(period, source.cutoffDay));
+  const fetched = await fetchCollections(client, period, await rangeOf(source, period));
 
   const previous = shiftPeriod(period, -1);
   const previousRun = await repo.getRun(source.id, previous);
   let retro: ReturnType<typeof retroDiff> = [];
   if (previousRun && LOCKED.includes(previousRun.status)) {
-    const fresh = await fetchCollections(client, previous, periodRange(previous, source.cutoffDay));
+    const fresh = await fetchCollections(client, previous, await rangeOf(source, previous));
     const booked = await repo.listBookedFor(source.id, previous, period);
     retro = retroDiff(booked, fresh.lines, previous);
   }
@@ -85,7 +96,7 @@ export async function syncPeriod(source: CommissionSource, period: string): Prom
  */
 async function planPeriodDebt(source: CommissionSource, period: string, client: OdooReadClient, lines: readonly LedgerLine[]) {
   const settings = statementSettings(source);
-  const asOf = periodRange(period, source.cutoffDay).end;
+  const asOf = (await rangeOf(source, period)).end;
   const existing = (await repo.listDebtHolds(source.id))
     .filter((h) => !(h.heldPeriod === period && h.releasedPeriod === null))
     .map((h) => (h.releasedPeriod === period ? { ...h, releasedPeriod: null } : h));
@@ -133,7 +144,7 @@ export async function calculatePeriod(source: CommissionSource, period: string):
   const inactive = new Set(reps.filter((r) => !r.active).map((r) => r.odooUserId));
   // Credit notes are for display only; if Odoo cannot be read the run still calculates, with a note.
   let creditError: string | null = null;
-  const credits = await fetchCredits(clientFor(source), periodRange(period, source.cutoffDay)).catch((error: unknown) => {
+  const credits = await fetchCredits(clientFor(source), await rangeOf(source, period)).catch((error: unknown) => {
     creditError = error instanceof Error ? error.message : String(error);
     return null;
   });

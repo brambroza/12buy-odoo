@@ -10,7 +10,7 @@ import type { Role } from '@/lib/auth/roles';
 import { requirePermission } from '@/lib/auth/session';
 import { pickStepPercent } from '@/lib/commission/calc';
 import { commissionContext, ctxQuery } from '@/lib/commission/context';
-import { payDate, periodLabel, thaiDay } from '@/lib/commission/period';
+import { periodDates, periodLabel, thaiDay } from '@/lib/commission/period';
 import { groupByInvoice } from '@/lib/commission/report';
 import { getRun, listLedger, listSteps } from '@/lib/commission/repo';
 import { baht } from '@/lib/shop/catalog';
@@ -47,7 +47,7 @@ export default async function CommissionCollectionsPage({ searchParams }: { sear
   return (
     <div className="space-y-4">
       <CommissionHeader ctx={ctx} path={PATH} title="ยอดเก็บได้ (เงินเข้าบัญชี)"
-        description={source ? `${periodLabel(ctx.period, source.cutoffDay)} · จ่ายค่าคอม ${thaiDay(payDate(ctx.period))} · นับจากวันเงินเข้า/เช็คขึ้นเงิน ไม่ใช่วันลงรับชำระ` : undefined}
+        description={source ? `${periodLabel(ctx.period, ctx.calendar)} · จ่ายค่าคอม ${thaiDay(periodDates(ctx.calendar, ctx.period).payDate)} · นับจากวันเงินเข้า/เช็คขึ้นเงิน ไม่ใช่วันลงรับชำระ` : undefined}
         actions={source && (
           <>
             {canSync && (

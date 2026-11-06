@@ -7,7 +7,7 @@ import { EmptyRow, TableCard } from '@/components/admin/list-kit';
 import { requirePermission } from '@/lib/auth/session';
 import { isValidOn, stepProblems } from '@/lib/commission/calc';
 import { commissionContext } from '@/lib/commission/context';
-import { periodRange, thaiDay, todayBangkok } from '@/lib/commission/period';
+import { periodDates, thaiDay, todayBangkok } from '@/lib/commission/period';
 import { listSteps } from '@/lib/commission/repo';
 import { createStepAction, endOrDeleteStepAction } from '../actions';
 
@@ -26,7 +26,7 @@ export default async function CommissionStepsPage({ searchParams }: { searchPara
   const ctx = await commissionContext(params);
   const today = todayBangkok();
   // New steps start on the first day of the selected period, so they cover cash already in it.
-  const periodStart = ctx.source ? periodRange(ctx.period, ctx.source.cutoffDay).start : today;
+  const periodStart = ctx.source ? periodDates(ctx.calendar, ctx.period).start : today;
   const steps = ctx.source ? await listSteps(ctx.source.id) : [];
   const current = steps.filter((s) => isValidOn(s, today));
   const problems = stepProblems(current);

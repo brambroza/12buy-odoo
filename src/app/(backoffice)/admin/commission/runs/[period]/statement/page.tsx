@@ -6,9 +6,9 @@ import { PrintButton } from '@/components/admin/print-button';
 import { can } from '@/lib/auth/permissions';
 import type { Role } from '@/lib/auth/roles';
 import { requireBackoffice } from '@/lib/auth/session';
-import { isPeriod, payDate, periodLabel, thaiDay } from '@/lib/commission/period';
+import { isPeriod, periodDates, periodLabel, thaiDay } from '@/lib/commission/period';
 import { getRun, getSource, listRepsOfUser, listSources } from '@/lib/commission/repo';
-import { isLocked } from '@/lib/commission/service';
+import { isLocked, periodCalendar } from '@/lib/commission/service';
 import { statementSettings } from '@/lib/commission/statement';
 import { RUN_STATUS_LABELS } from '@/lib/commission/types';
 
@@ -28,7 +28,7 @@ export default async function CommissionStatementPage({ params, searchParams }: 
   if (!viewAll && !can(role, 'commission.view_own')) redirect('/admin');
   const source = sp.source ? await getSource(sp.source) : (await listSources()).find((s) => s.active) ?? null;
   if (!source) notFound();
-  const run = await getRun(source.id, period);
+  const [run, calendar] = await Promise.all([getRun(source.id, period), periodCalendar(source)]);
 
   let allowed: Set<number> | null = null;
   if (!viewAll) {
@@ -48,7 +48,7 @@ export default async function CommissionStatementPage({ params, searchParams }: 
     <div className="space-y-4">
       <div className="flex flex-wrap items-center gap-2 print:hidden">
         <Link href={back} className="inline-flex items-center gap-1 text-sm text-primary hover:underline"><ArrowLeft className="size-4" /> กลับ</Link>
-        <h1 className="text-xl font-bold">ใบสรุปค่าคอม {periodLabel(period, source.cutoffDay)}</h1>
+        <h1 className="text-xl font-bold">ใบสรุปค่าคอม {periodLabel(period, calendar)}</h1>
         <span className="ml-auto"><PrintButton label={reps.length > 1 ? `พิมพ์ทั้งหมด (${reps.length} คน)` : 'พิมพ์ / PDF'} /></span>
       </div>
       {run && run.status === 'DRAFT' && reps.length > 0 && <p className="text-sm text-amber-700 print:hidden">รอบนี้ยังเป็นร่าง ตัวเลขอาจเปลี่ยนเมื่อคำนวณใหม่</p>}
@@ -58,7 +58,7 @@ export default async function CommissionStatementPage({ params, searchParams }: 
         </p>
       )}
       {reps.map((rep) => (
-        <CommissionStatement key={rep.odooUserId} company={source.name} periodText={periodLabel(period, source.cutoffDay)} payText={thaiDay(payDate(period))}
+        <CommissionStatement key={rep.odooUserId} company={source.name} periodText={periodLabel(period, calendar)} payText={thaiDay(periodDates(calendar, period).payDate)}
           rep={rep} debtDays={settings.debtDays} status={run ? RUN_STATUS_LABELS[run.status] : ''}
           holds={(snapshot?.holds ?? []).filter((h) => h.odooUserId === rep.odooUserId)}
           adjustments={(snapshot?.adjustments ?? []).filter((a) => a.odooUserId === rep.odooUserId)} />

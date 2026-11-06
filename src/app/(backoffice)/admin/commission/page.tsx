@@ -7,7 +7,7 @@ import { CommissionHeader, NoSource, Notice } from '@/components/admin/commissio
 import { EmptyRow, IconLink, TableCard } from '@/components/admin/list-kit';
 import { requirePermission } from '@/lib/auth/session';
 import { commissionContext, ctxQuery } from '@/lib/commission/context';
-import { payDate, periodLabel, thaiDay } from '@/lib/commission/period';
+import { periodDates, periodLabel, thaiDay } from '@/lib/commission/period';
 import { listRuns } from '@/lib/commission/repo';
 import { RUN_STATUS_LABELS, RUN_STATUS_TONE } from '@/lib/commission/types';
 import { baht } from '@/lib/shop/catalog';
@@ -28,7 +28,7 @@ export default async function CommissionRunsPage({ searchParams }: { searchParam
     <div className="space-y-4">
       <CommissionHeader ctx={ctx} path={PATH} title="ค่าคอมพนักงานขาย"
         description="ขั้นตอน: ดึงเงินเข้าจาก Odoo → ตรวจยอดเก็บ → คำนวณ → ส่งอนุมัติ → อนุมัติ (อีกคน) → จ่ายแล้ว"
-        actions={source && <Button size="sm" nativeButton={false} render={<Link href={runHref(ctx.period)} />}>เปิดรอบ {periodLabel(ctx.period, source.cutoffDay).split(' (')[0]} <ArrowRight /></Button>} />
+        actions={source && <Button size="sm" nativeButton={false} render={<Link href={runHref(ctx.period)} />}>เปิดรอบ {periodLabel(ctx.period, ctx.calendar).split(' (')[0]} <ArrowRight /></Button>} />
       <Notice saved={params.saved} error={params.error} />
       {!source ? <NoSource /> : (
         <TableCard>
@@ -47,10 +47,10 @@ export default async function CommissionRunsPage({ searchParams }: { searchParam
               {runs.length === 0 && <EmptyRow colSpan={6}>ยังไม่มีรอบ เลือกรอบด้านบนแล้วกด “เปิดรอบ”</EmptyRow>}
               {runs.map((r) => (
                 <TableRow key={r.id}>
-                  <TableCell data-label="รอบ" className="font-medium">{periodLabel(r.period, source.cutoffDay)}</TableCell>
+                  <TableCell data-label="รอบ" className="font-medium">{periodLabel(r.period, ctx.calendar)}</TableCell>
                   <TableCell data-label="สถานะ"><Badge variant="outline" className={`border-transparent ${RUN_STATUS_TONE[r.status]}`}>{RUN_STATUS_LABELS[r.status]}</Badge></TableCell>
                   <TableCell data-label="ดึง/คำนวณ" className="text-xs">{r.syncedAt ? r.syncedAt.toLocaleDateString('th-TH') : '—'} / {r.calculatedAt ? r.calculatedAt.toLocaleDateString('th-TH') : '—'}</TableCell>
-                  <TableCell data-label="วันจ่าย" className="text-xs">{thaiDay(payDate(r.period))}{r.paidAt && <span className="block text-emerald-700">จ่าย {r.paidAt.toLocaleDateString('th-TH')}</span>}</TableCell>
+                  <TableCell data-label="วันจ่าย" className="text-xs">{thaiDay(periodDates(ctx.calendar, r.period).payDate)}{r.paidAt && <span className="block text-emerald-700">จ่าย {r.paidAt.toLocaleDateString('th-TH')}</span>}</TableCell>
                   <TableCell data-label="ค่าคอมรวม" className="text-right font-semibold tabular-nums">{r.calculatedAt ? baht(r.totalPayable) : '—'}</TableCell>
                   <TableCell><IconLink href={runHref(r.period)} label={`เปิดรอบ ${r.period}`}><ArrowRight /></IconLink></TableCell>
                 </TableRow>

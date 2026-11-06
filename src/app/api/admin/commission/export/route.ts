@@ -6,10 +6,10 @@ import type { Role } from '@/lib/auth/roles';
 import { getCurrentUser } from '@/lib/auth/session';
 import { excludedReasonOf, pickStepPercent, stepRangeLabel } from '@/lib/commission/calc';
 import { fetchSales } from '@/lib/commission/odoo';
-import { isPeriod, periodRange } from '@/lib/commission/period';
+import { isPeriod, periodDates } from '@/lib/commission/period';
 import { byRepAndGroup, type RepGroupRow } from '@/lib/commission/report';
 import { getRun, getSource, listLedger, listPricelists, listSteps } from '@/lib/commission/repo';
-import { clientFor } from '@/lib/commission/service';
+import { clientFor, periodCalendar } from '@/lib/commission/service';
 import { statementSettings } from '@/lib/commission/statement';
 import { EXCLUDED_LABELS, OWNER_FROM_LABELS, PAYMENT_KIND_LABELS, PRICE_GROUP_LABELS, type LineResult, type RepResult, type StoredLedgerLine } from '@/lib/commission/types';
 
@@ -133,7 +133,7 @@ export async function GET(request: NextRequest) {
   let count: number;
 
   if (kind === 'sales') {
-    const [lines, pricelists] = await Promise.all([fetchSales(clientFor(source), period, periodRange(period, source.cutoffDay)), listPricelists(source.id)]);
+    const [lines, pricelists] = await Promise.all([fetchSales(clientFor(source), period, periodDates(await periodCalendar(source), period)), listPricelists(source.id)]);
     const rows = byRepAndGroup(lines, pricelists);
     count = rows.length;
     file = await exportFile(rows, SALES_COLUMNS, `${name}-sales`, format);

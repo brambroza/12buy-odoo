@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
-import { AlertTriangle, Calculator, CheckCircle2, Download, FileText, RefreshCw, Send, Trash2, Undo2, Wallet } from 'lucide-react';
+import { AlertTriangle, CalendarDays, Calculator, CheckCircle2, Download, FileText, RefreshCw, Send, Trash2, Undo2, Wallet } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
@@ -16,12 +16,12 @@ import { requirePermission } from '@/lib/auth/session';
 import { findUserById } from '@/lib/auth/users';
 import { blockingIssues, excludedReasonOf } from '@/lib/commission/calc';
 import { commissionContext, ctxQuery } from '@/lib/commission/context';
-import { isPeriod, payDate, periodLabel, thaiDay } from '@/lib/commission/period';
+import { isPeriod, periodDates, periodLabel, shiftPeriod, thaiDay, type PeriodCalendar } from '@/lib/commission/period';
 import { getRun, listAdjustments, listLedger, listReps } from '@/lib/commission/repo';
 import { EXCLUDED_LABELS, OWNER_FROM_LABELS, PAYMENT_KIND_LABELS, RUN_STATUS_LABELS, RUN_STATUS_TONE, type RepResult, type RunResults } from '@/lib/commission/types';
 import { baht } from '@/lib/shop/catalog';
 import { cn } from '@/lib/utils';
-import { addAdjustmentAction, calculateAction, deleteAdjustmentAction, runStepAction, syncPeriodAction } from '../../actions';
+import { addAdjustmentAction, calculateAction, deleteAdjustmentAction, runStepAction, savePeriodDatesAction, syncPeriodAction } from '../../actions';
 
 type Search = { source?: string; rep?: string; show?: string; saved?: string; error?: string };
 const fmt = new Intl.DateTimeFormat('th-TH', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'Asia/Bangkok' });
@@ -63,6 +63,7 @@ export default async function CommissionRunPage({ params, searchParams }: { para
   const drillCredits = drillRep !== null ? (results?.credits ?? []).filter((c) => c.odooUserId === drillRep) : [];
   const drillResult = drillRep !== null ? results?.reps.find((r) => r.odooUserId === drillRep) : undefined;
   const close = `${path}?${ctxQuery(ctx)}`;
+  const dates = periodDates(ctx.calendar, period);
   const step = (name: string, label: string, icon: ReactNode, variant: 'default' | 'outline' = 'default') => (
     <form action={runStepAction}>{hidden}<input type="hidden" name="step" value={name} />
       <Button type="submit" size="sm" variant={variant}>{icon} {label}</Button>
@@ -71,8 +72,8 @@ export default async function CommissionRunPage({ params, searchParams }: { para
 
   return (
     <div className="space-y-4">
-      <CommissionHeader ctx={ctx} path={path} title={`รอบค่าคอม ${periodLabel(period, source.cutoffDay)}`}
-        description={<>จ่าย {thaiDay(payDate(period))} · <Badge variant="outline" className={`border-transparent ${RUN_STATUS_TONE[status]}`}>{RUN_STATUS_LABELS[status]}</Badge></>}
+      <CommissionHeader ctx={ctx} path={path} title={`รอบค่าคอม ${periodLabel(period, ctx.calendar)}`}
+        description={<>จ่าย {thaiDay(dates.payDate)} · <Badge variant="outline" className={`border-transparent ${RUN_STATUS_TONE[status]}`}>{RUN_STATUS_LABELS[status]}</Badge></>}
         actions={results && (
           <>
             <Button size="sm" variant="outline" nativeButton={false} render={<Link href={`${path}/statement?${ctxQuery(ctx)}`} />}><FileText /> ใบสรุปรายคน</Button>
@@ -106,6 +107,10 @@ export default async function CommissionRunPage({ params, searchParams }: { para
         </span>
       </section>
       {run?.syncedAt && run.calculatedAt === null && status === 'DRAFT' && <p className="text-sm text-amber-700">ข้อมูลเปลี่ยนหลังคำนวณครั้งก่อน กด “คำนวณ” ใหม่</p>}
+      {run?.syncedAt && datesChangedSince(ctx.calendar, period, run.syncedAt) && status !== 'APPROVED' && status !== 'PAID' && (
+        <p className="text-sm text-amber-700">ช่วงวันของรอบเปลี่ยนหลังดึงข้อมูลครั้งก่อน กด “1. ดึงข้อมูลจาก Odoo” ใหม่</p>
+      )}
+      <PeriodDatesCard calendar={ctx.calendar} period={period} hidden={hidden} canEdit={can(role, 'commission.run') && status !== 'PAID'} endLocked={status === 'APPROVED' || status === 'PAID'} />
 
       {results && (
         <>
@@ -356,5 +361,57 @@ function RepExplain({ rep }: { rep: RepResult }) {
       {' '}จ่ายจริง <b>{baht(rep.payable)}</b>
       {rep.creditNoteCount ? <span className="text-muted-foreground"> · CN รอบนี้ {rep.creditNoteCount} ใบ {baht(rep.creditNoteBase ?? 0)} (ไม่หัก)</span> : null}
     </p>
+  );
+}
+
+/** True when this period's dates (its own end / pay date, or the previous period's end) were changed after `since`. */
+function datesChangedSince(calendar: PeriodCalendar, period: string, since: Date): boolean {
+  const previous = shiftPeriod(period, -1);
+  return calendar.overrides.some((o) => (o.period === period || (o.period === previous && o.endDate)) && o.updatedAt && new Date(o.updatedAt) > since);
+}
+
+/**
+ * The period's start, end and pay date. End and pay date follow the company rule unless set here;
+ * the start is always the day after the previous period's end, so periods never overlap.
+ */
+function PeriodDatesCard({ calendar, period, hidden, canEdit, endLocked }: { calendar: PeriodCalendar; period: string; hidden: ReactNode; canEdit: boolean; endLocked: boolean }) {
+  const dates = periodDates(calendar, period);
+  const input = 'h-9 rounded-lg border border-border bg-background px-2 text-sm';
+  const tag = (custom: boolean) => <span className={cn('ml-1 text-xs font-normal', custom ? 'text-amber-700' : 'text-muted-foreground')}>{custom ? '(กำหนดเอง)' : '(ตามค่าตั้งต้น)'}</span>;
+  return (
+    <details className="rounded-xl border border-border bg-card p-3 text-sm" open={dates.customEnd || dates.customPay || dates.customStart}>
+      <summary className="flex cursor-pointer flex-wrap items-center gap-x-3 gap-y-1">
+        <span className="flex items-center gap-1.5 font-medium"><CalendarDays className="size-4" /> วันที่ของรอบ</span>
+        <span>เงินเข้า {thaiDay(dates.start)} – {thaiDay(dates.end)}</span>
+        <span>จ่าย {thaiDay(dates.payDate)}</span>
+        {(dates.customEnd || dates.customPay || dates.customStart) && <Badge variant="outline" className="border-transparent bg-amber-500/15 text-amber-800">กำหนดเอง</Badge>}
+      </summary>
+      <form action={savePeriodDatesAction} className="mt-3 flex flex-wrap items-end gap-3">
+        {hidden}
+        <label className="grid gap-1 text-xs font-medium">วันเริ่ม{tag(dates.customStart)}
+          <input type="date" value={dates.start} disabled className={cn(input, 'bg-muted')} aria-describedby="start-hint" />
+        </label>
+        <label className="grid gap-1 text-xs font-medium">วันสิ้นสุด{tag(dates.customEnd)}
+          <input type="date" name="endDate" defaultValue={dates.end} required disabled={!canEdit || endLocked} className={input} />
+          {endLocked && <input type="hidden" name="endDate" value={dates.end} />}
+        </label>
+        <label className="grid gap-1 text-xs font-medium">วันจ่าย{tag(dates.customPay)}
+          <input type="date" name="payDate" defaultValue={dates.payDate} required disabled={!canEdit} className={input} />
+        </label>
+        <label className="grid min-w-48 flex-1 gap-1 text-xs font-medium">หมายเหตุ
+          <input name="note" defaultValue={dates.note ?? ''} maxLength={200} placeholder="เช่น เลื่อนเพราะหยุดปีใหม่" disabled={!canEdit} className={input} />
+        </label>
+        {canEdit && (
+          <>
+            <Button type="submit" size="sm">บันทึกวันที่</Button>
+            {(dates.customEnd || dates.customPay) && <Button type="submit" size="sm" variant="outline" name="reset" value="1" formNoValidate>ใช้ค่าตั้งต้น</Button>}
+          </>
+        )}
+      </form>
+      <p id="start-hint" className="mt-2 text-xs text-muted-foreground">
+        วันเริ่ม = วันถัดจากวันสิ้นสุดของรอบก่อน (แก้ที่รอบก่อน) · เลื่อนวันสิ้นสุดรอบนี้ วันเริ่มรอบถัดไปจะเลื่อนตาม · ค่าตั้งต้นตั้งที่หน้า “บริษัท / Odoo”
+        {endLocked && ' · รอบอนุมัติแล้ว แก้ได้เฉพาะวันจ่าย'}
+      </p>
+    </details>
   );
 }

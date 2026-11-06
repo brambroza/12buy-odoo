@@ -7,6 +7,7 @@ import { EmptyRow, IconLink, TableCard } from '@/components/admin/list-kit';
 import { UrlDrawer } from '@/components/admin/url-drawer';
 import { requirePermission } from '@/lib/auth/session';
 import { commissionContext, ctxQuery } from '@/lib/commission/context';
+import { payRuleText } from '@/lib/commission/period';
 import { maskSecret } from '@/lib/odoo/connection';
 import { decryptSecret } from '@/lib/settings/crypto';
 import { Pencil, Plus } from 'lucide-react';
@@ -63,7 +64,7 @@ export default async function CommissionSourcesPage({ searchParams }: { searchPa
                 <TableCell data-label="บริษัท" className="font-medium">{s.name}</TableCell>
                 <TableCell data-label="Odoo" className="text-xs break-all whitespace-normal">{s.url}<span className="block text-muted-foreground">db: {s.db}</span></TableCell>
                 <TableCell data-label="ผู้ใช้" className="text-xs">{s.username}<span className="block font-mono text-muted-foreground">{maskedKey(s.apiKeyEnc)}</span></TableCell>
-                <TableCell data-label="ตัดรอบ" className="text-xs">ทุกวันที่ {s.cutoffDay} · รอบ {s.cutoffDay + 1}–{s.cutoffDay}</TableCell>
+                <TableCell data-label="ตัดรอบ" className="text-xs">ทุกวันที่ {s.cutoffDay} · รอบ {s.cutoffDay + 1}–{s.cutoffDay}<span className="block text-muted-foreground">จ่าย{payRuleText(s.payDay, s.payMonths)}</span></TableCell>
                 <TableCell data-label="สถานะ">{s.active ? <Badge variant="outline" className="border-transparent bg-emerald-500/15 text-emerald-700">ใช้งาน</Badge> : <Badge variant="outline">ปิด</Badge>}</TableCell>
                 <TableCell><IconLink href={`${PATH}?${ctxQuery(ctx, { open: s.id })}`} label={`แก้ไข ${s.name}`}><Pencil /></IconLink></TableCell>
               </TableRow>
@@ -85,9 +86,7 @@ export default async function CommissionSourcesPage({ searchParams }: { searchPa
             <label className={label}>API key{editing && <span className="font-normal text-muted-foreground"> (เว้นว่าง = ใช้ค่าเดิม {maskedKey(editing.apiKeyEnc)})</span>}
               <Input name="apiKey" type="password" required={!editing} autoComplete="new-password" className="mt-1" />
             </label>
-            <label className={label}>วันตัดรอบ (1–28)<Input name="cutoffDay" type="number" min={1} max={28} defaultValue={editing?.cutoffDay ?? 20} className="mt-1 w-28" />
-              <span className="mt-1 block font-normal text-muted-foreground">20 = รอบ 21 ของเดือนก่อน ถึง 20 ของเดือนนี้ จ่ายสิ้นเดือนถัดไป</span>
-            </label>
+            <p className="text-xs text-muted-foreground">วันตัดรอบและวันจ่าย ตั้งที่แท็บ “ตั้งค่ารอบ / การจ่าย”{editing ? '' : ' (บริษัทใหม่เริ่มที่ ตัดรอบวันที่ 20 จ่ายสิ้นเดือนถัดไป)'}</p>
             <label className="flex items-center gap-2 text-sm"><input type="checkbox" name="active" defaultChecked={editing?.active ?? true} /> ใช้งาน</label>
             <div><Button type="submit">ทดสอบและบันทึก</Button></div>
           </form>
@@ -96,3 +95,4 @@ export default async function CommissionSourcesPage({ searchParams }: { searchPa
     </div>
   );
 }
+

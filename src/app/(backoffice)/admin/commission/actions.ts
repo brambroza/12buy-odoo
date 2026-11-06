@@ -8,7 +8,7 @@ import { requirePermission } from '@/lib/auth/session';
 import { flash } from '@/lib/flash';
 import { isValidOn, rateLabel, stepProblems } from '@/lib/commission/calc';
 import { fetchPricelists, fetchRepDirectory } from '@/lib/commission/odoo';
-import { isIsoDate, isPeriod, shiftPeriod, todayBangkok } from '@/lib/commission/period';
+import { endDateProblem, isIsoDate, isPeriod, periodDates, shiftPeriod, thaiDay, todayBangkok } from '@/lib/commission/period';
 import { statementSettings } from '@/lib/commission/statement';
 import * as repo from '@/lib/commission/repo';
 import * as service from '@/lib/commission/service';
@@ -64,6 +64,8 @@ const sourceSchema = z.object({
   username: z.string().trim().min(1, 'กรอกผู้ใช้ Odoo').max(254),
   apiKey: z.string().trim().max(200),
   cutoffDay: z.coerce.number().int().min(1, 'วันตัดรอบ 1–28').max(28, 'วันตัดรอบ 1–28'),
+  payDay: z.coerce.number().int().min(0, 'วันจ่าย 1–31 หรือสิ้นเดือน').max(31, 'วันจ่าย 1–31 หรือสิ้นเดือน'),
+  payMonths: z.coerce.number().int().min(0, 'จ่ายหลังสิ้นรอบ 0–6 เดือน').max(6, 'จ่ายหลังสิ้นรอบ 0–6 เดือน'),
   active: z.boolean(),
 });
 
@@ -78,11 +80,13 @@ export async function saveSourceAction(formData: FormData) {
   const id = field(formData, 'id');
   const parsed = sourceSchema.safeParse({
     name: field(formData, 'name'), url: field(formData, 'url'), db: field(formData, 'db'), username: field(formData, 'username'),
-    apiKey: field(formData, 'apiKey'), cutoffDay: field(formData, 'cutoffDay') || '20', active: formData.get('active') === 'on',
+    apiKey: field(formData, 'apiKey'), active: formData.get('active') === 'on',
+    // The period rule is set on the "ตั้งค่ารอบ / การจ่าย" tab; a new company starts with 20 / month end next month.
+    cutoffDay: '20', payDay: '0', payMonths: '1',
   });
   if (!parsed.success) fail(path, formData, parsed.error.issues[0]?.message ?? 'ข้อมูลไม่ถูกต้อง');
-  const input = parsed.data!;
   const existing = id ? await repo.getSource(id) : null;
+  const input = existing ? { ...parsed.data!, cutoffDay: existing.cutoffDay, payDay: existing.payDay, payMonths: existing.payMonths } : parsed.data!;
   if (id && !existing) fail(path, formData, 'ไม่พบบริษัท');
   let apiKey = input.apiKey;
   if (!apiKey && existing) {
@@ -99,13 +103,13 @@ export async function saveSourceAction(formData: FormData) {
   } catch (error) {
     fail(path, formData, `เชื่อมต่อไม่สำเร็จ ยังไม่บันทึก: ${errorText(error)}`);
   }
-  const row = { name: input.name, url: input.url, db: input.db, username: input.username, apiKeyEnc: encryptSecret(apiKey), cutoffDay: input.cutoffDay, active: input.active };
+  const row = { name: input.name, url: input.url, db: input.db, username: input.username, apiKeyEnc: encryptSecret(apiKey), cutoffDay: input.cutoffDay, payDay: input.payDay, payMonths: input.payMonths, active: input.active };
   const sourceId = existing ? existing.id : await repo.createSource(row);
   if (existing) await repo.updateSource(existing.id, row);
   service.forgetClient(sourceId);
   await audit(actor.id, existing ? 'commission.source.update' : 'commission.source.create', 'CommissionSource', sourceId, {
     name: input.name, url: input.url, db: input.db, username: input.username, apiKeyLast4: apiKey.slice(-4), apiKeyChanged: Boolean(input.apiKey),
-    cutoffDay: input.cutoffDay, active: input.active, odooUid: probe!.uid, serverVersion: probe!.serverVersion,
+    cutoffDay: input.cutoffDay, payDay: input.payDay, payMonths: input.payMonths, active: input.active, odooUid: probe!.uid, serverVersion: probe!.serverVersion,
   });
   revalidatePath(BASE, 'layout');
   await flash('บันทึกบริษัทแล้ว', { icon: 'sync', description: `${input.name} · Odoo ${probe!.serverVersion}` });
@@ -555,4 +559,75 @@ export async function deleteAdjustmentAction(formData: FormData) {
   await repo.deleteAdjustment(id, run!.id);
   await audit(actor.id, 'commission.adjustment.delete', 'CommissionAdjustment', id);
   back(path, formData, { saved: 'ลบรายการปรับแล้ว กดคำนวณใหม่เพื่อให้มีผล' });
+}
+
+// ---------- period dates ----------
+
+/**
+ * Sets one period's own end date and pay date (blank = follow the company rule; "reset" clears both).
+ * The end can only move while this period and the next one are not approved, because it also moves
+ * the next period's start. The pay date can change until the period is paid.
+ */
+export async function savePeriodDatesAction(formData: FormData) {
+  const actor = await requirePermission('commission.run');
+  const period = field(formData, 'period');
+  const path = field(formData, 'from') === 'periods' ? `${BASE}/periods` : `${BASE}/runs/${isPeriod(period) ? period : ''}`;
+  const source = await sourceOf(path, formData);
+  periodOf(path, formData);
+  const reset = field(formData, 'reset') === '1';
+  const endDate = reset ? null : field(formData, 'endDate') || null;
+  const payDate = reset ? null : field(formData, 'payDate') || null;
+  const note = reset ? null : field(formData, 'note').slice(0, 200) || null;
+
+  const calendar = await service.periodCalendar(source);
+  const before = periodDates(calendar, period);
+  const [run, nextRun] = await Promise.all([repo.getRun(source.id, period), repo.getRun(source.id, shiftPeriod(period, 1))]);
+  const ruleOnly = periodDates({ ...calendar, overrides: calendar.overrides.filter((o) => o.period !== period) }, period);
+  const newEnd = endDate ?? ruleOnly.end;
+  const newPay = payDate ?? ruleOnly.payDate;
+
+  if (newEnd !== before.end) {
+    if (service.isLocked(run)) fail(path, formData, 'รอบนี้อนุมัติแล้ว เปลี่ยนวันสิ้นสุดไม่ได้');
+    if (service.isLocked(nextRun)) fail(path, formData, 'รอบถัดไปอนุมัติแล้ว เปลี่ยนวันสิ้นสุดรอบนี้ไม่ได้ (จะทำให้วันเริ่มของรอบถัดไปเลื่อน)');
+    const problem = endDateProblem(calendar, period, newEnd);
+    if (problem) fail(path, formData, problem);
+  }
+  if (payDate && !isIsoDate(payDate)) fail(path, formData, 'วันจ่ายไม่ถูกต้อง');
+  if (newPay < newEnd) fail(path, formData, `วันจ่ายต้องไม่ก่อนวันสิ้นสุดรอบ (${thaiDay(newEnd)})`);
+  if (newPay !== before.payDate && run?.status === 'PAID') fail(path, formData, 'รอบนี้จ่ายแล้ว เปลี่ยนวันจ่ายไม่ได้');
+
+  await repo.savePeriodOverride(source.id, {
+    period, endDate: endDate && endDate !== ruleOnly.end ? endDate : null, payDate: payDate && payDate !== ruleOnly.payDate ? payDate : null, note,
+  }, actor.id);
+  await audit(actor.id, 'commission.period.dates', 'CommissionSource', source.id, { period, from: { end: before.end, pay: before.payDate }, to: { end: newEnd, pay: newPay } });
+  revalidatePath(BASE, 'layout');
+  const resync = newEnd !== before.end && (run?.syncedAt || nextRun?.syncedAt);
+  back(path, formData, { saved: resync ? `บันทึกวันที่รอบ ${period} แล้ว ช่วงวันเปลี่ยน เปิดรอบแล้วกด “1. ดึงข้อมูล” ใหม่ (รอบถัดไปด้วยถ้าดึงไว้แล้ว)` : `บันทึกวันที่รอบ ${period} แล้ว` });
+}
+
+const periodRuleSchema = z.object({
+  cutoffDay: z.coerce.number().int().min(1, 'วันตัดรอบ 1–28').max(28, 'วันตัดรอบ 1–28'),
+  payDay: z.coerce.number().int().min(0, 'วันจ่าย 1–31 หรือสิ้นเดือน').max(31, 'วันจ่าย 1–31 หรือสิ้นเดือน'),
+  payMonths: z.coerce.number().int().min(0, 'จ่ายหลังสิ้นรอบ 0–6 เดือน').max(6, 'จ่ายหลังสิ้นรอบ 0–6 เดือน'),
+});
+
+/**
+ * Saves a company's period rule: cut-off day and default pay day. The cut-off day cannot change once
+ * a run is approved, since that would move the dates of locked periods (set those periods' own dates instead).
+ */
+export async function savePeriodRuleAction(formData: FormData) {
+  const actor = await requirePermission('commission.manage');
+  const path = `${BASE}/periods`;
+  const source = await sourceOf(path, formData);
+  const parsed = periodRuleSchema.safeParse({ cutoffDay: field(formData, 'cutoffDay'), payDay: field(formData, 'payDay'), payMonths: field(formData, 'payMonths') });
+  if (!parsed.success) fail(path, formData, parsed.error.issues[0]?.message ?? 'ข้อมูลไม่ถูกต้อง');
+  const rule = parsed.data!;
+  if (rule.cutoffDay !== source.cutoffDay) {
+    const locked = (await repo.listRuns(source.id)).filter((r) => service.isLocked(r));
+    if (locked.length) fail(path, formData, `เปลี่ยนวันตัดรอบไม่ได้ เพราะมีรอบที่อนุมัติแล้ว (${locked.map((r) => r.period).join(', ')}) ถ้าต้องการเลื่อนบางรอบ ให้แก้วันสิ้นสุดของรอบนั้นในตารางด้านล่าง`);
+  }
+  await repo.updateSource(source.id, rule);
+  await audit(actor.id, 'commission.period.rule', 'CommissionSource', source.id, { from: { cutoffDay: source.cutoffDay, payDay: source.payDay, payMonths: source.payMonths }, to: rule });
+  revalidatePath(BASE, 'layout');
+  back(path, formData, { saved: 'บันทึกค่าตั้งต้นของรอบแล้ว' });
 }

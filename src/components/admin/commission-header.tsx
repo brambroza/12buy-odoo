@@ -13,6 +13,7 @@ const TABS = [
   { href: '/admin/commission/rates', label: 'อัตราค่าคอม' },
   { href: '/admin/commission/steps', label: 'ขั้นบันไดเกินดิว' },
   { href: '/admin/commission/statement', label: 'ใบสรุปค่าคอม' },
+  { href: '/admin/commission/periods', label: 'ตั้งค่ารอบ / การจ่าย' },
   { href: '/admin/commission/reps', label: 'พนักงานขาย' },
   { href: '/admin/commission/sources', label: 'บริษัท / Odoo' },
 ] as const;
@@ -27,7 +28,6 @@ const select = 'h-9 rounded-lg border border-border bg-background px-2 text-sm';
 export function CommissionHeader({ ctx, path, title, description, showPeriod = true, actions }: {
   ctx: CommissionContext; path: string; title: string; description?: ReactNode; showPeriod?: boolean; actions?: ReactNode;
 }) {
-  const cutoff = ctx.source?.cutoffDay ?? 20;
   return (
     <div className="space-y-3">
       <div className="flex flex-wrap items-end justify-between gap-3">
@@ -58,7 +58,7 @@ export function CommissionHeader({ ctx, path, title, description, showPeriod = t
           {showPeriod ? (
             <label className="flex items-center gap-2">รอบ
               <select name="period" defaultValue={ctx.period} className={select}>
-                {ctx.periods.map((p) => <option key={p} value={p}>{periodLabel(p, cutoff)}</option>)}
+                {ctx.periods.map((p) => <option key={p} value={p}>{periodLabel(p, ctx.calendar)}</option>)}
               </select>
             </label>
           ) : <input type="hidden" name="period" value={ctx.period} />}

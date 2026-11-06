@@ -3,7 +3,7 @@ import type { CommissionRun, CommissionSource, LedgerLine } from '../types';
 
 const repo = vi.hoisted(() => ({
   ensureRun: vi.fn(), getRun: vi.fn(), updateRun: vi.fn(), listBookedFor: vi.fn(), replaceLedger: vi.fn(), listLedger: vi.fn(), listRates: vi.fn(), listSteps: vi.fn(),
-  listPricelists: vi.fn(), listTargets: vi.fn(), listAdjustments: vi.fn(), listReps: vi.fn(), listDebtHolds: vi.fn(), applyDebtPlan: vi.fn(),
+  listPricelists: vi.fn(), listTargets: vi.fn(), listAdjustments: vi.fn(), listReps: vi.fn(), listDebtHolds: vi.fn(), applyDebtPlan: vi.fn(), listPeriodOverrides: vi.fn(),
 }));
 const odoo = vi.hoisted(() => ({ fetchCollections: vi.fn(), fetchCredits: vi.fn(), fetchOverdueInvoices: vi.fn(), fetchPaidInvoiceIds: vi.fn() }));
 vi.mock('../repo', () => repo);
@@ -12,7 +12,7 @@ vi.mock('@/lib/settings/crypto', () => ({ decryptSecret: (v: string) => `plain-$
 
 const service = await import('../service');
 
-const source: CommissionSource = { id: 's1', name: 'A', url: 'https://a.odoo.test', db: 'a', username: 'u', apiKeyEnc: 'enc', cutoffDay: 20, active: true, createdAt: new Date(0), updatedAt: new Date(0),
+const source: CommissionSource = { id: 's1', name: 'A', url: 'https://a.odoo.test', db: 'a', username: 'u', apiKeyEnc: 'enc', cutoffDay: 20, payDay: 0, payMonths: 1, active: true, createdAt: new Date(0), updatedAt: new Date(0),
   summaryLines: [], centralPercent: 5, debtDays: 120, debtPercent: 1 };
 const runRow = (over: Partial<CommissionRun> = {}): CommissionRun => ({
   id: 'run1', sourceId: 's1', period: '2026-10', status: 'DRAFT', syncedAt: null, calculatedAt: null, snapshot: null, results: null, totalPayable: 0,
@@ -27,7 +27,7 @@ const line = (over: Partial<LedgerLine> = {}): LedgerLine => ({
 beforeEach(() => {
   vi.resetAllMocks();
   repo.updateRun.mockResolvedValue(true);
-  for (const fn of [repo.listRates, repo.listSteps, repo.listPricelists, repo.listTargets, repo.listAdjustments, repo.listReps, repo.listLedger, repo.listBookedFor, repo.listDebtHolds, odoo.fetchOverdueInvoices]) fn.mockResolvedValue([]);
+  for (const fn of [repo.listRates, repo.listSteps, repo.listPricelists, repo.listTargets, repo.listAdjustments, repo.listReps, repo.listLedger, repo.listBookedFor, repo.listDebtHolds, repo.listPeriodOverrides, odoo.fetchOverdueInvoices]) fn.mockResolvedValue([]);
   odoo.fetchCredits.mockResolvedValue({ credits: [], refunds: { count: 0, amount: 0 } });
   odoo.fetchPaidInvoiceIds.mockResolvedValue(new Set());
 });
@@ -55,6 +55,15 @@ describe('overdue-invoice holds on sync', () => {
     expect(odoo.fetchPaidInvoiceIds).toHaveBeenCalledWith(expect.anything(), [1]);
     // invoice 2 was this period's own hold, so it is planned again; invoice 3 already has a hold.
     expect(repo.applyDebtPlan).toHaveBeenCalledWith('s1', '2026-10', [expect.objectContaining({ invoiceId: 2, amount: 50, heldPeriod: '2026-10' })], ['old']);
+  });
+
+  it('reads Odoo with the period\'s own end and the start after the previous period\'s own end', async () => {
+    repo.ensureRun.mockResolvedValue(runRow());
+    repo.getRun.mockImplementation(async (_s: string, period: string) => (period === '2026-10' ? runRow() : null));
+    repo.listPeriodOverrides.mockResolvedValue([{ period: '2026-09', endDate: '2026-09-25', payDate: null }, { period: '2026-10', endDate: '2026-10-22', payDate: null }]);
+    odoo.fetchCollections.mockResolvedValue({ lines: [], receipts: 0, refunds: { count: 0, amount: 0 } });
+    await service.syncPeriod(source, '2026-10');
+    expect(odoo.fetchCollections).toHaveBeenCalledWith(expect.anything(), '2026-10', { start: '2026-09-26', end: '2026-10-22' });
   });
 
   it('skips the overdue read when the company does not hold debts', async () => {

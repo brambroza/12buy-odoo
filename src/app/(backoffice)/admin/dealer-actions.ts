@@ -13,11 +13,11 @@ import { canManageRole, isBackofficeRole, type Role } from '@/lib/auth/roles';
 import { parseProfileForm } from '@/lib/auth/profile';
 import { requireAdmin, requireBackoffice, revokeAllSessions } from '@/lib/auth/session';
 import { createUser, createUserWithHash, findUserByEmail, findUserById, isUniqueViolation, setPassword, updateUser } from '@/lib/auth/users';
-import { createDealer, findDealerByTaxId, getDealer, updateDealer } from '@/lib/dealers/repo';
+import { createDealer, findDealerByTaxId, getDealer, listDealers, updateDealer } from '@/lib/dealers/repo';
 import { clearLeadPassword, findLead, setLeadStatus } from '@/lib/leads/repo';
 import { normalizeTaxId, taxIdProblem } from '@/lib/tax-id';
 import { formatThaiAddress, parseThaiAddress } from '@/lib/thai-address';
-import { ensureDealerPartner } from '@/lib/odoo/dealer-partner';
+import { ensureDealerPartner, linkDealersToOdoo, type DealerLinkResult } from '@/lib/odoo/dealer-partner';
 import { getOdooCustomer, listOdooPricelists, updateOdooCustomerCreditLimit } from '@/lib/odoo/customer-pricing';
 import { odooWritesEnabled } from '@/lib/odoo/rpc';
 import { clearPartnerCache } from '@/lib/shop/catalog';
@@ -262,6 +262,46 @@ export async function pullOdooCreditLimitAction(formData: FormData) {
   revalidate();
   await flash('ดึงวงเงินจาก Odoo แล้ว', { icon: 'save', description: `${dealer.name} · ${customer.creditLimit === null ? 'ไม่จำกัดวงเงิน' : `วงเงิน ${customer.creditLimit.toLocaleString('th-TH')} บาท`}` });
   redirect(`/admin/dealers?open=${id}&saved=1`);
+}
+
+/** Thai one-liner for a dealer that could not be linked. */
+function linkProblem(r: DealerLinkResult): string {
+  if (r.kind === 'ambiguous') return `${r.name}: พบใน Odoo หลายราย (${r.partnerIds.map((id) => `#${id}`).join(', ')}) เลือกผูกเองในฟอร์ม`;
+  if (r.kind === 'taken') return `${r.name}: Odoo #${r.partnerId} ผูกกับร้าน ${r.takenBy} อยู่แล้ว`;
+  return `${r.name}: ไม่พบลูกค้าเลขภาษี/ชื่อนี้ใน Odoo`;
+}
+
+/**
+ * "Sync Odoo" on the dealer page: drops the cached Odoo customer list (so new customers show at once) and links
+ * dealers without an Odoo customer to the company with the same tax id. With `dealerId` only that dealer is synced.
+ */
+export async function syncDealersWithOdooAction(formData: FormData) {
+  const actor = await requireAdmin();
+  const dealerId = String(formData.get('dealerId') ?? '');
+  const back = dealerId ? `/admin/dealers?open=${dealerId}` : '/admin/dealers';
+  clearPartnerCache();
+  const all = await listDealers();
+  const targets = dealerId ? all.filter((d) => d.id === dealerId) : all;
+  if (dealerId && !targets.length) redirect('/admin/dealers');
+  const linked = new Map(all.filter((d) => d.odooPartnerId).map((d) => [d.odooPartnerId!, d.name]));
+  let results: DealerLinkResult[];
+  try {
+    results = await linkDealersToOdoo(targets, linked);
+  } catch (error) {
+    fail('/admin/dealers', `เชื่อมต่อ Odoo ไม่ได้: ${error instanceof Error ? error.message : 'ไม่ทราบสาเหตุ'}`);
+  }
+  const done = results.filter((r) => r.kind === 'linked');
+  const problems = results.filter((r) => r.kind !== 'linked');
+  for (const r of done) await audit(actor.id, 'dealer.link_odoo', 'Dealer', r.dealerId, { odooPartnerId: r.partnerId, via: 'sync' });
+  revalidate();
+  const title = done.length ? `ผูกลูกค้า Odoo แล้ว ${done.length} ร้าน` : 'ดึงข้อมูลจาก Odoo ใหม่แล้ว';
+  const description = [
+    ...done.map((r) => `${r.name} → Odoo #${r.partnerId}`),
+    ...problems.slice(0, 5).map(linkProblem),
+    problems.length > 5 ? `และอีก ${problems.length - 5} ร้านที่ยังผูกไม่ได้` : '',
+  ].filter(Boolean).join(' · ') || 'ดีลเลอร์ทุกร้านผูก Odoo แล้ว';
+  await flash(title, { type: done.length ? 'success' : problems.length ? 'warning' : 'info', icon: 'save', description });
+  redirect(dealerId ? `${back}&saved=1` : back);
 }
 
 /** Creates a login for a dealer. Returns the temporary password once (only its hash is stored). */
