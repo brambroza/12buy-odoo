@@ -24,9 +24,15 @@ describe('toOdooCustomer', () => {
   it('maps pricelist, province, limit and receivable', () => {
     expect(toOdooCustomer(raw())).toEqual({
       id: 129, name: 'กิตติชัยการยาง', vat: '0105556123456', phone: '0812345678', email: null, province: 'เชียงใหม่',
-      pricelist: { id: 10, name: 'ราคา PCR ร้านค้าปลีก (Credit)' }, creditLimit: 35000, receivable: 1200.5, salesperson: 'เซลล์ A', carrier: null,
+      pricelist: { id: 10, name: 'ราคา PCR ร้านค้าปลีก (Credit)' }, creditLimit: 35000, receivable: 1200.5, salesperson: 'เซลล์ A', salesTags: [], carrier: null,
     });
     expect(toOdooCustomer(raw({ property_delivery_carrier_id: [16, 'ประกายเพชร โลจิสติกส์'] })).carrier).toEqual({ id: 16, name: 'ประกายเพชร โลจิสติกส์' });
+  });
+
+  it('lists the customer\'s "Sale" tags as its reps, in Odoo\'s order', () => {
+    const repTags = new Map([[11, 'Tip'], [10, 'Ko']]);
+    expect(toOdooCustomer(raw({ category_id: [4, 10, 11] }), repTags).salesTags).toEqual(['Ko', 'Tip']);
+    expect(toOdooCustomer(raw({ category_id: [4] }), repTags).salesTags).toEqual([]);
   });
 
   it('treats the limit as off when "Partner Limit" is off or the amount is 0', () => {

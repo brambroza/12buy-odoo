@@ -74,7 +74,7 @@ export default async function DealersPage({ searchParams }: { searchParams: Prom
   const counts = { PENDING: 0, ACTIVE: 0, SUSPENDED: 0 } as Record<Status, number>;
   for (const d of allDealers) counts[d.status as Status] += 1;
   const partnerName = (id: number | null) => partners.find((p) => p.id === id)?.name;
-  // Salesperson lives on the Odoo customer (res.partner.user_id); web orders carry it so commission stays with the right person.
+  // Odoo salesperson (res.partner.user_id), for linked partners that are not company customers; the real rep is the "Sale …" tag.
   const salesperson = (id: number) => { const p = partners.find((x) => x.id === id); return p?.user_id ? p.user_id[1] : null; };
   const { zones, groups } = settings;
   const linkedDealer = new Map(allDealers.filter((d) => d.odooPartnerId).map((d) => [d.odooPartnerId!, { dealerId: d.id, name: d.name }]));
@@ -147,7 +147,7 @@ export default async function DealersPage({ searchParams }: { searchParams: Prom
         <TableCell data-label="ระดับ"><span className="text-xs text-muted-foreground">—</span></TableCell>
         <TableCell data-label="กลุ่มราคา Odoo"><PricelistBadge customer={c} /></TableCell>
         <TableCell data-label="เครดิต" className="whitespace-normal"><OdooCredit customer={c} /></TableCell>
-        <TableCell data-label="เซลล์">{c.salesperson ? <span className="text-xs">{c.salesperson}</span> : <span className="text-xs text-muted-foreground">—</span>}</TableCell>
+        <TableCell data-label="เซลล์"><SalesRep tags={c.salesTags} salesperson={c.salesperson} /></TableCell>
         <TableCell data-label="ผู้ใช้" className="text-right">0</TableCell>
         <TableCell data-label="">
           <span className="flex justify-end gap-1">
@@ -247,9 +247,7 @@ export default async function DealersPage({ searchParams }: { searchParams: Prom
                   <TableCell data-label="กลุ่มราคา Odoo">{customer ? <PricelistBadge customer={customer} /> : <span className="text-xs text-muted-foreground">{d.odooPartnerId ? `Odoo #${d.odooPartnerId}` : 'ยังไม่ผูก Odoo'}</span>}</TableCell>
                   <TableCell data-label="เครดิต" className="whitespace-normal"><DealerCredit dealer={d} used={creditUsed(d)} customer={customer} /></TableCell>
                   <TableCell data-label="เซลล์">
-                    {seller ? <span className="text-xs">{seller}</span>
-                      : d.odooPartnerId ? <Badge variant="outline" className="border-transparent bg-amber-500/15 text-amber-700">ยังไม่ตั้งเซลล์</Badge>
-                      : <span className="text-xs text-muted-foreground">—</span>}
+                    {d.odooPartnerId ? <SalesRep tags={customer?.salesTags ?? []} salesperson={customer?.salesperson ?? seller} /> : <span className="text-xs text-muted-foreground">—</span>}
                   </TableCell>
                   <TableCell data-label="ผู้ใช้" className="text-right">{d.users.length}</TableCell>
                   <TableCell data-label="">
@@ -340,7 +338,7 @@ export default async function DealersPage({ searchParams }: { searchParams: Prom
       })()}
 
       {openCustomer && odoo.data && (
-        <UrlDrawer key={`odoo-${openCustomer.id}`} title={openCustomer.name} description={`ลูกค้า Odoo #${openCustomer.id} · ยังไม่มีบัญชีเว็บ${openCustomer.salesperson ? ` · เซลล์: ${openCustomer.salesperson}` : ''}`} closeHref={closeHref}>
+        <UrlDrawer key={`odoo-${openCustomer.id}`} title={openCustomer.name} description={`ลูกค้า Odoo #${openCustomer.id} · ยังไม่มีบัญชีเว็บ${openCustomer.salesTags[0] ?? openCustomer.salesperson ? ` · เซลล์: ${openCustomer.salesTags[0] ?? openCustomer.salesperson}` : ''}`} closeHref={closeHref}>
           {notice}
           <div className="flex flex-wrap items-center gap-2">
             <PricelistBadge customer={openCustomer} />
@@ -619,5 +617,25 @@ function DealerForm({ action, dealer, prefill, existing, creditUsed, odooCreditL
       <label className="text-xs font-medium md:col-span-2">หมายเหตุ<input name="notes" defaultValue={dealer?.notes ?? ''} maxLength={500} className={field} /></label>
       <div className="md:col-span-2"><Button type="submit" size="sm">{dealer ? 'บันทึก' : 'สร้างดีลเลอร์'}</Button></div>
     </form>
+  );
+}
+
+/**
+ * The customer's rep as commission sees it: the first "Sale …" tag; without a tag, the Odoo
+ * salesperson (flagged, since that login may be shared by several reps).
+ */
+function SalesRep({ tags, salesperson }: { tags: string[]; salesperson: string | null }) {
+  if (tags.length) {
+    return (
+      <span className="text-xs" title={tags.length > 1 ? `มีหลาย tag Sale: ${tags.join(', ')} · ค่าคอมใช้ tag แรก` : `tag Sale ${tags[0]}`}>
+        {tags[0]}{tags.length > 1 && <span className="ml-1 text-amber-700">+{tags.length - 1}</span>}
+      </span>
+    );
+  }
+  return (
+    <span className="flex flex-col items-start gap-0.5">
+      <Badge variant="outline" className="border-transparent bg-amber-500/15 text-amber-700">ไม่มี tag Sale</Badge>
+      {salesperson && <span className="text-xs text-muted-foreground">Salesperson: {salesperson}</span>}
+    </span>
   );
 }

@@ -6,6 +6,7 @@
  * `ODOO_READ_ONLY=false`, and the write guard refuses any other partner field.
  */
 import { z } from 'zod';
+import { repTagName } from '@/lib/commission/ledger';
 import { odooSearchRead, odooWrite } from './rpc';
 
 export type OdooCustomer = {
@@ -20,7 +21,10 @@ export type OdooCustomer = {
   creditLimit: number | null;
   /** Total receivable (unpaid invoices) from Odoo. */
   receivable: number;
+  /** Odoo salesperson (res.partner.user_id): the login that keys the orders, not always the real rep. */
   salesperson: string | null;
+  /** Real reps: the customer's tags "Sale …" without the prefix, in Odoo's order (the first one is paid commission). */
+  salesTags: string[];
   /** Delivery method the admin assigned; the dealer's web orders use it. */
   carrier: { id: number; name: string } | null;
 };
@@ -40,17 +44,21 @@ type RawCustomer = {
   credit: number;
   user_id: [number, string] | false;
   property_delivery_carrier_id?: [number, string] | false;
+  category_id?: number[] | false;
 };
 
-const CUSTOMER_FIELDS = ['id', 'name', 'vat', 'phone', 'email', 'state_id', 'property_product_pricelist', 'credit_limit', 'use_partner_credit_limit', 'credit', 'user_id', 'property_delivery_carrier_id'];
+const CUSTOMER_FIELDS = ['id', 'name', 'vat', 'phone', 'email', 'state_id', 'property_product_pricelist', 'credit_limit', 'use_partner_credit_limit', 'credit', 'user_id', 'property_delivery_carrier_id', 'category_id'];
 /**
  * Company-level customers only: contacts under a company (parent_id set) share the company's settings.
  * A portal user's contact counts too, even before its first sale order gives it a customer rank.
  */
 export const CUSTOMER_DOMAIN = [['parent_id', '=', false], '|', ['customer_rank', '>', 0], ['user_ids.share', '=', true]];
 
-/** Maps an Odoo row to the admin shape. A limit counts only when "Partner Limit" is on and above 0. */
-export function toOdooCustomer(raw: RawCustomer): OdooCustomer {
+/**
+ * Maps an Odoo row to the admin shape. A limit counts only when "Partner Limit" is on and above 0.
+ * `repTags` maps tag id → rep name for the customer tags named "Sale …".
+ */
+export function toOdooCustomer(raw: RawCustomer, repTags: ReadonlyMap<number, string> = new Map()): OdooCustomer {
   return {
     id: raw.id,
     name: raw.name,
@@ -62,17 +70,27 @@ export function toOdooCustomer(raw: RawCustomer): OdooCustomer {
     creditLimit: raw.use_partner_credit_limit && raw.credit_limit > 0 ? raw.credit_limit : null,
     receivable: Math.max(0, Number(raw.credit) || 0),
     salesperson: raw.user_id ? raw.user_id[1] : null,
+    salesTags: (Array.isArray(raw.category_id) ? raw.category_id : []).flatMap((id) => (repTags.has(id) ? [repTags.get(id)!] : [])),
     carrier: raw.property_delivery_carrier_id ? { id: raw.property_delivery_carrier_id[0], name: raw.property_delivery_carrier_id[1] } : null,
   };
 }
 
-/** Every company customer in Odoo, live (not cached, so a save shows up at once). */
-export async function listOdooCustomers(): Promise<OdooCustomer[]> {
-  const rows = await odooSearchRead<RawCustomer>('res.partner', CUSTOMER_DOMAIN, CUSTOMER_FIELDS, { limit: 2000, order: 'name asc' });
-  return rows.map(toOdooCustomer);
+/** Customer tags named "Sale …" (the real reps): tag id → rep name. */
+async function listRepTags(): Promise<Map<number, string>> {
+  const tags = await odooSearchRead<{ id: number; name: string }>('res.partner.category', [], ['id', 'name'], { limit: 1000, order: 'name asc' });
+  return new Map(tags.flatMap((t) => { const name = repTagName(t.name); return name ? [[t.id, name] as [number, string]] : []; }));
 }
 
-/** One company customer, or null when the id is not a company customer. */
+/** Every company customer in Odoo, live (not cached, so a save shows up at once). */
+export async function listOdooCustomers(): Promise<OdooCustomer[]> {
+  const [rows, repTags] = await Promise.all([
+    odooSearchRead<RawCustomer>('res.partner', CUSTOMER_DOMAIN, CUSTOMER_FIELDS, { limit: 2000, order: 'name asc' }),
+    listRepTags(),
+  ]);
+  return rows.map((row) => toOdooCustomer(row, repTags));
+}
+
+/** One company customer, or null when the id is not a company customer (rep tags are not resolved: `salesTags` is empty). */
 export async function getOdooCustomer(partnerId: number): Promise<OdooCustomer | null> {
   const [row] = await odooSearchRead<RawCustomer>('res.partner', [['id', '=', partnerId], ...CUSTOMER_DOMAIN], CUSTOMER_FIELDS, { limit: 1 });
   return row ? toOdooCustomer(row) : null;

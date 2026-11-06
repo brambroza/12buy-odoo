@@ -43,7 +43,7 @@ export function UrlDrawer({ title, description, closeHref, size = 'md', children
       }}
     >
       <SheetContent side="right" className={cn('w-full gap-0 overflow-y-auto data-[side=right]:w-full', WIDTH[size])}>
-        <SheetHeader className="border-b border-border pr-12">
+        <SheetHeader className="border-b border-border pr-24">
           <SheetTitle>{title}</SheetTitle>
           {description && <SheetDescription>{description}</SheetDescription>}
         </SheetHeader>

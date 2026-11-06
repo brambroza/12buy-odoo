@@ -64,15 +64,12 @@ function SheetContent({
             data-slot="sheet-close"
             render={
               <Button
-                variant="ghost"
-                className="absolute top-3 right-3"
-                size="icon-sm"
+                className="group absolute top-3 right-3 h-8 gap-1.5 rounded-full bg-gradient-to-br from-red-500 to-red-700 px-3 text-xs font-semibold text-white shadow-md shadow-red-600/30 ring-1 ring-red-700/20 transition-all hover:from-red-600 hover:to-red-800 hover:shadow-lg hover:shadow-red-600/40 focus-visible:ring-2 focus-visible:ring-red-400 focus-visible:ring-offset-2 active:scale-95"
               />
             }
           >
-            <XIcon
-            />
-            <span className="sr-only">Close</span>
+            <XIcon className="size-4 transition-transform duration-200 group-hover:rotate-90" />
+            <span>ปิด</span>
           </SheetPrimitive.Close>
         )}
       </SheetPrimitive.Popup>

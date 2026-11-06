@@ -23,6 +23,9 @@ import type { OrderCreditView } from '@/lib/shop/credit';
 import { countStalePending, isPaymentReady, listAllOrders } from '@/lib/shop/store';
 import { CREDIT_PAYMENT_STATUS_LABELS, ORDER_STATUS_FLOW, ORDER_STATUS_LABELS, type CreditPayment, type CreditPaymentStatus, type OdooSync, type OrderStatus, type ProtoOrder } from '@/lib/shop/types';
 import { cn } from '@/lib/utils';
+import { listDealers } from '@/lib/dealers/repo';
+import { listOdooCustomers } from '@/lib/odoo/customer-pricing';
+import { orderSalesRepLookup, type OrderSalesRep } from '@/lib/admin/order-sales-rep';
 import { adminAdvanceOrderAction, adminCancelOrderAction, adminRefreshStatusesAction, adminRetryOdooCancelAction, adminSetTrackingAction, adminSyncOrderAction, bulkConfirmOrdersAction, bulkRefreshStatusesAction, resendCreditPaymentLogAction, reviewCreditPaymentAction, verifySlipAction } from '../actions';
 import { ExportMenu } from '@/components/admin/export-menu';
 import { BulkBar } from '@/components/admin/bulk-bar';
@@ -101,6 +104,13 @@ function SlipBadge({ order: o }: { order: ProtoOrder }) {
   return <Badge variant="outline" className="border-transparent bg-emerald-500/15 text-emerald-700">ตรวจสลิปแล้ว</Badge>;
 }
 
+/** Rep column: the "Sale …" tag name, or the Odoo salesperson marked as such when the customer has no tag. */
+function SalesRepCell({ rep }: { rep: OrderSalesRep | null }) {
+  if (!rep) return <span className="text-xs text-muted-foreground">—</span>;
+  if (rep.fromTag) return <span className="block break-words text-sm">{rep.name}</span>;
+  return <span className="block break-words text-xs text-muted-foreground" title="ลูกค้าไม่มี tag Sale ใน Odoo · แสดง Salesperson แทน">Salesperson: {rep.name}</span>;
+}
+
 /** Total with the end-of-bill cash discount and coupon lines underneath. */
 function OrderTotal({ order: o }: { order: ProtoOrder }) {
   return (
@@ -118,7 +128,11 @@ export default async function AdminOrdersPage({ searchParams }: { searchParams: 
   const role = actor.role as Role;
   const may = { confirm: can(role, 'order.confirm'), ship: can(role, 'order.ship'), cancel: can(role, 'order.cancel'), credit: can(role, 'order.credit_review'), slip: can(role, 'order.verify_slip'), export: can(role, 'order.export') };
   const status = STATUSES.includes(params.status as OrderStatus) ? (params.status as OrderStatus) : undefined;
-  const [all, pendingOld, odooBase] = await Promise.all([listAllOrders(), countStalePending(2 * 60 * 60 * 1000), odooBaseUrl()]);
+  const [all, pendingOld, odooBase, dealers, customers] = await Promise.all([
+    listAllOrders(), countStalePending(2 * 60 * 60 * 1000), odooBaseUrl(), listDealers().catch(() => []), listOdooCustomers().catch(() => []),
+  ]);
+  // Rep per order from the dealer's Odoo customer ("Sale …" tag, else salesperson); empty when Odoo is down.
+  const repFor = orderSalesRepLookup(dealers, customers);
   const counts = Object.fromEntries(STATUSES.map((s) => [s, all.filter((o) => o.status === s).length])) as Record<OrderStatus, number>;
   const due = params.due && params.due in DUE_FILTERS ? (params.due as DueFilter) : undefined;
   const dues = creditDues(all);
@@ -129,7 +143,7 @@ export default async function AdminOrdersPage({ searchParams }: { searchParams: 
   const payPendingCount = all.filter((o) => o.status !== 'CANCELLED' && pendingCreditPayments(o).length > 0).length;
   const q = searchText(params.q);
   const orders = all.filter((o) => (!status || o.status === status) && (!dueMatch || dueMatch.has(o.id)) && (!payPending || pendingCreditPayments(o).length > 0)
-    && matchesSearch(q, o.ref, o.dealerName, o.poRef, o.carrier, o.trackingRef, o.odoo?.saleOrderName, ...o.lines.flatMap((l) => [l.code, l.size, l.name])));
+    && matchesSearch(q, o.ref, o.dealerName, repFor(o.sessionId)?.name, o.poRef, o.carrier, o.trackingRef, o.odoo?.saleOrderName, ...o.lines.flatMap((l) => [l.code, l.size, l.name])));
   const pageRows = paginate(orders, params.page);
 
   /** List URL with the current filters; `changes` overrides params such as `status`, `open` or `page`. */
@@ -171,7 +185,7 @@ export default async function AdminOrdersPage({ searchParams }: { searchParams: 
         {due === 'all' && <FilterChip href={href({ due: undefined, page: undefined })} active>{DUE_FILTERS.all} {dueIds('all').size}</FilterChip>}
         {(payPendingCount > 0 || payPending) && <FilterChip href={href({ pay: payPending ? undefined : 'pending', page: undefined })} active={payPending}>แจ้งโอนเครดิต รอตรวจ {payPendingCount}</FilterChip>}
         <div className="w-full sm:ml-auto sm:w-auto">
-          <ListSearch action="/admin/orders" q={params.q} placeholder="ค้นเลขออเดอร์ / ร้าน / PO / ขนาดยาง / SO" keep={{ status, due }}
+          <ListSearch action="/admin/orders" q={params.q} placeholder="ค้นเลขออเดอร์ / ร้าน / เซลล์ / PO / ขนาดยาง / SO" keep={{ status, due }}
             clearHref={params.q ? listHref('/admin/orders', { status, due, pay: payPending ? 'pending' : undefined }) : undefined} />
         </div>
       </div>
@@ -186,6 +200,7 @@ export default async function AdminOrdersPage({ searchParams }: { searchParams: 
               <TableHead className="w-8"><span className="sr-only">เลือก</span></TableHead>
               <TableHead>ออเดอร์</TableHead>
               <TableHead>ร้าน</TableHead>
+              <TableHead>เซลล์</TableHead>
               <TableHead>สถานะ</TableHead>
               <TableHead data-priority="low">การจัดส่ง</TableHead>
               <TableHead data-priority="low">Odoo</TableHead>
@@ -194,8 +209,8 @@ export default async function AdminOrdersPage({ searchParams }: { searchParams: 
             </TableRow>
           </TableHeader>
           <TableBody>
-            {all.length === 0 && <EmptyRow colSpan={8}>ยังไม่มีออเดอร์ — ลองสั่งจาก <Link href="/shop" className="text-primary">หน้าดีลเลอร์</Link></EmptyRow>}
-            {all.length > 0 && orders.length === 0 && <EmptyRow colSpan={8}>ไม่พบออเดอร์ตามเงื่อนไข</EmptyRow>}
+            {all.length === 0 && <EmptyRow colSpan={9}>ยังไม่มีออเดอร์ — ลองสั่งจาก <Link href="/shop" className="text-primary">หน้าดีลเลอร์</Link></EmptyRow>}
+            {all.length > 0 && orders.length === 0 && <EmptyRow colSpan={9}>ไม่พบออเดอร์ตามเงื่อนไข</EmptyRow>}
             {pageRows.items.map((o) => {
               const { next, cancellable, blocked } = orderFlow(o);
               const openHref = href({ open: o.id });
@@ -214,6 +229,7 @@ export default async function AdminOrdersPage({ searchParams }: { searchParams: 
                     {/* Below xl the delivery column is folded in here. */}
                     <span className="block text-xs text-muted-foreground xl:hidden">{o.carrier}{o.trackingRef ? ` · เลขพัสดุ ${o.trackingRef}` : ''}</span>
                   </TableCell>
+                  <TableCell data-label="เซลล์" className="max-w-40"><SalesRepCell rep={repFor(o.sessionId)} /></TableCell>
                   <TableCell data-label="สถานะ" className="max-w-64">
                     <span className="flex flex-wrap gap-1">
                       <Badge variant="outline" className={cn('border-transparent', STYLE[o.status])}>{ORDER_STATUS_LABELS[o.status]}</Badge>
@@ -257,19 +273,19 @@ export default async function AdminOrdersPage({ searchParams }: { searchParams: 
       </div>
       <ListPagination page={pageRows} href={(n) => href({ page: String(n) })} unit="ออเดอร์" />
 
-      {openOrder && <OrderDrawer key={openOrder.id} order={openOrder} closeHref={closeHref} notice={notice} odooBase={odooBase} />}
+      {openOrder && <OrderDrawer key={openOrder.id} order={openOrder} rep={repFor(openOrder.sessionId)} closeHref={closeHref} notice={notice} odooBase={odooBase} />}
     </div>
   );
 }
 
 /** Drawer with the full order: lines, address, slip check, status / tracking / Odoo forms and history. */
-function OrderDrawer({ order: o, closeHref, notice, odooBase }: { order: ProtoOrder; closeHref: string; notice: ReactNode; odooBase: string }) {
+function OrderDrawer({ order: o, rep, closeHref, notice, odooBase }: { order: ProtoOrder; rep: OrderSalesRep | null; closeHref: string; notice: ReactNode; odooBase: string }) {
   const { linked, next, cancellable, blocked } = orderFlow(o);
   const progress = o.odoo?.progress;
   return (
     <UrlDrawer
       title={<span className="flex flex-wrap items-center gap-2">{o.ref}<Badge variant="outline" className={cn('border-transparent', STYLE[o.status])}>{ORDER_STATUS_LABELS[o.status]}</Badge></span>}
-      description={`${o.dealerName} · ${dateTime(o.createdAt)} · ${o.carrier}`}
+      description={`${o.dealerName}${rep ? ` · เซลล์: ${rep.name}` : ''} · ${dateTime(o.createdAt)} · ${o.carrier}`}
       closeHref={closeHref}
       size="lg"
     >
