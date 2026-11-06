@@ -5,9 +5,10 @@
 import { db } from '@/lib/db/client';
 import { newId, rowOrNull, rows, toRow, unwrap } from '@/lib/db/rows';
 import type {
-  CommissionAdjustment, CommissionPricelist, CommissionRate, CommissionRep, CommissionRun, CommissionSource, CommissionTarget, DebtHold, LedgerKind, LedgerLine,
-  OverdueStep, PriceGroup, RunStatus, StatementSettings, StoredLedgerLine,
+  BonusSettings, CommissionAdjustment, CommissionPricelist, CommissionRate, CommissionRep, CommissionRun, CommissionSource, CommissionTarget, DebtHold, LedgerKind, LedgerLine,
+  NewCustomer, OverdueStep, PriceGroup, RunStatus, StatementSettings, StoredLedgerLine,
 } from './types';
+import { bonusSettings, type NewCustomerRow } from './bonus';
 import type { PeriodOverride } from './period';
 import type { NewHold } from './statement';
 
@@ -20,7 +21,11 @@ const toSource = (r: CommissionSource): CommissionSource => ({
   ...r, summaryLines: Array.isArray(r.summaryLines) ? r.summaryLines : [], centralPercent: num(r.centralPercent), debtDays: num(r.debtDays), debtPercent: num(r.debtPercent),
   // Missing before migration 20261106120000: pay on the last day of the next month.
   payDay: r.payDay == null ? 0 : num(r.payDay), payMonths: r.payMonths == null ? 1 : num(r.payMonths),
+  // Missing before migration 20261106150000: no bonuses.
+  ...bonusSettings(r),
 });
+
+const missingTable = (message: string, table: string) => new RegExp(`${table}|schema cache|does not exist`, 'i').test(message);
 
 export async function listSources(): Promise<CommissionSource[]> {
   return rows<CommissionSource>(await db().from('CommissionSource').select('*').order('name')).map(toSource);
@@ -46,6 +51,42 @@ export async function createSource(input: SourceInput): Promise<string> {
 
 export async function updateSource(id: string, patch: Partial<SourceInput>): Promise<void> {
   unwrap(await db().from('CommissionSource').update(toRow({ ...patch, updatedAt: now() })).eq('id', id));
+}
+
+/** Saves the bonus ladder and the new-customer bonus of a company. */
+export async function updateBonusSettings(id: string, settings: BonusSettings): Promise<void> {
+  unwrap(await db().from('CommissionSource').update({ ...settings, updatedAt: now() }).eq('id', id));
+}
+
+// ---------- new customers ----------
+
+const toNewCustomer = (r: NewCustomer): NewCustomer => ({
+  ...r, cashDate: String(r.cashDate).slice(0, 10), partnerCreated: r.partnerCreated ? String(r.partnerCreated).slice(0, 10) : null,
+});
+
+/** Customers counted as new by a company, oldest period first. Empty until migration 20261106150000 has run. */
+export async function listNewCustomers(sourceId: string): Promise<NewCustomer[]> {
+  const out: NewCustomer[] = [];
+  for (let from = 0; ; from += 1000) {
+    const result = await db().from('CommissionNewCustomer').select('*').eq('sourceId', sourceId).order('period').order('cashDate').range(from, from + 999);
+    if (result.error && missingTable(result.error.message, 'CommissionNewCustomer')) return [];
+    const page = rows<NewCustomer>(result).map(toNewCustomer);
+    out.push(...page);
+    if (page.length < 1000) return out;
+  }
+}
+
+/** Replaces the new customers counted in one period with a fresh pull. */
+export async function replaceNewCustomers(sourceId: string, period: string, list: NewCustomerRow[]): Promise<void> {
+  const cleared = await db().from('CommissionNewCustomer').delete().eq('sourceId', sourceId).eq('period', period);
+  if (cleared.error && missingTable(cleared.error.message, 'CommissionNewCustomer')) {
+    if (list.length) throw new Error('ยังไม่ได้รัน migration 20261106150000_commission_bonus.sql');
+    return;
+  }
+  unwrap(cleared);
+  const createdAt = now();
+  const payload = list.map((c) => ({ id: newId(), sourceId, ...c, createdAt }));
+  for (let i = 0; i < payload.length; i += 500) unwrap(await db().from('CommissionNewCustomer').insert(payload.slice(i, i + 500)));
 }
 
 // ---------- period dates ----------

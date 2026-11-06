@@ -6,6 +6,7 @@ import { z } from 'zod';
 import { audit } from '@/lib/auth/audit';
 import { requirePermission } from '@/lib/auth/session';
 import { flash } from '@/lib/flash';
+import { bonusSettings, JFC_2569_TIERS, normalizeTiers } from '@/lib/commission/bonus';
 import { isValidOn, rateLabel, stepProblems } from '@/lib/commission/calc';
 import { fetchPricelists, fetchRepDirectory } from '@/lib/commission/odoo';
 import { endDateProblem, isIsoDate, isPeriod, periodDates, shiftPeriod, thaiDay, todayBangkok } from '@/lib/commission/period';
@@ -13,7 +14,7 @@ import { statementSettings } from '@/lib/commission/statement';
 import * as repo from '@/lib/commission/repo';
 import * as service from '@/lib/commission/service';
 import { parseTargetLines } from '@/lib/commission/targets';
-import type { CommissionSource, PriceGroup, SummaryLine } from '@/lib/commission/types';
+import type { BonusTier, CommissionSource, PriceGroup, SummaryLine } from '@/lib/commission/types';
 import { probeOdooConnection } from '@/lib/odoo/rpc';
 import { decryptSecret, encryptSecret } from '@/lib/settings/crypto';
 
@@ -476,6 +477,53 @@ export async function seedStatementFromRatesAction(formData: FormData) {
   back(path, formData, { saved: `สร้าง ${summaryLines.length} บรรทัดจากอัตราค่าคอม มีผลเมื่อกดคำนวณรอบที่ยังเป็นร่าง` });
 }
 
+// ---------- bonuses ----------
+
+/** Most tiers a ladder can have. */
+const MAX_TIERS = 20;
+
+/**
+ * Saves a company's bonuses: the sales-bonus ladder (rows `min_i` / `bonus_i`; a blank minimum drops
+ * the row), the baht per new customer and the day customers start counting as new (blank = off).
+ * With `preset=jfc2569` the ladder is replaced by the client's JFC SOLUTION 2569 sheet.
+ */
+export async function saveBonusAction(formData: FormData) {
+  const actor = await requirePermission('commission.manage');
+  const path = `${BASE}/bonus`;
+  const source = await sourceOf(path, formData);
+  let bonusTiers: BonusTier[];
+  if (field(formData, 'preset') === 'jfc2569') bonusTiers = JFC_2569_TIERS;
+  else {
+    const rows: BonusTier[] = [];
+    for (let i = 0; i < MAX_TIERS; i++) {
+      if (!field(formData, `min_${i}`)) continue;
+      const minAmount = numberField(formData, `min_${i}`);
+      const bonus = numberField(formData, `bonus_${i}`);
+      if (!Number.isFinite(minAmount) || minAmount <= 0) fail(path, formData, `ยอดเก็บขั้นที่ ${i + 1} ต้องมากกว่า 0`);
+      if (!Number.isFinite(bonus) || bonus < 0) fail(path, formData, `เงินพิเศษขั้นที่ ${i + 1} ต้องเป็น 0 ขึ้นไป`);
+      if (rows.some((r) => r.minAmount === minAmount)) fail(path, formData, `ยอดเก็บ ${minAmount.toLocaleString('th-TH')} ซ้ำกัน`);
+      rows.push({ minAmount, bonus });
+    }
+    bonusTiers = normalizeTiers(rows);
+  }
+  const newCustomerBonus = field(formData, 'newCustomerBonus') ? numberField(formData, 'newCustomerBonus') : 0;
+  if (!Number.isFinite(newCustomerBonus) || newCustomerBonus < 0 || newCustomerBonus > 1_000_000) fail(path, formData, 'เงินต่อลูกค้าใหม่ต้องอยู่ระหว่าง 0–1,000,000');
+  const from = field(formData, 'newCustomerFrom');
+  if (from && !isIsoDate(from)) fail(path, formData, 'วันเริ่มนับลูกค้าใหม่ไม่ถูกต้อง');
+  if (newCustomerBonus > 0 && !from) fail(path, formData, 'ใส่วันเริ่มนับลูกค้าใหม่ด้วย ไม่งั้นลูกค้าเดิมทุกรายจะนับเป็นลูกค้าใหม่');
+  const settings = { bonusTiers, newCustomerBonus, newCustomerFrom: from || null };
+  try {
+    await repo.updateBonusSettings(source.id, settings);
+  } catch (error) {
+    fail(path, formData, `บันทึกไม่ได้ (รัน migration 20261106150000_commission_bonus.sql แล้วหรือยัง): ${errorText(error)}`);
+  }
+  await audit(actor.id, 'commission.bonus.save', 'CommissionSource', source.id, { from: bonusSettings(source), to: settings });
+  revalidatePath(BASE, 'layout');
+  back(path, formData, { saved: from !== (source.newCustomerFrom ?? '')
+    ? 'บันทึกแล้ว · เปลี่ยนวันเริ่มนับลูกค้าใหม่ ต้องกดดึงข้อมูลรอบที่ยังเป็นร่างใหม่ แล้วคำนวณ'
+    : 'บันทึกแล้ว มีผลเมื่อกดคำนวณรอบที่ยังเป็นร่าง' });
+}
+
 // ---------- runs ----------
 
 const runPath = (formData: FormData) => `${BASE}/runs/${field(formData, 'period')}`;
@@ -490,11 +538,11 @@ export async function syncPeriodAction(formData: FormData) {
     .catch((error: unknown) => ({ ok: false as const, reason: `ดึงข้อมูลจาก Odoo ไม่สำเร็จ: ${errorText(error)}` }));
   if (!result.ok) fail(path, formData, result.reason);
   const ok = result as Extract<service.SyncResult, { ok: true }>;
-  await audit(actor.id, 'commission.sync', 'CommissionRun', `${source.id}:${period}`, { lines: ok.lines, receipts: ok.receipts, retro: ok.retro, refunds: ok.refunds, held: ok.held, released: ok.released });
+  await audit(actor.id, 'commission.sync', 'CommissionRun', `${source.id}:${period}`, { lines: ok.lines, receipts: ok.receipts, retro: ok.retro, refunds: ok.refunds, held: ok.held, released: ok.released, newCustomers: ok.newCustomers });
   revalidatePath(BASE, 'layout');
   await flash('ดึงข้อมูลจาก Odoo แล้ว', {
     icon: 'sync',
-    description: `${ok.receipts} รายการเงินเข้า · ${ok.lines} บรรทัด${ok.retro ? ` · ปรับปรุงย้อนหลัง ${ok.retro}` : ''}${ok.held ? ` · หักลูกหนี้ค้าง ${ok.held} บิล` : ''}${ok.released ? ` · คืนลูกหนี้ค้าง ${ok.released} บิล` : ''}${ok.refunds.count ? ` · มีเงินคืนลูกค้า ${ok.refunds.count} รายการ (ยังไม่หักอัตโนมัติ ใช้รายการปรับยอด)` : ''}`,
+    description: `${ok.receipts} รายการเงินเข้า · ${ok.lines} บรรทัด${ok.retro ? ` · ปรับปรุงย้อนหลัง ${ok.retro}` : ''}${ok.held ? ` · หักลูกหนี้ค้าง ${ok.held} บิล` : ''}${ok.released ? ` · คืนลูกหนี้ค้าง ${ok.released} บิล` : ''}${ok.newCustomers ? ` · ลูกค้าใหม่ ${ok.newCustomers} ราย` : ''}${ok.refunds.count ? ` · มีเงินคืนลูกค้า ${ok.refunds.count} รายการ (ยังไม่หักอัตโนมัติ ใช้รายการปรับยอด)` : ''}`,
   });
   back(path, formData, { saved: '1' });
 }

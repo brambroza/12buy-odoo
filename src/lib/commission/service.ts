@@ -5,9 +5,10 @@
  */
 import { createOdooReadClient, type OdooReadClient } from '@/lib/odoo/rpc';
 import { decryptSecret } from '@/lib/settings/crypto';
+import { bonusSettings, planNewCustomers, type NewCustomerRow } from './bonus';
 import { blockingIssues, calculateRun } from './calc';
 import { retroDiff } from './ledger';
-import { fetchCollections, fetchCredits, fetchOverdueInvoices, fetchPaidInvoiceIds } from './odoo';
+import { fetchCollections, fetchCredits, fetchFirstInvoices, fetchOverdueInvoices, fetchPaidInvoiceIds } from './odoo';
 import { calendarOf, periodDates, shiftPeriod, type PeriodCalendar } from './period';
 import * as repo from './repo';
 import { planDebt, statementSettings } from './statement';
@@ -54,7 +55,7 @@ async function rangeOf(source: CommissionSource, period: string): Promise<{ star
 }
 
 export type SyncResult =
-  | { ok: true; lines: number; receipts: number; retro: number; refunds: { count: number; amount: number }; held: number; released: number }
+  | { ok: true; lines: number; receipts: number; retro: number; refunds: { count: number; amount: number }; held: number; released: number; newCustomers: number }
   | { ok: false; reason: string };
 
 /**
@@ -78,6 +79,7 @@ export async function syncPeriod(source: CommissionSource, period: string): Prom
   }
 
   const debt = await planPeriodDebt(source, period, client, fetched.lines);
+  const newCustomers = await planPeriodNewCustomers(source, period, client, fetched.lines);
 
   // Lock check again right before writing: someone may have approved while Odoo was being read.
   const latest = await repo.getRun(source.id, period);
@@ -85,8 +87,25 @@ export async function syncPeriod(source: CommissionSource, period: string): Prom
   await repo.replaceLedger(source.id, period, 'COLLECTION', fetched.lines);
   await repo.replaceLedger(source.id, period, 'RETRO', retro);
   await repo.applyDebtPlan(source.id, period, debt.holds, debt.releaseIds);
+  await repo.replaceNewCustomers(source.id, period, newCustomers);
   await repo.updateRun(latest.id, OPEN, { status: 'DRAFT', syncedAt: new Date(), calculatedAt: null, results: null, snapshot: null, totalPayable: 0, submittedById: null, submittedAt: null });
-  return { ok: true, lines: fetched.lines.length, receipts: fetched.receipts, retro: retro.length, refunds: fetched.refunds, held: debt.holds.length, released: debt.releaseIds.length };
+  return {
+    ok: true, lines: fetched.lines.length, receipts: fetched.receipts, retro: retro.length, refunds: fetched.refunds, held: debt.holds.length, released: debt.releaseIds.length,
+    newCustomers: newCustomers.length,
+  };
+}
+
+/**
+ * New customers of a period being pulled: customers created on or after the company's start day
+ * whose first-ever invoice had cash in this period, skipping those counted in another period.
+ */
+async function planPeriodNewCustomers(source: CommissionSource, period: string, client: OdooReadClient, lines: readonly LedgerLine[]): Promise<NewCustomerRow[]> {
+  const { newCustomerFrom } = bonusSettings(source);
+  if (!newCustomerFrom) return [];
+  const counted = new Set((await repo.listNewCustomers(source.id)).filter((c) => c.period !== period).map((c) => c.odooPartnerId));
+  const invoiceIds = [...new Set(lines.flatMap((l) => (l.kind === 'COLLECTION' && l.invoiceId !== null ? [l.invoiceId] : [])))];
+  const firsts = await fetchFirstInvoices(client, invoiceIds);
+  return planNewCustomers({ period, from: newCustomerFrom, counted, firsts, lines });
 }
 
 /**
@@ -111,11 +130,16 @@ async function planPeriodDebt(source: CommissionSource, period: string, client: 
 
 /** Rules and inputs a run is calculated with (also stored with the run). */
 async function loadSnapshot(source: CommissionSource, run: CommissionRun): Promise<RunSnapshot> {
-  const [rates, steps, pricelists, targets, adjustments, holds] = await Promise.all([
+  const [rates, steps, pricelists, targets, adjustments, holds, newCustomers] = await Promise.all([
     repo.listRates(source.id), repo.listSteps(source.id), repo.listPricelists(source.id), repo.listTargets(source.id, run.period), repo.listAdjustments(run.id),
-    periodHolds(source.id, run.period),
+    periodHolds(source.id, run.period), periodNewCustomers(source.id, run.period),
   ]);
-  return { rates, steps, pricelists, targets, adjustments, statement: statementSettings(source), holds };
+  return { rates, steps, pricelists, targets, adjustments, statement: statementSettings(source), holds, bonus: bonusSettings(source), newCustomers };
+}
+
+/** New customers counted in a period. */
+export async function periodNewCustomers(sourceId: string, period: string) {
+  return (await repo.listNewCustomers(sourceId)).filter((c) => c.period === period);
 }
 
 /** Holds taken or given back in a period. */
@@ -204,14 +228,15 @@ export function isLocked(run: Pick<CommissionRun, 'status'> | null): boolean {
 export async function repEstimate(source: CommissionSource, period: string, odooUserId: number) {
   const run = await repo.getRun(source.id, period);
   if (run && isLocked(run) && run.results) return { locked: true, run, rep: run.results.reps.find((r) => r.odooUserId === odooUserId) ?? null };
-  const [ledger, rates, steps, pricelists, targets, carryIn, holds] = await Promise.all([
+  const [ledger, rates, steps, pricelists, targets, carryIn, holds, newCustomers] = await Promise.all([
     repo.listLedger(source.id, period), repo.listRates(source.id), repo.listSteps(source.id), repo.listPricelists(source.id), repo.listTargets(source.id, period), carryInFor(source.id, period),
-    periodHolds(source.id, period),
+    periodHolds(source.id, period), periodNewCustomers(source.id, period),
   ]);
   const lines = ledger.filter((l) => l.odooUserId === odooUserId);
   const results = calculateRun({
     lines, rates, steps, pricelists, targets, adjustments: [], reps: [], carryIn: new Map([...carryIn].filter(([id]) => id === odooUserId)), period,
     statement: statementSettings(source), holds: holds.filter((h) => h.odooUserId === odooUserId),
+    bonus: bonusSettings(source), newCustomers: newCustomers.filter((c) => c.odooUserId === odooUserId),
   });
   return { locked: false, run, rep: results.reps.find((r) => r.odooUserId === odooUserId) ?? null };
 }

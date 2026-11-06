@@ -12,6 +12,7 @@ const TABS = [
   { href: '/admin/commission/targets', label: 'เป้า' },
   { href: '/admin/commission/rates', label: 'อัตราค่าคอม' },
   { href: '/admin/commission/steps', label: 'ขั้นบันไดเกินดิว' },
+  { href: '/admin/commission/bonus', label: 'เงินพิเศษ / ลูกค้าใหม่' },
   { href: '/admin/commission/statement', label: 'ใบสรุปค่าคอม' },
   { href: '/admin/commission/periods', label: 'ตั้งค่ารอบ / การจ่าย' },
   { href: '/admin/commission/reps', label: 'พนักงานขาย' },

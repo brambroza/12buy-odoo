@@ -45,6 +45,19 @@ export const RUN_STATUS_TONE: Record<RunStatus, string> = {
 };
 export const OWNER_FROM_LABELS: Record<OwnerFrom, string> = { tag: 'tag ลูกค้า', invoice: 'Salesperson ใบแจ้งหนี้', order: 'Salesperson ใบสั่งขาย', partner: 'Salesperson ลูกค้า', none: '—' };
 
+/** One step of the sales-bonus ladder: collections before VAT of at least `minAmount` earn `bonus`. */
+export type BonusTier = { minAmount: number; bonus: number };
+
+/** Bonuses paid on top of commission (stored on CommissionSource, migration 20261106150000). */
+export type BonusSettings = {
+  /** Sales-bonus ladder ("เงินพิเศษ"); a rep gets the bonus of the highest tier reached. */
+  bonusTiers: BonusTier[];
+  /** Baht per new customer. */
+  newCustomerBonus: number;
+  /** Customers created in Odoo on or after this day can count as new; null = no new-customer bonus. */
+  newCustomerFrom: string | null;
+};
+
 export type CommissionSource = {
   id: string;
   name: string;
@@ -59,7 +72,25 @@ export type CommissionSource = {
   active: boolean;
   createdAt: Date;
   updatedAt: Date;
-} & StatementSettings;
+} & StatementSettings & BonusSettings;
+
+/**
+ * A customer counted as new: its first-ever invoice had cash in `period`. Counted once per company
+ * (a later pull of the same period recomputes the period's own rows).
+ */
+export type NewCustomer = {
+  id: string;
+  sourceId: string;
+  odooPartnerId: number;
+  partnerName: string;
+  partnerCreated: string | null;
+  invoiceId: number;
+  invoiceName: string;
+  cashDate: string;
+  odooUserId: number | null;
+  repName: string | null;
+  period: string;
+};
 
 /**
  * A rep. `odooUserId` is the rep key used by every commission table: −tag id for a customer tag
@@ -247,6 +278,13 @@ export type RepResult = {
   adjustments: number;
   /** Negative balance carried from the previous period. */
   carryIn: number;
+  /** Sales bonus of the tier reached (0 when the target is missed), added after the deductions. */
+  tierBonus?: number;
+  /** The tier reached: its number (1 = lowest) and minimum; null = below the first tier. */
+  tier?: { index: number; minAmount: number } | null;
+  /** New customers of the period and their bonus (0 when the target is missed), added after the deductions. */
+  newCustomers?: { partnerName: string; invoiceName: string }[];
+  newCustomerBonus?: number;
   payable: number;
   /** Negative balance carried to the next period. */
   carryOut: number;
@@ -300,4 +338,7 @@ export type RunSnapshot = {
   /** Credit notes and customer refunds of the period, read from Odoo when calculating. */
   credits?: CreditNote[];
   refunds?: { count: number; amount: number };
+  /** Bonus ladder and new-customer amount in force, and the period's new customers. */
+  bonus?: BonusSettings;
+  newCustomers?: NewCustomer[];
 };

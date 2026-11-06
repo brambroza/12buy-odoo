@@ -4,8 +4,9 @@ import type { CommissionRun, CommissionSource, LedgerLine } from '../types';
 const repo = vi.hoisted(() => ({
   ensureRun: vi.fn(), getRun: vi.fn(), updateRun: vi.fn(), listBookedFor: vi.fn(), replaceLedger: vi.fn(), listLedger: vi.fn(), listRates: vi.fn(), listSteps: vi.fn(),
   listPricelists: vi.fn(), listTargets: vi.fn(), listAdjustments: vi.fn(), listReps: vi.fn(), listDebtHolds: vi.fn(), applyDebtPlan: vi.fn(), listPeriodOverrides: vi.fn(),
+  listNewCustomers: vi.fn(), replaceNewCustomers: vi.fn(),
 }));
-const odoo = vi.hoisted(() => ({ fetchCollections: vi.fn(), fetchCredits: vi.fn(), fetchOverdueInvoices: vi.fn(), fetchPaidInvoiceIds: vi.fn() }));
+const odoo = vi.hoisted(() => ({ fetchCollections: vi.fn(), fetchCredits: vi.fn(), fetchOverdueInvoices: vi.fn(), fetchPaidInvoiceIds: vi.fn(), fetchFirstInvoices: vi.fn() }));
 vi.mock('../repo', () => repo);
 vi.mock('../odoo', () => odoo);
 vi.mock('@/lib/settings/crypto', () => ({ decryptSecret: (v: string) => `plain-${v}` }));
@@ -13,7 +14,7 @@ vi.mock('@/lib/settings/crypto', () => ({ decryptSecret: (v: string) => `plain-$
 const service = await import('../service');
 
 const source: CommissionSource = { id: 's1', name: 'A', url: 'https://a.odoo.test', db: 'a', username: 'u', apiKeyEnc: 'enc', cutoffDay: 20, payDay: 0, payMonths: 1, active: true, createdAt: new Date(0), updatedAt: new Date(0),
-  summaryLines: [], centralPercent: 5, debtDays: 120, debtPercent: 1 };
+  summaryLines: [], centralPercent: 5, debtDays: 120, debtPercent: 1, bonusTiers: [], newCustomerBonus: 0, newCustomerFrom: null };
 const runRow = (over: Partial<CommissionRun> = {}): CommissionRun => ({
   id: 'run1', sourceId: 's1', period: '2026-10', status: 'DRAFT', syncedAt: null, calculatedAt: null, snapshot: null, results: null, totalPayable: 0,
   submittedById: null, submittedAt: null, approvedById: null, approvedAt: null, paidAt: null, createdAt: new Date(0), updatedAt: new Date(0), ...over,
@@ -27,7 +28,7 @@ const line = (over: Partial<LedgerLine> = {}): LedgerLine => ({
 beforeEach(() => {
   vi.resetAllMocks();
   repo.updateRun.mockResolvedValue(true);
-  for (const fn of [repo.listRates, repo.listSteps, repo.listPricelists, repo.listTargets, repo.listAdjustments, repo.listReps, repo.listLedger, repo.listBookedFor, repo.listDebtHolds, repo.listPeriodOverrides, odoo.fetchOverdueInvoices]) fn.mockResolvedValue([]);
+  for (const fn of [repo.listRates, repo.listSteps, repo.listPricelists, repo.listTargets, repo.listAdjustments, repo.listReps, repo.listLedger, repo.listBookedFor, repo.listDebtHolds, repo.listPeriodOverrides, repo.listNewCustomers, odoo.fetchOverdueInvoices, odoo.fetchFirstInvoices]) fn.mockResolvedValue([]);
   odoo.fetchCredits.mockResolvedValue({ credits: [], refunds: { count: 0, amount: 0 } });
   odoo.fetchPaidInvoiceIds.mockResolvedValue(new Set());
 });
@@ -180,5 +181,34 @@ describe('clients', () => {
     expect(service.clientFor({ ...source, updatedAt: new Date(1) })).not.toBe(a);
     service.forgetClient('s1');
     expect(service.tryClientFor(source)).not.toBeNull();
+  });
+});
+
+describe('new customers on sync', () => {
+  it('counts customers created after the start day once, redoing the period on a re-pull', async () => {
+    repo.ensureRun.mockResolvedValue(runRow());
+    repo.getRun.mockImplementation(async (_s: string, period: string) => (period === '2026-10' ? runRow() : null));
+    odoo.fetchCollections.mockResolvedValue({ lines: [line({ originPeriod: '2026-10', invoiceId: 1 }), line({ originPeriod: '2026-10', invoiceId: 2, lineKey: 'k2' })], receipts: 2, refunds: { count: 0, amount: 0 } });
+    repo.listNewCustomers.mockResolvedValue([
+      { odooPartnerId: 21, period: '2026-09' },
+      { odooPartnerId: 22, period: '2026-10' },
+    ]);
+    odoo.fetchFirstInvoices.mockResolvedValue([
+      { partnerId: 21, partnerName: 'counted before', partnerCreated: '2026-09-25', invoiceId: 1, invoiceName: 'I1' },
+      { partnerId: 22, partnerName: 'this period', partnerCreated: '2026-10-01', invoiceId: 2, invoiceName: 'I2' },
+    ]);
+    const result = await service.syncPeriod({ ...source, newCustomerFrom: '2026-09-21' }, '2026-10');
+    expect(result).toMatchObject({ ok: true, newCustomers: 1 });
+    expect(odoo.fetchFirstInvoices).toHaveBeenCalledWith(expect.anything(), [1, 2]);
+    expect(repo.replaceNewCustomers).toHaveBeenCalledWith('s1', '2026-10', [expect.objectContaining({ odooPartnerId: 22, invoiceId: 2, odooUserId: 8, period: '2026-10' })]);
+  });
+
+  it('reads nothing from Odoo when no start day is set', async () => {
+    repo.ensureRun.mockResolvedValue(runRow());
+    repo.getRun.mockImplementation(async (_s: string, period: string) => (period === '2026-10' ? runRow() : null));
+    odoo.fetchCollections.mockResolvedValue({ lines: [line({ originPeriod: '2026-10' })], receipts: 1, refunds: { count: 0, amount: 0 } });
+    await service.syncPeriod(source, '2026-10');
+    expect(odoo.fetchFirstInvoices).not.toHaveBeenCalled();
+    expect(repo.replaceNewCustomers).toHaveBeenCalledWith('s1', '2026-10', []);
   });
 });

@@ -56,6 +56,8 @@ export function CommissionStatement({ company, periodText, payText, rep, debtDay
           <Line label="รวม" value={amount(rep.subtotal)} strong />
           <Line label={`หัก ส่วนกลาง ${rep.centralPercent}%`} value={amount(rep.central, true)} deduct />
           <Line label="หัก ลูกหนี้ค้างชำระ" value={amount(rep.debtHold, true)} deduct />
+          {rep.tier && <Line label={`บวก เงินพิเศษขั้น ${rep.tier.index} (ยอดเก็บตั้งแต่ ${money.format(rep.tier.minAmount)})${rep.targetMet ? '' : ' · ไม่ถึงเป้า'}`} value={amount(rep.tierBonus ?? 0)} />}
+          {rep.newCustomers?.length ? <Line label={`บวก ลูกค้าใหม่ ${rep.newCustomers.length} ราย${rep.targetMet ? '' : ' · ไม่ถึงเป้า'}`} value={amount(rep.newCustomerBonus ?? 0)} /> : null}
           {rep.adjustments !== 0 && <Line label="ปรับปรุงอื่นๆ" value={amount(rep.adjustments, rep.adjustments < 0)} deduct={rep.adjustments < 0} />}
           {rep.carryIn !== 0 && <Line label="ยอดติดลบยกมาจากรอบก่อน" value={amount(rep.carryIn, true)} deduct />}
           <Line label="คงเหลือ" value={amount(net)} strong double />
@@ -74,6 +76,9 @@ export function CommissionStatement({ company, periodText, payText, rep, debtDay
           {rep.creditNoteCount ? <><dt className="text-muted-foreground">ใบลดหนี้ (CN) รอบนี้ {rep.creditNoteCount} ใบ · ไม่หักค่าคอม</dt><dd className="text-right tabular-nums text-muted-foreground">{money.format(rep.creditNoteBase ?? 0)}</dd></> : null}
         </dl>
       </div>
+      {rep.newCustomers?.length ? (
+        <p className="text-xs"><span className="font-semibold">ลูกค้าใหม่:</span> {rep.newCustomers.map((c) => `${c.partnerName} (${c.invoiceName})`).join(' · ')}</p>
+      ) : null}
       {holds.length > 0 && (
         <div className="space-y-1">
           <h3 className="text-xs font-semibold">ลูกหนี้ค้างชำระ (หัก / คืน)</h3>

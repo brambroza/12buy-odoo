@@ -5,10 +5,11 @@
  * central fund and overdue-invoice deductions, manual adjustments and any negative balance carried
  * from the previous period. Pure, no I/O.
  */
+import { pickTier } from './bonus';
 import { OTHER_SUMMARY, statementSettings, summaryKeyOf } from './statement';
 import type {
-  CommissionAdjustment, CommissionPricelist, CommissionRate, CommissionRep, CommissionTarget, CreditNote, DebtHold, ExcludedAmount, ExcludedReason, LedgerLine, LineResult,
-  OverdueStep, PriceGroup, RepResult, RunResults, StatementSettings, StepAmount,
+  BonusSettings, CommissionAdjustment, CommissionPricelist, CommissionRate, CommissionRep, CommissionTarget, CreditNote, DebtHold, ExcludedAmount, ExcludedReason, LedgerLine, LineResult,
+  NewCustomer, OverdueStep, PriceGroup, RepResult, RunResults, StatementSettings, StepAmount,
 } from './types';
 import { PRICE_GROUP_LABELS } from './types';
 
@@ -104,6 +105,10 @@ export type CalcInput = {
   /** Credit notes and customer refunds of the period: shown with the results, never deducted. */
   credits?: readonly CreditNote[];
   refunds?: { count: number; amount: number };
+  /** Sales-bonus ladder and new-customer amount; none when missing. */
+  bonus?: BonusSettings;
+  /** New customers counted in the period (those of other periods are ignored). */
+  newCustomers?: readonly Pick<NewCustomer, 'odooUserId' | 'repName' | 'partnerName' | 'invoiceName' | 'period'>[];
 };
 
 /** Why a collected line earned no commission, or null when it earned some (before the target gate). */
@@ -149,7 +154,8 @@ export function lineCommission(line: LedgerLine, input: Pick<CalcInput, 'rates' 
  * earlier periods (RETRO) still count. Then, per rep, as on the client's statement sheet:
  *   รวม = commission per statement row + holds given back this period
  *   − central fund % of รวม − overdue-invoice holds taken this period + adjustments + carried balance.
- * A negative result is not paid and carries forward.
+ * A negative result is not paid and carries forward. The sales bonus of the tier the rep's collections
+ * reach and the new-customer bonus are added after the deductions, and only when the target is met.
  */
 export function calculateRun(input: CalcInput): RunResults {
   const statement = input.statement ?? statementSettings({ centralPercent: 0, debtPercent: 0 });
@@ -247,6 +253,20 @@ export function calculateRun(input: CalcInput): RunResults {
     a.credits += 1;
   }
 
+  const newByRep = new Map<number, { partnerName: string; invoiceName: string }[]>();
+  for (const c of input.newCustomers ?? []) {
+    if (c.period !== input.period) continue;
+    if (c.odooUserId === null) {
+      issues.push({ message: `ลูกค้าใหม่ ${c.partnerName} (${c.invoiceName}) ไม่มีพนักงานขาย จึงไม่ได้ให้ใคร` });
+      continue;
+    }
+    if (input.inactive?.has(c.odooUserId)) continue;
+    accFor(c.odooUserId, c.repName);
+    newByRep.set(c.odooUserId, [...(newByRep.get(c.odooUserId) ?? []), { partnerName: c.partnerName, invoiceName: c.invoiceName }]);
+  }
+  const tiers = input.bonus?.bonusTiers ?? [];
+  const perCustomer = input.bonus?.newCustomerBonus ?? 0;
+
   const adjustments = new Map<number, number>();
   for (const adj of input.adjustments) adjustments.set(adj.odooUserId, (adjustments.get(adj.odooUserId) ?? 0) + adj.amount);
   for (const id of [...adjustments.keys(), ...input.carryIn.keys()]) accFor(id, null);
@@ -268,7 +288,11 @@ export function calculateRun(input: CalcInput): RunResults {
     const debtHold = round2(a.held);
     const adj = round2(adjustments.get(odooUserId) ?? 0);
     const carryIn = round2(Math.min(0, input.carryIn.get(odooUserId) ?? 0));
-    const total = round2(subtotal - central - debtHold + adj + carryIn);
+    const tier = pickTier(tiers, base);
+    const tierBonus = targetMet && tier ? round2(tier.bonus) : 0;
+    const newCustomers = newByRep.get(odooUserId) ?? [];
+    const newCustomerBonus = targetMet ? round2(newCustomers.length * perCustomer) : 0;
+    const total = round2(subtotal - central - debtHold + tierBonus + newCustomerBonus + adj + carryIn);
     return {
       odooUserId, repName: a.name, base, gross: round2(a.gross), lines: a.lines, target, targetMet: target !== null && targetMet, commission,
       counted: round2(a.counted), excluded: [...a.excluded.values()].map((e) => ({ ...e, base: round2(e.base) })), commissionBeforeTarget: round2(a.before),
@@ -276,7 +300,8 @@ export function calculateRun(input: CalcInput): RunResults {
       steps: [...a.steps.values()].sort((x, y) => (x.minDays ?? Infinity) - (y.minDays ?? Infinity))
         .map((st) => ({ ...st, base: round2(st.base), beforeStep: round2(st.beforeStep), commission: round2(st.commission) })),
       summary, debtRelease, subtotal, centralPercent: statement.centralPercent, central, debtHold,
-      adjustments: adj, carryIn, payable: Math.max(0, total), carryOut: Math.min(0, total),
+      adjustments: adj, carryIn, tierBonus, tier: tier ? { index: tier.index, minAmount: tier.minAmount } : null, newCustomers, newCustomerBonus,
+      payable: Math.max(0, total), carryOut: Math.min(0, total),
     };
   }).sort((x, y) => y.payable - x.payable || x.repName.localeCompare(y.repName));
 

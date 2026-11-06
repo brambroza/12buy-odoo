@@ -168,6 +168,8 @@ export default async function CommissionRunPage({ params, searchParams }: { para
                         {baht(r.commission)}
                         {r.commissionBeforeTarget !== undefined && r.commissionBeforeTarget !== r.commission && <span className="block text-xs text-destructive">ถ้าถึงเป้าจะได้ {baht(r.commissionBeforeTarget)}</span>}
                         {r.debtRelease ? <span className="block text-xs text-emerald-700">คืนลูกหนี้ +{baht(r.debtRelease)}</span> : null}
+                        {r.tierBonus ? <span className="block text-xs text-emerald-700">เงินพิเศษขั้น {r.tier?.index} +{baht(r.tierBonus)}</span> : null}
+                        {r.newCustomers?.length ? <span className={cn('block text-xs', r.newCustomerBonus ? 'text-emerald-700' : 'text-muted-foreground')}>ลูกค้าใหม่ {r.newCustomers.length} ราย +{baht(r.newCustomerBonus ?? 0)}</span> : null}
                       </TableCell>
                       <TableCell data-label="หัก / ปรับ" className="text-right text-xs tabular-nums">
                         {r.central ? <span className="block text-destructive">ส่วนกลาง {r.centralPercent}% {baht(-r.central)}</span> : null}
@@ -307,6 +309,7 @@ function RunSummary({ results }: { results: RunResults }) {
   const commission = sumOf(reps, (r) => r.commission);
   const deducted = sumOf(reps, (r) => r.central + r.debtHold);
   const other = sumOf(reps, (r) => r.adjustments + r.carryIn + r.debtRelease);
+  const bonus = sumOf(reps, (r) => (r.tierBonus ?? 0) + (r.newCustomerBonus ?? 0));
   const credits = results.credits ?? [];
   const row = (label: string, value: number, tone?: 'muted' | 'bad' | 'good' | 'strong', note?: string) => (
     <li className={cn('flex items-baseline gap-2 py-1', tone === 'strong' && 'border-t border-border pt-2 font-bold')}>
@@ -326,6 +329,7 @@ function RunSummary({ results }: { results: RunResults }) {
           {row('ค่าคอมตามอัตรา', before)}
           {before !== commission && row('ไม่ได้เพราะไม่ถึงเป้า', commission - before, 'bad')}
           {deducted ? row('หัก ส่วนกลาง / ลูกหนี้ค้างชำระ', -deducted, 'bad') : null}
+          {bonus ? row('บวก เงินพิเศษตามขั้นยอดเก็บ / ลูกค้าใหม่', bonus, 'good') : null}
           {other ? row('ปรับปรุง / คืนลูกหนี้ / ยกมา', other) : null}
           {row('ค่าคอมที่ต้องจ่าย', results.totalPayable, 'strong', `${reps.filter((r) => r.payable > 0).length} คน`)}
         </ul>
@@ -357,6 +361,8 @@ function RepExplain({ rep }: { rep: RepResult }) {
       {rep.commissionBeforeTarget !== undefined && rep.commissionBeforeTarget !== rep.commission && <span className="text-destructive"> แต่ไม่ถึงเป้า {baht(rep.target ?? 0)} จึงได้ {baht(rep.commission)}</span>}
       {rep.central > 0 && <> หักส่วนกลาง {baht(rep.central)}</>}
       {rep.debtHold > 0 && <> หักลูกหนี้ค้าง {baht(rep.debtHold)}</>}
+      {rep.tierBonus ? <> บวกเงินพิเศษขั้น {rep.tier?.index} {baht(rep.tierBonus)}</> : null}
+      {rep.newCustomerBonus ? <> บวกลูกค้าใหม่ {rep.newCustomers?.length} ราย {baht(rep.newCustomerBonus)}</> : null}
       {rep.adjustments !== 0 && <> ปรับ {baht(rep.adjustments)}</>}
       {' '}จ่ายจริง <b>{baht(rep.payable)}</b>
       {rep.creditNoteCount ? <span className="text-muted-foreground"> · CN รอบนี้ {rep.creditNoteCount} ใบ {baht(rep.creditNoteBase ?? 0)} (ไม่หัก)</span> : null}

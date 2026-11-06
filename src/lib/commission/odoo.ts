@@ -10,6 +10,7 @@
  * invoice number and days overdue are known even though Odoo's receipt does not print them.
  */
 import type { OdooReadClient } from '@/lib/odoo/rpc';
+import type { FirstInvoice } from './bonus';
 import { buildLedger, lastCategorySegment, ownerOf, repTagName, tagRepKey, type LedgerInput, type RawInvoice, type RawInvoiceLine, type RawPartial, type RawReceipt } from './ledger';
 import { addDays } from './period';
 import type { OpenInvoice } from './statement';
@@ -281,6 +282,32 @@ export async function fetchOverdueInvoices(client: OdooReadClient, asOf: string,
     const total = Number(row.amount_total) || 0;
     const residualBase = total > 0 ? Math.round(((Number(row.amount_residual) || 0) * (Number(row.amount_untaxed) || 0) / total) * 100) / 100 : 0;
     return [{ invoiceId: row.id, invoiceName: invoice.name, partnerName: invoice.partnerName, dueDate: invoice.dueDate, odooUserId: owner.user?.[0] ?? null, repName: owner.user?.[1] ?? null, residualBase }];
+  });
+}
+
+/**
+ * For the customers of `invoiceIds`: each customer's (commercial partner's) first-ever posted invoice
+ * and the day the customer was created in Odoo, to find new customers.
+ */
+export async function fetchFirstInvoices(client: OdooReadClient, invoiceIds: readonly number[]): Promise<FirstInvoice[]> {
+  if (!invoiceIds.length) return [];
+  const own = await readAll<{ id: number; commercial_partner_id: M2O }>(client, 'account.move', invoiceIds, ['commercial_partner_id']);
+  const partnerIds = [...new Set(own.map((i) => ref(i.commercial_partner_id)?.[0]).filter((id): id is number => id !== undefined))];
+  if (!partnerIds.length) return [];
+  const invoices = await searchIn<{ id: number; name: string; invoice_date: string | false; commercial_partner_id: M2O }>(client, 'account.move', 'commercial_partner_id', partnerIds,
+    [['move_type', '=', 'out_invoice'], ['state', '=', 'posted']], ['id', 'name', 'invoice_date', 'commercial_partner_id']);
+  const first = new Map<number, { id: number; name: string; date: string }>();
+  for (const i of invoices) {
+    const partner = ref(i.commercial_partner_id)?.[0];
+    if (partner === undefined) continue;
+    const d = date(i.invoice_date) ?? '9999-12-31';
+    const seen = first.get(partner);
+    if (!seen || d < seen.date || (d === seen.date && i.id < seen.id)) first.set(partner, { id: i.id, name: i.name, date: d });
+  }
+  const partners = await readAll<{ id: number; name: string; create_date: string | false }>(client, 'res.partner', partnerIds, ['name', 'create_date']);
+  return partners.flatMap((p) => {
+    const inv = first.get(p.id);
+    return inv ? [{ partnerId: p.id, partnerName: p.name, partnerCreated: date(p.create_date), invoiceId: inv.id, invoiceName: inv.name }] : [];
   });
 }
 
