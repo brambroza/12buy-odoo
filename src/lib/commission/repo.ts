@@ -351,6 +351,33 @@ export async function listRuns(sourceId: string): Promise<CommissionRun[]> {
     .eq('sourceId', sourceId).order('period', { ascending: false })).map((r) => toRun({ ...r, snapshot: null, results: null }));
 }
 
+/**
+ * Collected (before VAT) and counted-for-commission totals per period, for the runs list. Read from
+ * the calculated results (only their rep totals, not the lines); `counted` is null for a period not
+ * calculated yet, whose collected total then comes from the pulled ledger.
+ */
+export async function runTotals(sourceId: string, uncalculated: readonly string[]): Promise<Map<string, { collected: number; counted: number | null }>> {
+  type Row = { period: string; reps: { base?: number; counted?: number }[] | null; unassigned: number | null };
+  const out = new Map<string, { collected: number; counted: number | null }>();
+  for (const r of rows<Row>(await db().from('CommissionRun').select('period, reps:results->reps, unassigned:results->unassignedBase').eq('sourceId', sourceId))) {
+    if (!r.reps) continue;
+    const collected = r.reps.reduce((s, x) => s + num(x.base ?? 0), 0) + num(r.unassigned ?? 0);
+    const counted = r.reps.reduce((s, x) => s + num(x.counted ?? x.base ?? 0), 0);
+    out.set(r.period, { collected: Math.round(collected * 100) / 100, counted: Math.round(counted * 100) / 100 });
+  }
+  for (const period of uncalculated) {
+    if (out.has(period)) continue;
+    let collected = 0;
+    for (let from = 0; ; from += 1000) {
+      const page = rows<{ base: number }>(await db().from('CommissionLedger').select('base').eq('sourceId', sourceId).eq('period', period).range(from, from + 999));
+      collected += page.reduce((s, x) => s + num(x.base), 0);
+      if (page.length < 1000) break;
+    }
+    out.set(period, { collected: Math.round(collected * 100) / 100, counted: null });
+  }
+  return out;
+}
+
 export async function getRun(sourceId: string, period: string): Promise<CommissionRun | null> {
   const run = rowOrNull<CommissionRun>(await db().from('CommissionRun').select('*').eq('sourceId', sourceId).eq('period', period).maybeSingle());
   return run ? toRun(run) : null;
