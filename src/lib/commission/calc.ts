@@ -7,8 +7,9 @@
  */
 import { paysBySalary, pickTier, tierBonusAmount } from './bonus';
 import { OTHER_SUMMARY, statementSettings, summaryKeyOf } from './statement';
+import { achievementPercent, targetPayPercent, targetSettings } from './target-mode';
 import type {
-  BonusSettings, CommissionAdjustment, CommissionPricelist, CommissionRate, CommissionRep, CommissionSalary, CommissionTarget, CreditNote, SaleOrder, DebtHold, ExcludedAmount, ExcludedReason, LedgerLine, LineResult,
+  BonusSettings, TargetSettings, CommissionAdjustment, CommissionPricelist, CommissionRate, CommissionRep, CommissionSalary, CommissionTarget, CreditNote, SaleOrder, DebtHold, ExcludedAmount, ExcludedReason, LedgerLine, LineResult,
   NewCustomer, OverdueStep, PriceGroup, RepResult, RunResults, StatementSettings, StepAmount,
 } from './types';
 import { BONUS_DOC_LABELS, isSalesBase, PRICE_GROUP_LABELS } from './types';
@@ -114,6 +115,8 @@ export type CalcInput = {
   refunds?: { count: number; amount: number };
   /** Sales-bonus ladder and new-customer amount; none when missing. */
   bonus?: BonusSettings;
+  /** How the target turns into commission; GATE when missing. */
+  target?: TargetSettings;
   /** Rep salaries; with a salary ladder the bonus is tier salary − the rep's salary of `period`. */
   salaries?: readonly Pick<CommissionSalary, 'odooUserId' | 'period' | 'amount'>[];
   /** Sales documents of the period (invoices or sale orders): the ladder base when `bonus.bonusBase` is one of them. */
@@ -160,9 +163,10 @@ export function lineCommission(line: LedgerLine, input: Pick<CalcInput, 'rates' 
 
 /**
  * Calculates a whole run. Lines without a rep are reported but paid to nobody. A rep with no
- * target is reported as an issue (the run cannot be submitted); a target of 0 means no gate.
- * When the target is missed the rep gets no commission, except that negative corrections of
- * earlier periods (RETRO) still count. Then, per rep, as on the client's statement sheet:
+ * target (blank or 0) has no gate and is paid in full, as before targets existed.
+ * The target mode (`target.ts`) sets the % of this period's commission paid: GATE pays all or
+ * nothing, EXCESS the share above the target, PROPORTIONAL up to 100%, LADDER by % of target steps.
+ * Corrections of earlier periods (RETRO) are not scaled; at 0% only the negative ones still count. Then, per rep, as on the client's statement sheet:
  *   รวม = commission per statement row + holds given back this period
  *   − central fund % of รวม − overdue-invoice holds taken this period + adjustments + carried balance.
  * A negative result is not paid and carries forward. The sales bonus of the tier the rep's collections
@@ -171,6 +175,7 @@ export function lineCommission(line: LedgerLine, input: Pick<CalcInput, 'rates' 
 export function calculateRun(input: CalcInput): RunResults {
   const statement = input.statement ?? statementSettings({ centralPercent: 0, debtPercent: 0 });
   const pricelists = new Map(input.pricelists.map((p) => [p.odooPricelistId, p]));
+  const targetRule = input.target ?? targetSettings({});
   const targets = new Map(input.targets.filter((t) => t.period === input.period).map((t) => [t.odooUserId, t.amount]));
   const names = new Map(input.reps.map((r) => [r.odooUserId, r.name]));
   const issues: RunResults['issues'] = [];
@@ -305,11 +310,12 @@ export function calculateRun(input: CalcInput): RunResults {
   const reps: RepResult[] = [...acc.entries()].map(([odooUserId, a]) => {
     const target = targets.has(odooUserId) ? targets.get(odooUserId)! : null;
     const base = round2(a.base);
-    if (target === null && a.lines > 0) issues.push({ message: `ยังไม่ได้ตั้งเป้าของ ${a.name} รอบนี้ (ตั้ง 0 ถ้าไม่ใช้เป้า)` });
     const targetMet = target === null || target === 0 || base >= target;
+    // Share of this period's commission the target lets through (100% without a target).
+    const payPercent = target === null ? 100 : targetPayPercent(targetRule, base, target);
     const summary = rows.map((row) => {
       const b = a.buckets.get(row.key);
-      return { key: row.key, label: row.label, amount: b ? round2(targetMet ? b.normal + b.retro : b.retroNegative) : 0, base: round2(b?.base ?? 0), rates: [...(b?.rates ?? [])] };
+      return { key: row.key, label: row.label, amount: b ? round2(payPercent > 0 ? (b.normal * payPercent) / 100 + b.retro : b.retroNegative) : 0, base: round2(b?.base ?? 0), rates: [...(b?.rates ?? [])] };
     }).filter((s) => s.key !== OTHER_SUMMARY.key || s.amount !== 0);
     const commission = round2(summary.reduce((s, r) => s + r.amount, 0));
     const debtRelease = round2(a.released);
@@ -331,6 +337,7 @@ export function calculateRun(input: CalcInput): RunResults {
     const total = round2(subtotal - central - debtHold + tierBonus + newCustomerBonus + adj + carryIn);
     return {
       odooUserId, repName: a.name, base, gross: round2(a.gross), lines: a.lines, target, targetMet: target !== null && targetMet, commission,
+      targetMode: targetRule.targetMode, targetPercent: achievementPercent(base, target) === null ? null : round2(achievementPercent(base, target)!), targetPayPercent: round2(payPercent),
       counted: round2(a.counted), excluded: [...a.excluded.values()].map((e) => ({ ...e, base: round2(e.base) })), commissionBeforeTarget: round2(a.before),
       creditNoteBase: round2(a.creditBase), creditNoteCount: a.credits,
       steps: [...a.steps.values()].sort((x, y) => (x.minDays ?? Infinity) - (y.minDays ?? Infinity))
@@ -349,7 +356,7 @@ export function calculateRun(input: CalcInput): RunResults {
   };
 }
 
-/** Issues that stop a run from being submitted: reps without a target, or without a salary when it is needed for the bonus. Others are warnings. */
+/** Issues that stop a run from being submitted: reps without a salary when it is needed for the bonus. Others are warnings. */
 export function blockingIssues(results: RunResults): string[] {
-  return results.issues.filter((i) => i.message.startsWith('ยังไม่ได้ตั้งเป้า') || i.message.startsWith('ยังไม่ได้ตั้งเงินเดือน')).map((i) => i.message);
+  return results.issues.filter((i) => i.message.startsWith('ยังไม่ได้ตั้งเงินเดือน')).map((i) => i.message);
 }

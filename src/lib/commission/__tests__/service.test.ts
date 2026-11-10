@@ -14,7 +14,7 @@ vi.mock('@/lib/settings/crypto', () => ({ decryptSecret: (v: string) => `plain-$
 const service = await import('../service');
 
 const source: CommissionSource = { id: 's1', name: 'A', url: 'https://a.odoo.test', db: 'a', username: 'u', apiKeyEnc: 'enc', cutoffDay: 20, payDay: 0, payMonths: 1, active: true, createdAt: new Date(0), updatedAt: new Date(0),
-  summaryLines: [], centralPercent: 5, debtDays: 120, debtPercent: 1, bonusBase: 'COLLECTION', bonusTiers: [], newCustomerBonus: 0, newCustomerFrom: null };
+  summaryLines: [], centralPercent: 5, debtDays: 120, debtPercent: 1, bonusBase: 'COLLECTION', bonusTiers: [], newCustomerBonus: 0, newCustomerFrom: null, targetMode: 'GATE', targetSteps: [] };
 const runRow = (over: Partial<CommissionRun> = {}): CommissionRun => ({
   id: 'run1', sourceId: 's1', period: '2026-10', status: 'DRAFT', syncedAt: null, calculatedAt: null, snapshot: null, results: null, totalPayable: 0,
   submittedById: null, submittedAt: null, approvedById: null, approvedAt: null, paidAt: null, createdAt: new Date(0), updatedAt: new Date(0), ...over,
@@ -153,8 +153,8 @@ describe('approval', () => {
   it('submits only calculated drafts without blocking issues', async () => {
     repo.getRun.mockResolvedValue(runRow());
     expect(await service.submitRun('s1', '2026-10', 'u1')).toMatchObject({ ok: false, reason: expect.stringContaining('คำนวณ') });
-    repo.getRun.mockResolvedValue(runRow({ calculatedAt: new Date(), results: { reps: [], lines: [], issues: [{ message: 'ยังไม่ได้ตั้งเป้าของ A รอบนี้' }], unassignedBase: 0, totalPayable: 0 } }));
-    expect(await service.submitRun('s1', '2026-10', 'u1')).toMatchObject({ ok: false, reason: expect.stringContaining('เป้า') });
+    repo.getRun.mockResolvedValue(runRow({ calculatedAt: new Date(), results: { reps: [], lines: [], issues: [{ message: 'ยังไม่ได้ตั้งเงินเดือนของ A รอบนี้' }], unassignedBase: 0, totalPayable: 0 } }));
+    expect(await service.submitRun('s1', '2026-10', 'u1')).toMatchObject({ ok: false, reason: expect.stringContaining('เงินเดือน') });
     repo.getRun.mockResolvedValue(runRow({ calculatedAt: new Date(), results: { reps: [], lines: [], issues: [], unassignedBase: 0, totalPayable: 0 } }));
     expect(await service.submitRun('s1', '2026-10', 'u1')).toMatchObject({ ok: true });
     expect(repo.updateRun).toHaveBeenCalledWith('run1', ['DRAFT'], expect.objectContaining({ status: 'PENDING_APPROVAL', submittedById: 'u1' }));

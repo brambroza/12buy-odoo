@@ -81,6 +81,22 @@ export type BonusSettings = {
   newCustomerFrom: string | null;
 };
 
+/**
+ * How the collection target turns into commission (stored on CommissionSource, migration 20261110200000):
+ * GATE = full commission when collections reach the target, else none;
+ * EXCESS = only the share of collections above the target is paid: commission × (collected − target) ÷ collected;
+ * PROPORTIONAL = commission × collected ÷ target, at most 100%;
+ * LADDER = the pay % of the highest step whose "from % of target" is reached (below the first step: none).
+ */
+export type TargetMode = 'GATE' | 'EXCESS' | 'PROPORTIONAL' | 'LADDER';
+export const TARGET_MODES: readonly TargetMode[] = ['GATE', 'EXCESS', 'PROPORTIONAL', 'LADDER'];
+export const TARGET_MODE_LABELS: Record<TargetMode, string> = {
+  GATE: 'ถึงเป้าได้ค่าคอมเต็ม', EXCESS: 'คิดเฉพาะส่วนที่เกินเป้า', PROPORTIONAL: 'ได้ตาม % ที่ทำได้ (สูงสุด 100%)', LADDER: 'ขั้นตาม % ของเป้า',
+};
+/** A LADDER step: from `minPercent` % of the target on, `payPercent` % of the commission is paid. */
+export type TargetStep = { minPercent: number; payPercent: number };
+export type TargetSettings = { targetMode: TargetMode; targetSteps: TargetStep[] };
+
 export type CommissionSource = {
   id: string;
   name: string;
@@ -95,7 +111,7 @@ export type CommissionSource = {
   active: boolean;
   createdAt: Date;
   updatedAt: Date;
-} & StatementSettings & BonusSettings;
+} & StatementSettings & BonusSettings & TargetSettings;
 
 /**
  * A customer counted as new: its first-ever invoice had cash in `period`. Counted once per company
@@ -279,6 +295,10 @@ export type RepResult = {
   /** null = no target set (blocks submitting the run). */
   target: number | null;
   targetMet: boolean;
+  /** How the target was applied, collections as % of the target (null without a target) and the % of commission paid. */
+  targetMode?: TargetMode;
+  targetPercent?: number | null;
+  targetPayPercent?: number;
   /** Commission after the target gate (sum of `summary`). */
   commission: number;
   /** Collected base that earned commission (before the target gate) and what did not, by reason. */
@@ -376,6 +396,8 @@ export type RunSnapshot = {
   refunds?: { count: number; amount: number };
   /** Bonus ladder and new-customer amount in force, and the period's new customers. */
   bonus?: BonusSettings;
+  /** How the target turned into commission (missing in runs calculated before target modes: GATE). */
+  target?: TargetSettings;
   newCustomers?: NewCustomer[];
   /** The period's confirmed sale orders, when the ladder is on sale orders. */
   saleOrders?: SaleOrder[];

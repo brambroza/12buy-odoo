@@ -5,10 +5,11 @@
 import { db } from '@/lib/db/client';
 import { newId, rowOrNull, rows, toRow, unwrap } from '@/lib/db/rows';
 import type {
-  BonusSettings, CommissionAdjustment, CommissionPricelist, CommissionRate, CommissionRep, CommissionRun, CommissionSalary, CommissionSource, CommissionTarget, SaleOrder, DebtHold, LedgerKind, LedgerLine,
+  BonusSettings, TargetSettings, CommissionAdjustment, CommissionPricelist, CommissionRate, CommissionRep, CommissionRun, CommissionSalary, CommissionSource, CommissionTarget, SaleOrder, DebtHold, LedgerKind, LedgerLine,
   NewCustomer, OverdueStep, PriceGroup, RunStatus, StatementSettings, StoredLedgerLine,
 } from './types';
 import { bonusSettings, type NewCustomerRow } from './bonus';
+import { targetSettings } from './target-mode';
 import type { DeferredInvoice } from './ledger';
 import type { PeriodOverride } from './period';
 import type { NewHold } from './statement';
@@ -24,6 +25,8 @@ const toSource = (r: CommissionSource): CommissionSource => ({
   payDay: r.payDay == null ? 0 : num(r.payDay), payMonths: r.payMonths == null ? 1 : num(r.payMonths),
   // Missing before migration 20261106150000: no bonuses.
   ...bonusSettings(r),
+  // Missing before migration 20261110200000: full commission when the target is met.
+  ...targetSettings(r),
 });
 
 const missingTable = (message: string, table: string) => new RegExp(`${table}|schema cache|does not exist`, 'i').test(message);
@@ -63,6 +66,16 @@ export async function updateBonusSettings(id: string, settings: BonusSettings): 
     void _omit;
     unwrap(await db().from('CommissionSource').update({ ...rest, updatedAt: now() }).eq('id', id));
     return;
+  }
+  unwrap(result);
+}
+
+/** Saves how the target turns into commission. Before migration 20261110200000 only GATE (the old rule) can be kept. */
+export async function updateTargetSettings(id: string, settings: TargetSettings): Promise<void> {
+  const result = await db().from('CommissionSource').update({ ...settings, updatedAt: now() }).eq('id', id);
+  if (result.error && missingTable(result.error.message, 'target(Mode|Steps)')) {
+    if (settings.targetMode === 'GATE') return;
+    throw new Error('ยังไม่ได้รัน migration 20261110200000_commission_target_mode.sql จึงเลือกแบบเป้าอื่นไม่ได้');
   }
   unwrap(result);
 }

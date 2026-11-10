@@ -132,9 +132,35 @@ describe('calculateRun', () => {
     expect(run([line({})], { targets: target(100_000.01) }).reps[0]).toMatchObject({ targetMet: false, commission: 0, payable: 0 });
   });
 
-  it('blocks submitting when a rep with sales has no target', () => {
-    const r = run([line({})], { targets: [] });
-    expect(blockingIssues(r)[0]).toContain('ยังไม่ได้ตั้งเป้าของ สมชาย');
+  it('applies the target mode to this period\'s commission (base 100,000 earns 990)', () => {
+    const target = (amount: number) => [{ id: 't', sourceId: 's', odooUserId: 8, period: '2026-10', amount }];
+    const mode = (targetMode: 'GATE' | 'EXCESS' | 'PROPORTIONAL' | 'LADDER', targetSteps = [] as { minPercent: number; payPercent: number }[]) => ({ targetMode, targetSteps });
+    // EXCESS: only the 20,000 above an 80,000 target, 20% of 990.
+    expect(run([line({})], { targets: target(80_000), target: mode('EXCESS') }).reps[0]).toMatchObject({ commission: 198, targetPayPercent: 20, targetPercent: 125, targetMet: true });
+    expect(run([line({})], { targets: target(100_000), target: mode('EXCESS') }).reps[0]).toMatchObject({ commission: 0, targetMet: true });
+    // PROPORTIONAL: 80% of the target pays 80%, above it at most 100%.
+    expect(run([line({})], { targets: target(125_000), target: mode('PROPORTIONAL') }).reps[0]).toMatchObject({ commission: 792, targetPayPercent: 80, targetMet: false });
+    expect(run([line({})], { targets: target(50_000), target: mode('PROPORTIONAL') }).reps[0]).toMatchObject({ commission: 990, targetPayPercent: 100 });
+    // LADDER: exactly 80% reaches the 80% step.
+    const ladder = mode('LADDER', [{ minPercent: 80, payPercent: 50 }, { minPercent: 100, payPercent: 100 }, { minPercent: 120, payPercent: 110 }]);
+    expect(run([line({})], { targets: target(125_000), target: ladder }).reps[0]).toMatchObject({ commission: 495, targetPayPercent: 50 });
+    expect(run([line({})], { targets: target(125_000.01), target: ladder }).reps[0]).toMatchObject({ commission: 0, targetPayPercent: 0 });
+    expect(run([line({})], { targets: target(80_000), target: ladder }).reps[0]).toMatchObject({ commission: 1089, targetPayPercent: 110 });
+    // No target (0) pays in full under every mode.
+    expect(run([line({})], { target: mode('EXCESS') }).reps[0]).toMatchObject({ commission: 990, targetPayPercent: 100, targetPercent: null });
+  });
+
+  it('scales only this period, not corrections of earlier ones', () => {
+    const r = run([line({}), line({ kind: 'RETRO', base: -10_000 })], { targets: [{ id: 't', sourceId: 's', odooUserId: 8, period: '2026-10', amount: 80_000 }], target: { targetMode: 'PROPORTIONAL', targetSteps: [] } });
+    // Collected 90,000 of 80,000: 100% of 990, plus the −99 correction.
+    expect(r.reps[0]).toMatchObject({ targetPayPercent: 100, commission: 891 });
+  });
+
+  it('pays in full without blocking when a rep has no target', () => {
+    const r = run([line({})], { targets: [], target: { targetMode: 'EXCESS', targetSteps: [] } });
+    expect(blockingIssues(r)).toEqual([]);
+    expect(r.issues.some((i) => i.message.includes('เป้า'))).toBe(false);
+    expect(r.reps[0]).toMatchObject({ target: null, commission: 990, targetPayPercent: 100 });
     expect(run([line({})], { targets: [{ id: 't', sourceId: 's', odooUserId: 8, period: '2026-09', amount: 0 }] }).reps[0].target).toBeNull();
   });
 

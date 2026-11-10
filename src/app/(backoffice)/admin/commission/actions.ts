@@ -13,8 +13,9 @@ import { endDateProblem, isIsoDate, isPeriod, periodDates, shiftPeriod, thaiDay,
 import { statementSettings } from '@/lib/commission/statement';
 import * as repo from '@/lib/commission/repo';
 import * as service from '@/lib/commission/service';
+import { normalizeTargetSteps, targetSettings } from '@/lib/commission/target-mode';
 import { parseTargetLines } from '@/lib/commission/targets';
-import type { BonusBase, BonusTier, CommissionSource, PriceGroup, SummaryLine } from '@/lib/commission/types';
+import { TARGET_MODES, type BonusBase, type BonusTier, type CommissionSource, type PriceGroup, type SummaryLine, type TargetMode, type TargetStep } from '@/lib/commission/types';
 import { probeOdooConnection } from '@/lib/odoo/rpc';
 import { decryptSecret, encryptSecret } from '@/lib/settings/crypto';
 
@@ -545,6 +546,39 @@ export async function saveBonusAction(formData: FormData) {
   back(path, formData, { saved: from !== (source.newCustomerFrom ?? '') || bonusBase !== bonusSettings(source).bonusBase
     ? 'บันทึกแล้ว · เปลี่ยนวันเริ่มนับลูกค้าใหม่หรือฐานคิดเงินพิเศษ ต้องกดดึงข้อมูลรอบที่ยังเป็นร่างใหม่ แล้วคำนวณ'
     : 'บันทึกแล้ว มีผลเมื่อกดคำนวณรอบที่ยังเป็นร่าง' });
+}
+
+const MAX_TARGET_STEPS = 10;
+
+/** How the target turns into commission (per company): mode and, for LADDER, steps "from % of target → pay %". */
+export async function saveTargetModeAction(formData: FormData) {
+  const actor = await requirePermission('commission.manage');
+  const path = `${BASE}/targets`;
+  const source = await sourceOf(path, formData);
+  const picked = field(formData, 'targetMode') as TargetMode;
+  if (!TARGET_MODES.includes(picked)) fail(path, formData, 'เลือกแบบการใช้เป้า');
+  const steps: TargetStep[] = [];
+  if (picked === 'LADDER') {
+    for (let i = 0; i < MAX_TARGET_STEPS; i++) {
+      if (!field(formData, `tmin_${i}`)) continue;
+      const minPercent = numberField(formData, `tmin_${i}`);
+      const payPercent = field(formData, `tpay_${i}`) ? numberField(formData, `tpay_${i}`) : NaN;
+      if (!Number.isFinite(minPercent) || minPercent < 0 || minPercent > 1000) fail(path, formData, `ขั้นที่ ${i + 1}: % ของเป้าต้องอยู่ระหว่าง 0–1,000`);
+      if (!Number.isFinite(payPercent) || payPercent < 0 || payPercent > 500) fail(path, formData, `ขั้นที่ ${i + 1}: % ค่าคอมที่ได้ต้องอยู่ระหว่าง 0–500`);
+      if (steps.some((s) => s.minPercent === minPercent)) fail(path, formData, `% ของเป้า ${minPercent} ซ้ำกัน`);
+      steps.push({ minPercent, payPercent });
+    }
+    if (!steps.length) fail(path, formData, 'แบบขั้นตาม % ของเป้า ต้องมีอย่างน้อย 1 ขั้น');
+  }
+  const settings = { targetMode: picked, targetSteps: normalizeTargetSteps(steps) };
+  try {
+    await repo.updateTargetSettings(source.id, settings);
+  } catch (error) {
+    fail(path, formData, `บันทึกไม่ได้: ${errorText(error)}`);
+  }
+  await audit(actor.id, 'commission.target-mode.save', 'CommissionSource', source.id, { from: targetSettings(source), to: settings });
+  revalidatePath(BASE, 'layout');
+  back(path, formData, { saved: 'บันทึกแบบการใช้เป้าแล้ว มีผลเมื่อกดคำนวณรอบที่ยังเป็นร่าง' });
 }
 
 // ---------- runs ----------

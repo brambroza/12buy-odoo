@@ -11,7 +11,7 @@ import { byRepAndGroup, commissionByInvoice, type InvoiceCommissionRow, type Rep
 import { getRun, getSource, listLedger, listPricelists, listSteps } from '@/lib/commission/repo';
 import { clientFor, periodCalendar } from '@/lib/commission/service';
 import { statementSettings } from '@/lib/commission/statement';
-import { BONUS_BASE_LABELS, EXCLUDED_LABELS, OWNER_FROM_LABELS, PAYMENT_KIND_LABELS, PRICE_GROUP_LABELS, type LineResult, type RepResult, type StoredLedgerLine } from '@/lib/commission/types';
+import { BONUS_BASE_LABELS, EXCLUDED_LABELS, OWNER_FROM_LABELS, PAYMENT_KIND_LABELS, PRICE_GROUP_LABELS, TARGET_MODE_LABELS, type LineResult, type RepResult, type StoredLedgerLine } from '@/lib/commission/types';
 
 export const dynamic = 'force-dynamic';
 
@@ -54,8 +54,11 @@ const REP_COLUMNS: Column<RepResult>[] = [
   ...(Object.keys(EXCLUDED_LABELS) as (keyof typeof EXCLUDED_LABELS)[]).map((reason): Column<RepResult> => ({
     header: `ไม่คิด: ${EXCLUDED_LABELS[reason]}`, value: (r) => r.excluded?.find((e) => e.reason === reason)?.base ?? 0,
   })),
-  { header: 'เป้า', value: (r) => (r.target === null ? 'ยังไม่ตั้ง' : r.target) },
-  { header: 'ถึงเป้า', value: (r) => (r.target === 0 ? 'ไม่ใช้เป้า' : r.targetMet ? 'ถึง' : 'ไม่ถึง') },
+  { header: 'เป้า', value: (r) => (r.target ? r.target : 'ไม่ใช้เป้า') },
+  { header: 'ถึงเป้า', value: (r) => (!r.target ? 'ไม่ใช้เป้า' : r.targetMet ? 'ถึง' : 'ไม่ถึง') },
+  { header: '% ของเป้า', value: (r) => r.targetPercent ?? '' },
+  { header: 'แบบเป้า', value: (r) => (r.targetMode ? TARGET_MODE_LABELS[r.targetMode] : '') },
+  { header: 'ได้ค่าคอม %', value: (r) => r.targetPayPercent ?? '' },
   { header: 'ค่าคอมตามอัตรา (ก่อนเป้า)', value: (r) => r.commissionBeforeTarget ?? r.commission },
   { header: 'ค่าคอม', value: (r) => r.commission },
   { header: 'คืนลูกหนี้ค้าง', value: (r) => r.debtRelease ?? 0 },

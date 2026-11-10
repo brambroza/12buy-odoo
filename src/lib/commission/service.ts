@@ -6,6 +6,7 @@
 import { createOdooReadClient, type OdooReadClient } from '@/lib/odoo/rpc';
 import { decryptSecret } from '@/lib/settings/crypto';
 import { bonusSettings, planNewCustomers, type NewCustomerRow } from './bonus';
+import { targetSettings } from './target-mode';
 import { blockingIssues, calculateRun } from './calc';
 import { isTagRep, retroDiff } from './ledger';
 import { fetchCollections, fetchCredits, fetchFirstInvoices, fetchOverdueInvoices, fetchPaidInvoiceIds, fetchInvoiceSales, fetchRepDirectory, fetchSaleOrders } from './odoo';
@@ -198,7 +199,7 @@ async function loadSnapshot(source: CommissionSource, run: CommissionRun): Promi
     periodHolds(source.id, run.period), periodNewCustomers(source.id, run.period), repo.listSalaries(source.id, run.period),
     isSalesBase(bonus.bonusBase) ? repo.listSaleOrders(source.id, run.period) : Promise.resolve(undefined),
   ]);
-  return { rates, steps, pricelists, targets, salaries, adjustments, statement: statementSettings(source), holds, bonus, newCustomers, ...(saleOrders ? { saleOrders } : {}) };
+  return { rates, steps, pricelists, targets, salaries, adjustments, statement: statementSettings(source), holds, bonus, target: targetSettings(source), newCustomers, ...(saleOrders ? { saleOrders } : {}) };
 }
 
 /** New customers counted in a period. */
@@ -244,7 +245,7 @@ export async function calculatePeriod(source: CommissionSource, period: string):
   return { ok: true, run: (await repo.getRun(source.id, period))! };
 }
 
-/** Draft → pending approval. Needs a calculation and a target for every rep with sales. */
+/** Draft → pending approval. Needs a calculation and no blocking issue (a missing salary for the bonus). */
 export async function submitRun(sourceId: string, period: string, actorId: string): Promise<RunResult> {
   const run = await repo.getRun(sourceId, period);
   if (!run || run.status !== 'DRAFT') return { ok: false, reason: 'ส่งอนุมัติได้เฉพาะรอบที่เป็นร่าง' };
@@ -301,7 +302,7 @@ export async function repEstimate(source: CommissionSource, period: string, odoo
   const results = calculateRun({
     lines, rates, steps, pricelists, targets, adjustments: [], reps: [], carryIn: new Map([...carryIn].filter(([id]) => id === odooUserId)), period,
     statement: statementSettings(source), holds: holds.filter((h) => h.odooUserId === odooUserId),
-    bonus: bonusSettings(source), newCustomers: newCustomers.filter((c) => c.odooUserId === odooUserId), salaries,
+    bonus: bonusSettings(source), target: targetSettings(source), newCustomers: newCustomers.filter((c) => c.odooUserId === odooUserId), salaries,
     saleOrders: saleOrders.filter((o) => o.odooUserId === odooUserId),
   });
   return { locked: false, run, rep: results.reps.find((r) => r.odooUserId === odooUserId) ?? null };

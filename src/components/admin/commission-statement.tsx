@@ -1,5 +1,6 @@
 import { Fragment } from 'react';
 import { BONUS_BASE_LABELS, EXCLUDED_LABELS, isSalesBase, type CommissionAdjustment, type DebtHold, type RepResult } from '@/lib/commission/types';
+import { targetNote } from '@/lib/commission/target-mode';
 import { thaiDay } from '@/lib/commission/period';
 import { cn } from '@/lib/utils';
 
@@ -82,8 +83,8 @@ export function CommissionStatement({ company, periodText, payText, rep, debtDay
           <dt>เงินลูกค้าเข้าบัญชีในรอบนี้</dt><dd className="text-right tabular-nums">{money.format(rep.base)}</dd>
           <dt>นำมาคิดค่าคอม</dt><dd className="text-right tabular-nums">{money.format(rep.counted ?? rep.base)}</dd>
           {(rep.excluded ?? []).map((e) => <Fragment key={e.reason}><dt className="pl-3 text-muted-foreground">ไม่คิด: {EXCLUDED_LABELS[e.reason]}</dt><dd className="text-right tabular-nums text-muted-foreground">{money.format(e.base)}</dd></Fragment>)}
-          <dt>เป้า</dt><dd className="text-right">{rep.target === null ? 'ยังไม่ตั้ง' : rep.target === 0 ? 'ไม่ใช้เป้า' : `${money.format(rep.target)} · ${rep.targetMet ? 'ถึงเป้า' : 'ไม่ถึงเป้า ไม่ได้ค่าคอมรอบนี้'}`}</dd>
-          {rep.commissionBeforeTarget !== undefined && rep.commissionBeforeTarget !== rep.commission && <><dt>ค่าคอมตามอัตรา (ถ้าถึงเป้า)</dt><dd className="text-right tabular-nums">{money.format(rep.commissionBeforeTarget)}</dd></>}
+          <dt>เป้า</dt><dd className="text-right">{!rep.target ? 'ไม่ใช้เป้า' : `${money.format(rep.target)} · ${targetNote(rep) ?? (rep.targetMet ? 'ถึงเป้า' : 'ไม่ถึงเป้า ไม่ได้ค่าคอมรอบนี้')}`}</dd>
+          {rep.commissionBeforeTarget !== undefined && rep.commissionBeforeTarget !== rep.commission && <><dt>ค่าคอมเต็มตามอัตรา (ก่อนใช้เป้า)</dt><dd className="text-right tabular-nums">{money.format(rep.commissionBeforeTarget)}</dd></>}
           {rep.creditNoteCount ? <><dt className="text-muted-foreground">ใบลดหนี้ (CN) รอบนี้ {rep.creditNoteCount} ใบ · ไม่หักค่าคอม</dt><dd className="text-right tabular-nums text-muted-foreground">{money.format(rep.creditNoteBase ?? 0)}</dd></> : null}
         </dl>
       </div>

@@ -20,6 +20,7 @@ import { commissionContext, ctxQuery } from '@/lib/commission/context';
 import { isPeriod, periodDates, periodLabel, shiftPeriod, thaiDay, type PeriodCalendar } from '@/lib/commission/period';
 import { lineFormula, type LineFormula } from '@/lib/commission/explain';
 import { commissionByInvoice, invoiceKeyOf, type InvoiceCommissionRow } from '@/lib/commission/report';
+import { targetNote } from '@/lib/commission/target-mode';
 import { getRun, listAdjustments, listLedger, listRates, listReps, listSaleOrders } from '@/lib/commission/repo';
 import { BONUS_BASE_LABELS, BONUS_DOC_LABELS, EXCLUDED_LABELS, isSalesBase, OWNER_FROM_LABELS, PAYMENT_KIND_LABELS, RUN_STATUS_LABELS, RUN_STATUS_TONE, type RepResult, type RunResults } from '@/lib/commission/types';
 import { baht } from '@/lib/shop/catalog';
@@ -142,7 +143,7 @@ export default async function CommissionRunPage({ params, searchParams }: { para
             <details className="rounded-xl border border-amber-300 bg-amber-500/5 p-3 text-sm" open={blocking.length > 0}>
               <summary className="flex cursor-pointer items-center gap-2 font-medium text-amber-800"><AlertTriangle className="size-4" /> รายการตรวจสอบ ({results.issues.length})</summary>
               <ul className="mt-2 space-y-1">
-                {[...issueCounts.entries()].map(([message, count]) => <li key={message} className={cn((message.startsWith('ยังไม่ได้ตั้งเป้า') || message.startsWith('ยังไม่ได้ตั้งเงินเดือน')) && 'font-semibold text-destructive')}>{message}{count > 1 ? ` × ${count}` : ''}</li>)}
+                {[...issueCounts.entries()].map(([message, count]) => <li key={message} className={cn(message.startsWith('ยังไม่ได้ตั้งเงินเดือน') && 'font-semibold text-destructive')}>{message}{count > 1 ? ` × ${count}` : ''}</li>)}
               </ul>
               <Link href={`/admin/commission/collections?${ctxQuery(ctx, { issues: '1' })}`} className="mt-2 inline-block text-xs text-primary underline">ดูรายการเงินเข้าที่ต้องตรวจ</Link>
             </details>
@@ -184,11 +185,11 @@ export default async function CommissionRunPage({ params, searchParams }: { para
                         )}
                       </TableCell>
                       <TableCell data-label="เป้า" className="text-right text-xs tabular-nums">
-                        {r.target === null ? <span className="text-destructive">ยังไม่ตั้ง</span> : r.target === 0 ? 'ไม่ใช้เป้า' : <>{baht(r.target)}<span className={cn('block', r.targetMet ? 'text-emerald-700' : 'text-destructive')}>{r.targetMet ? 'ถึงเป้า' : `ไม่ถึงเป้า ขาด ${baht(r.target - r.base)}`}</span></>}
+                        {!r.target ? <span className="text-muted-foreground">ไม่ใช้เป้า</span> : <>{baht(r.target)}<span className={cn('block', r.targetMet ? 'text-emerald-700' : 'text-destructive')}>{r.targetMet ? 'ถึงเป้า' : `ไม่ถึงเป้า ขาด ${baht(r.target - r.base)}`}</span>{r.targetPayPercent !== undefined && <span className="block text-muted-foreground">{r.targetPercent != null ? `${Math.round(r.targetPercent)}% · ` : ''}ได้ค่าคอม {Math.round(r.targetPayPercent * 100) / 100}%</span>}</>}
                       </TableCell>
                       <TableCell data-label="ค่าคอม" className="text-right tabular-nums">
                         {baht(r.commission)}
-                        {r.commissionBeforeTarget !== undefined && r.commissionBeforeTarget !== r.commission && <span className="block text-xs text-destructive">ถ้าถึงเป้าจะได้ {baht(r.commissionBeforeTarget)}</span>}
+                        {r.commissionBeforeTarget !== undefined && r.commissionBeforeTarget !== r.commission && <span className="block text-xs text-destructive">ค่าคอมเต็มตามอัตรา {baht(r.commissionBeforeTarget)}</span>}
                         {r.debtRelease ? <span className="block text-xs text-emerald-700">คืนลูกหนี้ +{baht(r.debtRelease)}</span> : null}
                         {isSalesBase(r.bonusBase) && <Link href={drill({ so: '1' })} scroll={false} className="block text-xs text-sky-700 hover:underline">{BONUS_BASE_LABELS[r.bonusBase!]} {baht(r.saleOrderBase ?? 0)} ({r.saleOrderCount ?? 0} ใบ)</Link>}
                         {r.tierBonus ? <span className="block text-xs text-emerald-700">Incentive ขั้น {r.tier?.index} +{baht(r.tierBonus)}{r.tier?.salary !== undefined && r.salary != null ? ` (${baht(r.tier.salary)} − ${baht(r.salary)})` : ''}</span> : null}
@@ -480,7 +481,7 @@ function RepExplain({ rep }: { rep: RepResult }) {
       เก็บเงินได้ <b>{baht(rep.base)}</b> นำมาคิด <b className="text-emerald-700">{baht(rep.counted ?? rep.base)}</b>
       {excludedBase > 0 && <> ไม่คิด <b className="text-amber-800">{baht(excludedBase)}</b> ({(rep.excluded ?? []).map((e) => `${EXCLUDED_LABELS[e.reason]} ${baht(e.base)}`).join(', ')})</>}
       {' '}ได้ค่าคอมตามอัตรา <b>{baht(rep.commissionBeforeTarget ?? rep.commission)}</b>
-      {rep.commissionBeforeTarget !== undefined && rep.commissionBeforeTarget !== rep.commission && <span className="text-destructive"> แต่ไม่ถึงเป้า {baht(rep.target ?? 0)} จึงได้ {baht(rep.commission)}</span>}
+      {rep.commissionBeforeTarget !== undefined && rep.commissionBeforeTarget !== rep.commission && <span className="text-destructive"> แต่เป้า {baht(rep.target ?? 0)} ({targetNote(rep) ?? 'ไม่ถึงเป้า'}) จึงได้ {baht(rep.commission)}</span>}
       {rep.central > 0 && <> หักส่วนกลาง {baht(rep.central)}</>}
       {rep.debtHold > 0 && <> หักลูกหนี้ค้าง {baht(rep.debtHold)}</>}
       {rep.tierBonus ? <> บวก incentive ขั้น {rep.tier?.index}{isSalesBase(rep.bonusBase) ? ` จาก${BONUS_BASE_LABELS[rep.bonusBase!]} ${baht(rep.saleOrderBase ?? 0)} (ไม่ต้องถึงเป้า)` : ''} {baht(rep.tierBonus)}{rep.tier?.salary !== undefined && rep.salary != null ? ` (เงินเดือนขั้น ${baht(rep.tier.salary)} − เงินเดือน ${baht(rep.salary)})` : ''}</> : null}
