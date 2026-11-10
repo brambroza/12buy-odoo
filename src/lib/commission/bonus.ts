@@ -4,30 +4,50 @@
  */
 import type { BonusSettings, BonusTier, NewCustomer } from './types';
 
-/** The client's "JFC SOLUTION 2569" sheet: collections from 2.3M in steps of 300k. */
+/**
+ * The client's "JFC SOLUTION 2569" sheet: collections from 2.3M in steps of 300k, with the salary of
+ * each tier. The bonus column is the salary step-up from the tier before (15,000 below tier 1).
+ */
 export const JFC_2569_TIERS: BonusTier[] = [
-  { minAmount: 2_300_000, bonus: 3_000 },
-  { minAmount: 2_600_000, bonus: 4_000 },
-  { minAmount: 2_900_000, bonus: 3_000 },
-  { minAmount: 3_200_000, bonus: 3_000 },
-  { minAmount: 3_500_000, bonus: 3_000 },
-  { minAmount: 3_800_000, bonus: 3_000 },
-  { minAmount: 4_100_000, bonus: 3_000 },
-  { minAmount: 4_400_000, bonus: 3_000 },
-  { minAmount: 4_700_000, bonus: 3_000 },
-  { minAmount: 5_000_000, bonus: 4_000 },
+  { minAmount: 2_300_000, bonus: 3_000, salary: 18_000 },
+  { minAmount: 2_600_000, bonus: 4_000, salary: 22_000 },
+  { minAmount: 2_900_000, bonus: 3_000, salary: 25_000 },
+  { minAmount: 3_200_000, bonus: 3_000, salary: 28_000 },
+  { minAmount: 3_500_000, bonus: 3_000, salary: 31_000 },
+  { minAmount: 3_800_000, bonus: 3_000, salary: 34_000 },
+  { minAmount: 4_100_000, bonus: 3_000, salary: 37_000 },
+  { minAmount: 4_400_000, bonus: 3_000, salary: 40_000 },
+  { minAmount: 4_700_000, bonus: 3_000, salary: 43_000 },
+  { minAmount: 5_000_000, bonus: 4_000, salary: 47_000 },
 ];
 
-/** Tiers cleaned up: positive minimums, no negative bonus, sorted, one tier per minimum (the last wins). */
+/**
+ * Tiers cleaned up: positive minimums, no negative bonus or salary, sorted, one tier per minimum
+ * (the last wins). A blank or invalid salary is dropped from the tier.
+ */
 export function normalizeTiers(tiers: readonly Partial<BonusTier>[] | null | undefined): BonusTier[] {
-  const byMin = new Map<number, number>();
+  const byMin = new Map<number, BonusTier>();
   for (const t of Array.isArray(tiers) ? tiers : []) {
     const minAmount = Number(t?.minAmount);
-    const bonus = Number(t?.bonus);
+    const bonus = Number(t?.bonus ?? 0);
     if (!Number.isFinite(minAmount) || minAmount <= 0 || !Number.isFinite(bonus) || bonus < 0) continue;
-    byMin.set(minAmount, bonus);
+    const salary = t?.salary === undefined || t?.salary === null ? NaN : Number(t.salary);
+    byMin.set(minAmount, Number.isFinite(salary) && salary > 0 ? { minAmount, bonus, salary } : { minAmount, bonus });
   }
-  return [...byMin].sort((a, b) => a[0] - b[0]).map(([minAmount, bonus]) => ({ minAmount, bonus }));
+  return [...byMin.values()].sort((a, b) => a.minAmount - b.minAmount);
+}
+
+/** True when the ladder pays by salary (any tier has one): bonus = tier salary − rep salary. */
+export const paysBySalary = (tiers: readonly BonusTier[]): boolean => tiers.some((t) => (t.salary ?? 0) > 0);
+
+/**
+ * Sales bonus of a reached tier. By salary: tier salary − rep salary, never below 0, and 0 while the
+ * rep's salary is not set (null). Otherwise the tier's bonus.
+ */
+export function tierBonusAmount(tier: BonusTier, bySalary: boolean, repSalary: number | null): number {
+  if (!bySalary) return tier.bonus;
+  if (repSalary === null) return 0;
+  return Math.max(0, (tier.salary ?? 0) - repSalary);
 }
 
 /** Bonus settings of a company; nothing is paid until they are set (or before the migration ran). */

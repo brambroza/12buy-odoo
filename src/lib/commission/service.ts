@@ -7,8 +7,8 @@ import { createOdooReadClient, type OdooReadClient } from '@/lib/odoo/rpc';
 import { decryptSecret } from '@/lib/settings/crypto';
 import { bonusSettings, planNewCustomers, type NewCustomerRow } from './bonus';
 import { blockingIssues, calculateRun } from './calc';
-import { retroDiff } from './ledger';
-import { fetchCollections, fetchCredits, fetchFirstInvoices, fetchOverdueInvoices, fetchPaidInvoiceIds } from './odoo';
+import { isTagRep, retroDiff } from './ledger';
+import { fetchCollections, fetchCredits, fetchFirstInvoices, fetchOverdueInvoices, fetchPaidInvoiceIds, fetchRepDirectory } from './odoo';
 import { calendarOf, periodDates, shiftPeriod, type PeriodCalendar } from './period';
 import * as repo from './repo';
 import { planDebt, statementSettings } from './statement';
@@ -63,6 +63,60 @@ export type SyncResult =
  * approved. When the previous period is locked it is read again and the differences are booked
  * here as RETRO lines. A pulled run goes back to draft so it must be calculated and approved again.
  */
+/**
+ * Pulls the reps from Odoo: customer tags "Sale …" (the real salespeople) plus internal users without
+ * a matching tag. New ones are added and names refreshed; a user rep that now matches a tag is turned
+ * off and its web login moved to the tag rep. Run on every period pull too, so every rep the ledger
+ * pays exists on the targets / reps pages (otherwise their collections show as 0 there).
+ */
+export async function syncReps(source: CommissionSource, client: OdooReadClient = clientFor(source)): Promise<{ added: number; merged: number }> {
+  const directory = await fetchRepDirectory(client);
+  const reps = [...[...directory.tags.values()].map(([id, name]) => ({ id, name })), ...directory.users];
+  return repo.upsertReps(source.id, reps, new Map([...directory.userReps].map(([userId, rep]) => [userId, rep[0]])));
+}
+
+/** A row of the targets page: a "Sale …" tag rep, or a salesperson that collected without a tag. */
+export type TargetRep = { odooUserId: number; name: string; tag: boolean; collected: number };
+
+/**
+ * Who gets a target in a period, keyed like every other page (the ledger): every "Sale …" tag rep
+ * (read live from Odoo, else from the reps list), plus any other rep key with collections or a
+ * target / salary already set this period (e.g. a salesperson on customers without a tag). Reps
+ * switched off on the reps page are left out. Tags first, by name.
+ */
+export async function targetReps(source: CommissionSource, period: string): Promise<{ reps: TargetRep[]; odooError: string | null }> {
+  const [stored, ledger, targets, salaries] = await Promise.all([
+    repo.listReps(source.id), repo.listLedger(source.id, period), repo.listTargets(source.id, period), repo.listSalaries(source.id, period),
+  ]);
+  const off = new Set(stored.filter((r) => !r.active).map((r) => r.odooUserId));
+  const names = new Map<number, string>(stored.map((r) => [r.odooUserId, r.name]));
+  const collected = new Map<number, number>();
+  for (const l of ledger) {
+    if (l.odooUserId === null) continue;
+    collected.set(l.odooUserId, (collected.get(l.odooUserId) ?? 0) + l.base);
+    if (!names.has(l.odooUserId) && l.repName) names.set(l.odooUserId, l.repName);
+  }
+  const keys = new Set<number>(stored.filter((r) => r.active && isTagRep(r.odooUserId)).map((r) => r.odooUserId));
+  let odooError: string | null = null;
+  const client = tryClientFor(source);
+  if (client) {
+    try {
+      for (const [key, name] of (await fetchRepDirectory(client)).tags.values()) {
+        keys.add(key);
+        names.set(key, name);
+      }
+    } catch (error) {
+      odooError = error instanceof Error ? error.message : String(error);
+    }
+  }
+  for (const key of [...collected.keys(), ...targets.map((t) => t.odooUserId), ...salaries.map((x) => x.odooUserId)]) keys.add(key);
+  const reps = [...keys].filter((key) => !off.has(key)).map((key) => ({
+    odooUserId: key, name: names.get(key) ?? `#${key}`, tag: isTagRep(key), collected: Math.round((collected.get(key) ?? 0) * 100) / 100,
+  }));
+  reps.sort((a, b) => Number(b.tag) - Number(a.tag) || a.name.localeCompare(b.name, 'th'));
+  return { reps, odooError };
+}
+
 export async function syncPeriod(source: CommissionSource, period: string): Promise<SyncResult> {
   const run = await repo.ensureRun(source.id, period);
   if (LOCKED.includes(run.status)) return { ok: false, reason: 'รอบนี้อนุมัติแล้ว ดึงข้อมูลใหม่ไม่ได้ (การเปลี่ยนแปลงใน Odoo จะถูกปรับปรุงในรอบถัดไป)' };
@@ -84,6 +138,7 @@ export async function syncPeriod(source: CommissionSource, period: string): Prom
   // Lock check again right before writing: someone may have approved while Odoo was being read.
   const latest = await repo.getRun(source.id, period);
   if (!latest || LOCKED.includes(latest.status)) return { ok: false, reason: 'รอบนี้ถูกอนุมัติระหว่างดึงข้อมูล จึงไม่บันทึก' };
+  await syncReps(source, client);
   await repo.replaceLedger(source.id, period, 'COLLECTION', fetched.lines);
   await repo.replaceLedger(source.id, period, 'RETRO', retro);
   await repo.applyDebtPlan(source.id, period, debt.holds, debt.releaseIds);
@@ -130,11 +185,11 @@ async function planPeriodDebt(source: CommissionSource, period: string, client: 
 
 /** Rules and inputs a run is calculated with (also stored with the run). */
 async function loadSnapshot(source: CommissionSource, run: CommissionRun): Promise<RunSnapshot> {
-  const [rates, steps, pricelists, targets, adjustments, holds, newCustomers] = await Promise.all([
+  const [rates, steps, pricelists, targets, adjustments, holds, newCustomers, salaries] = await Promise.all([
     repo.listRates(source.id), repo.listSteps(source.id), repo.listPricelists(source.id), repo.listTargets(source.id, run.period), repo.listAdjustments(run.id),
-    periodHolds(source.id, run.period), periodNewCustomers(source.id, run.period),
+    periodHolds(source.id, run.period), periodNewCustomers(source.id, run.period), repo.listSalaries(source.id, run.period),
   ]);
-  return { rates, steps, pricelists, targets, adjustments, statement: statementSettings(source), holds, bonus: bonusSettings(source), newCustomers };
+  return { rates, steps, pricelists, targets, salaries, adjustments, statement: statementSettings(source), holds, bonus: bonusSettings(source), newCustomers };
 }
 
 /** New customers counted in a period. */
@@ -228,15 +283,15 @@ export function isLocked(run: Pick<CommissionRun, 'status'> | null): boolean {
 export async function repEstimate(source: CommissionSource, period: string, odooUserId: number) {
   const run = await repo.getRun(source.id, period);
   if (run && isLocked(run) && run.results) return { locked: true, run, rep: run.results.reps.find((r) => r.odooUserId === odooUserId) ?? null };
-  const [ledger, rates, steps, pricelists, targets, carryIn, holds, newCustomers] = await Promise.all([
+  const [ledger, rates, steps, pricelists, targets, carryIn, holds, newCustomers, salaries] = await Promise.all([
     repo.listLedger(source.id, period), repo.listRates(source.id), repo.listSteps(source.id), repo.listPricelists(source.id), repo.listTargets(source.id, period), carryInFor(source.id, period),
-    periodHolds(source.id, period), periodNewCustomers(source.id, period),
+    periodHolds(source.id, period), periodNewCustomers(source.id, period), repo.listSalaries(source.id, period),
   ]);
   const lines = ledger.filter((l) => l.odooUserId === odooUserId);
   const results = calculateRun({
     lines, rates, steps, pricelists, targets, adjustments: [], reps: [], carryIn: new Map([...carryIn].filter(([id]) => id === odooUserId)), period,
     statement: statementSettings(source), holds: holds.filter((h) => h.odooUserId === odooUserId),
-    bonus: bonusSettings(source), newCustomers: newCustomers.filter((c) => c.odooUserId === odooUserId),
+    bonus: bonusSettings(source), newCustomers: newCustomers.filter((c) => c.odooUserId === odooUserId), salaries,
   });
   return { locked: false, run, rep: results.reps.find((r) => r.odooUserId === odooUserId) ?? null };
 }

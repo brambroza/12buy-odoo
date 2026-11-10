@@ -5,7 +5,7 @@
 import { db } from '@/lib/db/client';
 import { newId, rowOrNull, rows, toRow, unwrap } from '@/lib/db/rows';
 import type {
-  BonusSettings, CommissionAdjustment, CommissionPricelist, CommissionRate, CommissionRep, CommissionRun, CommissionSource, CommissionTarget, DebtHold, LedgerKind, LedgerLine,
+  BonusSettings, CommissionAdjustment, CommissionPricelist, CommissionRate, CommissionRep, CommissionRun, CommissionSalary, CommissionSource, CommissionTarget, DebtHold, LedgerKind, LedgerLine,
   NewCustomer, OverdueStep, PriceGroup, RunStatus, StatementSettings, StoredLedgerLine,
 } from './types';
 import { bonusSettings, type NewCustomerRow } from './bonus';
@@ -250,6 +250,29 @@ export async function saveTargets(sourceId: string, period: string, values: Map<
       unwrap(await db().from('CommissionTarget').delete().eq('sourceId', sourceId).eq('period', period).eq('odooUserId', odooUserId));
     } else {
       unwrap(await db().from('CommissionTarget').upsert(
+        { id: newId(), sourceId, period, odooUserId, amount, updatedById: actorId, updatedAt: now() },
+        { onConflict: 'sourceId,odooUserId,period' },
+      ));
+    }
+  }
+}
+
+// ---------- salaries ----------
+
+/** Rep salaries of one period; [] before migration 20261110120000 ran. */
+export async function listSalaries(sourceId: string, period: string): Promise<CommissionSalary[]> {
+  const result = await db().from('CommissionSalary').select('odooUserId, period, amount').eq('sourceId', sourceId).eq('period', period);
+  if (result.error && missingTable(result.error.message, 'CommissionSalary')) return [];
+  return rows<CommissionSalary>(result).map((r) => ({ odooUserId: r.odooUserId, period: r.period, amount: num(r.amount) }));
+}
+
+/** Sets (amount) or clears (null) rep salaries for one period. */
+export async function saveSalaries(sourceId: string, period: string, values: Map<number, number | null>, actorId: string): Promise<void> {
+  for (const [odooUserId, amount] of values) {
+    if (amount === null) {
+      unwrap(await db().from('CommissionSalary').delete().eq('sourceId', sourceId).eq('period', period).eq('odooUserId', odooUserId));
+    } else {
+      unwrap(await db().from('CommissionSalary').upsert(
         { id: newId(), sourceId, period, odooUserId, amount, updatedById: actorId, updatedAt: now() },
         { onConflict: 'sourceId,odooUserId,period' },
       ));

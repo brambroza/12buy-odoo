@@ -3,10 +3,10 @@ import type { CommissionRun, CommissionSource, LedgerLine } from '../types';
 
 const repo = vi.hoisted(() => ({
   ensureRun: vi.fn(), getRun: vi.fn(), updateRun: vi.fn(), listBookedFor: vi.fn(), replaceLedger: vi.fn(), listLedger: vi.fn(), listRates: vi.fn(), listSteps: vi.fn(),
-  listPricelists: vi.fn(), listTargets: vi.fn(), listAdjustments: vi.fn(), listReps: vi.fn(), listDebtHolds: vi.fn(), applyDebtPlan: vi.fn(), listPeriodOverrides: vi.fn(),
-  listNewCustomers: vi.fn(), replaceNewCustomers: vi.fn(),
+  listPricelists: vi.fn(), listTargets: vi.fn(), listSalaries: vi.fn(), listAdjustments: vi.fn(), listReps: vi.fn(), listDebtHolds: vi.fn(), applyDebtPlan: vi.fn(), listPeriodOverrides: vi.fn(),
+  listNewCustomers: vi.fn(), replaceNewCustomers: vi.fn(), upsertReps: vi.fn(),
 }));
-const odoo = vi.hoisted(() => ({ fetchCollections: vi.fn(), fetchCredits: vi.fn(), fetchOverdueInvoices: vi.fn(), fetchPaidInvoiceIds: vi.fn(), fetchFirstInvoices: vi.fn() }));
+const odoo = vi.hoisted(() => ({ fetchCollections: vi.fn(), fetchCredits: vi.fn(), fetchOverdueInvoices: vi.fn(), fetchPaidInvoiceIds: vi.fn(), fetchFirstInvoices: vi.fn(), fetchRepDirectory: vi.fn() }));
 vi.mock('../repo', () => repo);
 vi.mock('../odoo', () => odoo);
 vi.mock('@/lib/settings/crypto', () => ({ decryptSecret: (v: string) => `plain-${v}` }));
@@ -28,7 +28,9 @@ const line = (over: Partial<LedgerLine> = {}): LedgerLine => ({
 beforeEach(() => {
   vi.resetAllMocks();
   repo.updateRun.mockResolvedValue(true);
-  for (const fn of [repo.listRates, repo.listSteps, repo.listPricelists, repo.listTargets, repo.listAdjustments, repo.listReps, repo.listLedger, repo.listBookedFor, repo.listDebtHolds, repo.listPeriodOverrides, repo.listNewCustomers, odoo.fetchOverdueInvoices, odoo.fetchFirstInvoices]) fn.mockResolvedValue([]);
+  repo.upsertReps.mockResolvedValue({ added: 0, merged: 0 });
+  odoo.fetchRepDirectory.mockResolvedValue({ tags: new Map([[3, [-3, 'Ake']]]), userReps: new Map([[9, [-3, 'Ake']]]), users: [{ id: 8, name: 'A' }] });
+  for (const fn of [repo.listRates, repo.listSteps, repo.listPricelists, repo.listTargets, repo.listSalaries, repo.listAdjustments, repo.listReps, repo.listLedger, repo.listBookedFor, repo.listDebtHolds, repo.listPeriodOverrides, repo.listNewCustomers, odoo.fetchOverdueInvoices, odoo.fetchFirstInvoices]) fn.mockResolvedValue([]);
   odoo.fetchCredits.mockResolvedValue({ credits: [], refunds: { count: 0, amount: 0 } });
   odoo.fetchPaidInvoiceIds.mockResolvedValue(new Set());
 });
@@ -94,6 +96,8 @@ describe('syncPeriod', () => {
     expect(odoo.fetchCollections).toHaveBeenCalledWith(expect.anything(), '2026-09', { start: '2026-08-21', end: '2026-09-20' });
     expect(repo.replaceLedger).toHaveBeenCalledWith('s1', '2026-10', 'RETRO', [expect.objectContaining({ kind: 'RETRO', base: -100, originPeriod: '2026-09' })]);
     expect(repo.updateRun).toHaveBeenCalledWith('run1', ['DRAFT', 'PENDING_APPROVAL'], expect.objectContaining({ status: 'DRAFT', results: null }));
+    // Reps are pulled with the period so tag reps in the ledger exist on the targets page.
+    expect(repo.upsertReps).toHaveBeenCalledWith('s1', [{ id: -3, name: 'Ake' }, { id: 8, name: 'A' }], new Map([[9, -3]]));
   });
 
   it('does not write when the run got approved while Odoo was being read', async () => {
@@ -210,5 +214,24 @@ describe('new customers on sync', () => {
     await service.syncPeriod(source, '2026-10');
     expect(odoo.fetchFirstInvoices).not.toHaveBeenCalled();
     expect(repo.replaceNewCustomers).toHaveBeenCalledWith('s1', '2026-10', []);
+  });
+});
+
+describe('targetReps', () => {
+  it('lists every Sale tag from Odoo plus untagged salespeople with collections, skipping reps switched off', async () => {
+    repo.listReps.mockResolvedValue([
+      { id: 'a', sourceId: 's1', odooUserId: 32, name: 'Wit', userId: null, active: false },
+      { id: 'b', sourceId: 's1', odooUserId: 6, name: 'Sea', userId: null, active: true },
+      { id: 'c', sourceId: 's1', odooUserId: -9, name: 'Old', userId: null, active: false },
+    ]);
+    repo.listLedger.mockResolvedValue([line({ odooUserId: -12, repName: 'Wit', base: 700 }), line({ odooUserId: 6, repName: 'Sea', base: 50 }), line({ odooUserId: -9, base: 5 })]);
+    odoo.fetchRepDirectory.mockResolvedValue({ tags: new Map([[12, [-12, 'Wit']], [3, [-3, 'Ake']]]), userReps: new Map(), users: [] });
+    const { reps, odooError } = await service.targetReps(source, '2026-11');
+    expect(odooError).toBeNull();
+    expect(reps).toEqual([
+      { odooUserId: -3, name: 'Ake', tag: true, collected: 0 },
+      { odooUserId: -12, name: 'Wit', tag: true, collected: 700 },
+      { odooUserId: 6, name: 'Sea', tag: false, collected: 50 },
+    ]);
   });
 });

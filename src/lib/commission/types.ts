@@ -45,8 +45,11 @@ export const RUN_STATUS_TONE: Record<RunStatus, string> = {
 };
 export const OWNER_FROM_LABELS: Record<OwnerFrom, string> = { tag: 'tag ลูกค้า', invoice: 'Salesperson ใบแจ้งหนี้', order: 'Salesperson ใบสั่งขาย', partner: 'Salesperson ลูกค้า', none: '—' };
 
-/** One step of the sales-bonus ladder: collections before VAT of at least `minAmount` earn `bonus`. */
-export type BonusTier = { minAmount: number; bonus: number };
+/**
+ * One step of the sales-bonus ladder: collections before VAT of at least `minAmount` earn `bonus`.
+ * With `salary` set on the ladder, the bonus is instead `salary` − the rep's salary of the period.
+ */
+export type BonusTier = { minAmount: number; bonus: number; salary?: number };
 
 /** Bonuses paid on top of commission (stored on CommissionSource, migration 20261106150000). */
 export type BonusSettings = {
@@ -134,6 +137,8 @@ export type CommissionRate = {
 export type OverdueStep = { id: string; sourceId: string; minDays: number; maxDays: number | null; percent: number; validFrom: string; validTo: string | null };
 
 export type CommissionTarget = { id: string; sourceId: string; odooUserId: number; period: string; amount: number };
+/** A rep's salary in a period (table CommissionSalary, migration 20261110120000), for the sales bonus. */
+export type CommissionSalary = { odooUserId: number; period: string; amount: number };
 
 /** One invoice line's share of one receipt (cash in), or a correction of a locked period. */
 export type LedgerLine = {
@@ -281,7 +286,9 @@ export type RepResult = {
   /** Sales bonus of the tier reached (0 when the target is missed), added after the deductions. */
   tierBonus?: number;
   /** The tier reached: its number (1 = lowest) and minimum; null = below the first tier. */
-  tier?: { index: number; minAmount: number } | null;
+  tier?: { index: number; minAmount: number; salary?: number } | null;
+  /** The rep's salary of the period (null = not set), when the ladder pays by salary. */
+  salary?: number | null;
   /** New customers of the period and their bonus (0 when the target is missed), added after the deductions. */
   newCustomers?: { partnerName: string; invoiceName: string }[];
   newCustomerBonus?: number;
@@ -330,6 +337,8 @@ export type RunSnapshot = {
   steps: OverdueStep[];
   pricelists: CommissionPricelist[];
   targets: CommissionTarget[];
+  /** Rep salaries of the period (missing in runs calculated before salaries existed). */
+  salaries?: CommissionSalary[];
   adjustments: CommissionAdjustment[];
   /** Statement rows and deductions in force (missing in runs calculated before statements existed). */
   statement?: StatementSettings;

@@ -8,7 +8,7 @@ import { requirePermission } from '@/lib/auth/session';
 import { flash } from '@/lib/flash';
 import { bonusSettings, JFC_2569_TIERS, normalizeTiers } from '@/lib/commission/bonus';
 import { isValidOn, rateLabel, stepProblems } from '@/lib/commission/calc';
-import { fetchPricelists, fetchRepDirectory } from '@/lib/commission/odoo';
+import { fetchPricelists } from '@/lib/commission/odoo';
 import { endDateProblem, isIsoDate, isPeriod, periodDates, shiftPeriod, thaiDay, todayBangkok } from '@/lib/commission/period';
 import { statementSettings } from '@/lib/commission/statement';
 import * as repo from '@/lib/commission/repo';
@@ -130,9 +130,7 @@ export async function syncRepsAction(formData: FormData) {
   const source = await sourceOf(path, formData);
   let result = { added: 0, merged: 0 };
   try {
-    const directory = await fetchRepDirectory(service.clientFor(source));
-    const reps = [...[...directory.tags.values()].map(([id, name]) => ({ id, name })), ...directory.users];
-    result = await repo.upsertReps(source.id, reps, new Map([...directory.userReps].map(([userId, rep]) => [userId, rep[0]])));
+    result = await service.syncReps(source);
   } catch (error) {
     fail(path, formData, `ดึงพนักงานขายจาก Odoo ไม่สำเร็จ: ${errorText(error)}`);
   }
@@ -345,22 +343,34 @@ export async function saveTargetsAction(formData: FormData) {
   const source = await sourceOf(path, formData);
   const period = periodOf(path, formData);
   await assertPeriodOpen(path, formData, source.id, period);
-  const reps = await repo.listReps(source.id);
+  // Same rows as the page: tag reps and untagged salespeople keyed like the ledger.
+  const { reps } = await service.targetReps(source, period);
   const values = new Map<number, number | null>();
-  for (const rep of reps) {
-    if (!formData.has(`t_${rep.odooUserId}`)) continue;
-    const raw = field(formData, `t_${rep.odooUserId}`);
+  const salaries = new Map<number, number | null>();
+  const amountOf = (name: string, label: string) => {
+    const raw = field(formData, name);
     const amount = raw ? Number(raw.replace(/,/g, '')) : null;
-    if (amount !== null && (!Number.isFinite(amount) || amount < 0)) fail(path, formData, `เป้าของ ${rep.name} ไม่ถูกต้อง`);
-    values.set(rep.odooUserId, amount === null ? null : Math.round(amount * 100) / 100);
+    if (amount !== null && (!Number.isFinite(amount) || amount < 0)) fail(path, formData, `${label} ไม่ถูกต้อง`);
+    return amount === null ? null : Math.round(amount * 100) / 100;
+  };
+  for (const rep of reps) {
+    if (formData.has(`t_${rep.odooUserId}`)) values.set(rep.odooUserId, amountOf(`t_${rep.odooUserId}`, `เป้าของ ${rep.name}`));
+    if (formData.has(`s_${rep.odooUserId}`)) salaries.set(rep.odooUserId, amountOf(`s_${rep.odooUserId}`, `เงินเดือนของ ${rep.name}`));
   }
   await repo.saveTargets(source.id, period, values, actor.id);
-  await audit(actor.id, 'commission.targets.save', 'CommissionSource', source.id, { period, targets: Object.fromEntries(values) });
+  if (salaries.size) {
+    try {
+      await repo.saveSalaries(source.id, period, salaries, actor.id);
+    } catch (error) {
+      fail(path, formData, `บันทึกเป้าแล้ว แต่บันทึกเงินเดือนไม่ได้ (รัน migration 20261110120000_commission_salary.sql แล้วหรือยัง): ${errorText(error)}`);
+    }
+  }
+  await audit(actor.id, 'commission.targets.save', 'CommissionSource', source.id, { period, targets: Object.fromEntries(values), salaries: Object.fromEntries(salaries) });
   revalidatePath(path);
   back(path, formData, { saved: '1' });
 }
 
-/** Copies last period's targets into this period for reps that have none yet. */
+/** Copies last period's targets and salaries into this period for reps that have none yet. */
 export async function copyTargetsAction(formData: FormData) {
   const actor = await requirePermission('commission.manage');
   const path = `${BASE}/targets`;
@@ -371,9 +381,13 @@ export async function copyTargetsAction(formData: FormData) {
   const have = new Set(current.map((t) => t.odooUserId));
   const values = new Map(previous.filter((t) => !have.has(t.odooUserId)).map((t) => [t.odooUserId, t.amount] as [number, number]));
   await repo.saveTargets(source.id, period, values, actor.id);
-  await audit(actor.id, 'commission.targets.copy', 'CommissionSource', source.id, { period, count: values.size });
+  const [previousSalaries, currentSalaries] = await Promise.all([repo.listSalaries(source.id, shiftPeriod(period, -1)), repo.listSalaries(source.id, period)]);
+  const haveSalary = new Set(currentSalaries.map((x) => x.odooUserId));
+  const salaries = new Map(previousSalaries.filter((x) => !haveSalary.has(x.odooUserId)).map((x) => [x.odooUserId, x.amount] as [number, number]));
+  await repo.saveSalaries(source.id, period, salaries, actor.id);
+  await audit(actor.id, 'commission.targets.copy', 'CommissionSource', source.id, { period, count: values.size, salaries: salaries.size });
   revalidatePath(path);
-  back(path, formData, { saved: `คัดลอกเป้า ${values.size} คนจากรอบก่อน` });
+  back(path, formData, { saved: `คัดลอกเป้า ${values.size} คน${salaries.size ? ` และเงินเดือน ${salaries.size} คน` : ''}จากรอบก่อน` });
 }
 
 /** Imports targets pasted from Excel: one rep per line, "rep name or rep key <tab/comma> amount". */
@@ -383,9 +397,10 @@ export async function importTargetsAction(formData: FormData) {
   const source = await sourceOf(path, formData);
   const period = periodOf(path, formData);
   await assertPeriodOpen(path, formData, source.id, period);
-  // Active reps only, so a name like "Tip" finds the tag rep, not the switched-off Odoo user rep.
-  const reps = (await repo.listReps(source.id)).filter((r) => r.active);
-  const result = parseTargetLines(field(formData, 'paste'), reps);
+  // The targets page rows (tag reps first), so a name like "Tip" finds the tag rep, not the switched-off Odoo user rep.
+  const { reps } = await service.targetReps(source, period);
+  // "Wit" and "Sale Wit" both find the tag rep.
+  const result = parseTargetLines(field(formData, 'paste'), [...reps, ...reps.filter((r) => r.tag).map((r) => ({ odooUserId: r.odooUserId, name: `Sale ${r.name}` }))]);
   if (result.errors.length) fail(path, formData, result.errors.slice(0, 3).join(' · '));
   if (!result.values.size) fail(path, formData, 'ไม่มีบรรทัดที่นำเข้าได้');
   await repo.saveTargets(source.id, period, result.values, actor.id);
@@ -483,8 +498,8 @@ export async function seedStatementFromRatesAction(formData: FormData) {
 const MAX_TIERS = 20;
 
 /**
- * Saves a company's bonuses: the sales-bonus ladder (rows `min_i` / `bonus_i`; a blank minimum drops
- * the row), the baht per new customer and the day customers start counting as new (blank = off).
+ * Saves a company's bonuses: the sales-bonus ladder (rows `min_i` / `bonus_i` / `salary_i`; a blank
+ * minimum drops the row; salaries on every tier or none), the baht per new customer and the day customers start counting as new (blank = off).
  * With `preset=jfc2569` the ladder is replaced by the client's JFC SOLUTION 2569 sheet.
  */
 export async function saveBonusAction(formData: FormData) {
@@ -498,12 +513,15 @@ export async function saveBonusAction(formData: FormData) {
     for (let i = 0; i < MAX_TIERS; i++) {
       if (!field(formData, `min_${i}`)) continue;
       const minAmount = numberField(formData, `min_${i}`);
-      const bonus = numberField(formData, `bonus_${i}`);
+      const bonus = field(formData, `bonus_${i}`) ? numberField(formData, `bonus_${i}`) : 0;
+      const salary = field(formData, `salary_${i}`) ? numberField(formData, `salary_${i}`) : undefined;
       if (!Number.isFinite(minAmount) || minAmount <= 0) fail(path, formData, `ยอดเก็บขั้นที่ ${i + 1} ต้องมากกว่า 0`);
       if (!Number.isFinite(bonus) || bonus < 0) fail(path, formData, `เงินพิเศษขั้นที่ ${i + 1} ต้องเป็น 0 ขึ้นไป`);
+      if (salary !== undefined && (!Number.isFinite(salary) || salary <= 0)) fail(path, formData, `เงินเดือนขั้นที่ ${i + 1} ต้องมากกว่า 0`);
       if (rows.some((r) => r.minAmount === minAmount)) fail(path, formData, `ยอดเก็บ ${minAmount.toLocaleString('th-TH')} ซ้ำกัน`);
-      rows.push({ minAmount, bonus });
+      rows.push(salary === undefined ? { minAmount, bonus } : { minAmount, bonus, salary });
     }
+    if (rows.some((r) => r.salary) && rows.some((r) => !r.salary)) fail(path, formData, 'ใส่เงินเดือนให้ครบทุกขั้น หรือเว้นว่างทุกขั้น (ถ้าเว้นว่าง ใช้ช่องเงินพิเศษแทน)');
     bonusTiers = normalizeTiers(rows);
   }
   const newCustomerBonus = field(formData, 'newCustomerBonus') ? numberField(formData, 'newCustomerBonus') : 0;

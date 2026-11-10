@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react';
+import { Fragment, type ReactNode } from 'react';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { AlertTriangle, CalendarDays, Calculator, CheckCircle2, Download, FileText, RefreshCw, Send, Trash2, Undo2, Wallet } from 'lucide-react';
@@ -17,13 +17,15 @@ import { findUserById } from '@/lib/auth/users';
 import { blockingIssues, excludedReasonOf } from '@/lib/commission/calc';
 import { commissionContext, ctxQuery } from '@/lib/commission/context';
 import { isPeriod, periodDates, periodLabel, shiftPeriod, thaiDay, type PeriodCalendar } from '@/lib/commission/period';
-import { getRun, listAdjustments, listLedger, listReps } from '@/lib/commission/repo';
+import { lineFormula, type LineFormula } from '@/lib/commission/explain';
+import { commissionByInvoice, invoiceKeyOf, type InvoiceCommissionRow } from '@/lib/commission/report';
+import { getRun, listAdjustments, listLedger, listRates, listReps } from '@/lib/commission/repo';
 import { EXCLUDED_LABELS, OWNER_FROM_LABELS, PAYMENT_KIND_LABELS, RUN_STATUS_LABELS, RUN_STATUS_TONE, type RepResult, type RunResults } from '@/lib/commission/types';
 import { baht } from '@/lib/shop/catalog';
 import { cn } from '@/lib/utils';
 import { addAdjustmentAction, calculateAction, deleteAdjustmentAction, runStepAction, savePeriodDatesAction, syncPeriodAction } from '../../actions';
 
-type Search = { source?: string; rep?: string; show?: string; saved?: string; error?: string };
+type Search = { source?: string; rep?: string; show?: string; view?: string; inv?: string; fx?: string; saved?: string; error?: string };
 const fmt = new Intl.DateTimeFormat('th-TH', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'Asia/Bangkok' });
 
 /**
@@ -42,11 +44,12 @@ export default async function CommissionRunPage({ params, searchParams }: { para
 
   const role = user.role as Role;
   const [run, reps] = await Promise.all([getRun(source.id, period), listReps(source.id)]);
-  const [adjustments, ledger, submittedBy, approvedBy] = await Promise.all([
+  const [adjustments, ledger, submittedBy, approvedBy, liveRates] = await Promise.all([
     run ? listAdjustments(run.id) : Promise.resolve([]),
     sp.rep ? listLedger(source.id, period) : Promise.resolve([]),
     run?.submittedById ? findUserById(run.submittedById) : null,
     run?.approvedById ? findUserById(run.approvedById) : null,
+    sp.rep && !run?.snapshot?.rates ? listRates(source.id) : Promise.resolve([]),
   ]);
   const results = run?.results ?? null;
   const status = run?.status ?? 'DRAFT';
@@ -59,7 +62,22 @@ export default async function CommissionRunPage({ params, searchParams }: { para
   const lineResults = new Map((results?.lines ?? []).map((l) => [l.lineKey, l]));
   const repLines = drillRep !== null ? ledger.filter((l) => l.odooUserId === drillRep) : [];
   const show = sp.show === 'counted' || sp.show === 'excluded' ? sp.show : 'all';
-  const drillLines = repLines.filter((l) => show === 'all' || (excludedReasonOf(l, lineResults.get(l.lineKey)) === null) === (show === 'counted'));
+  const view = sp.view === 'line' ? 'line' : 'invoice';
+  // Formula of each line: hidden unless asked for (`fx=1`).
+  const showFormula = sp.fx === '1';
+  const shownLines = repLines.filter((l) => show === 'all' || (excludedReasonOf(l, lineResults.get(l.lineKey)) === null) === (show === 'counted'));
+  const drillLines = sp.inv ? shownLines.filter((l) => String(l.invoiceId) === sp.inv) : shownLines;
+  const drillInvoices = view === 'invoice' ? commissionByInvoice(shownLines, lineResults) : [];
+  // How each line's commission was worked out, with the rates the run was calculated with.
+  const rates = run?.snapshot?.rates ?? liveRates;
+  const formulaOf = (l: (typeof repLines)[number]) => lineFormula(l, lineResults.get(l.lineKey), rates);
+  const formulasByInvoice = new Map<string, { product: string; formula: LineFormula }[]>();
+  if (view === 'invoice' && showFormula) for (const l of shownLines) {
+    const list = formulasByInvoice.get(invoiceKeyOf(l)) ?? [];
+    list.push({ product: l.productName ?? 'ไม่ใช่บรรทัดสินค้า', formula: formulaOf(l) });
+    formulasByInvoice.set(invoiceKeyOf(l), list);
+  }
+  const drillHref = (extra: Record<string, string | undefined>) => `${path}?${ctxQuery(ctx, { rep: String(drillRep), show: show === 'all' ? undefined : show, view: view === 'invoice' ? undefined : view, fx: showFormula ? '1' : undefined, inv: sp.inv, ...extra })}`;
   const drillCredits = drillRep !== null ? (results?.credits ?? []).filter((c) => c.odooUserId === drillRep) : [];
   const drillResult = drillRep !== null ? results?.reps.find((r) => r.odooUserId === drillRep) : undefined;
   const close = `${path}?${ctxQuery(ctx)}`;
@@ -79,6 +97,7 @@ export default async function CommissionRunPage({ params, searchParams }: { para
             <Button size="sm" variant="outline" nativeButton={false} render={<Link href={`${path}/statement?${ctxQuery(ctx)}`} />}><FileText /> ใบสรุปรายคน</Button>
             <Button size="sm" variant="outline" nativeButton={false} render={<a href={`/api/admin/commission/export?${ctxQuery(ctx, { kind: 'statement' })}`} />}><Download /> ใบสรุป Excel</Button>
             <Button size="sm" variant="outline" nativeButton={false} render={<a href={`/api/admin/commission/export?${ctxQuery(ctx, { kind: 'run' })}`} />}><Download /> สรุปต่อคน</Button>
+            <Button size="sm" variant="outline" nativeButton={false} render={<a href={`/api/admin/commission/export?${ctxQuery(ctx, { kind: 'run-invoices' })}`} />}><Download /> รายใบแจ้งหนี้</Button>
             <Button size="sm" variant="outline" nativeButton={false} render={<a href={`/api/admin/commission/export?${ctxQuery(ctx, { kind: 'run-lines' })}`} />}><Download /> รายบรรทัด</Button>
           </>
         )} />
@@ -120,7 +139,7 @@ export default async function CommissionRunPage({ params, searchParams }: { para
             <details className="rounded-xl border border-amber-300 bg-amber-500/5 p-3 text-sm" open={blocking.length > 0}>
               <summary className="flex cursor-pointer items-center gap-2 font-medium text-amber-800"><AlertTriangle className="size-4" /> รายการตรวจสอบ ({results.issues.length})</summary>
               <ul className="mt-2 space-y-1">
-                {[...issueCounts.entries()].map(([message, count]) => <li key={message} className={cn(message.startsWith('ยังไม่ได้ตั้งเป้า') && 'font-semibold text-destructive')}>{message}{count > 1 ? ` × ${count}` : ''}</li>)}
+                {[...issueCounts.entries()].map(([message, count]) => <li key={message} className={cn((message.startsWith('ยังไม่ได้ตั้งเป้า') || message.startsWith('ยังไม่ได้ตั้งเงินเดือน')) && 'font-semibold text-destructive')}>{message}{count > 1 ? ` × ${count}` : ''}</li>)}
               </ul>
               <Link href={`/admin/commission/collections?${ctxQuery(ctx, { issues: '1' })}`} className="mt-2 inline-block text-xs text-primary underline">ดูรายการเงินเข้าที่ต้องตรวจ</Link>
             </details>
@@ -148,9 +167,9 @@ export default async function CommissionRunPage({ params, searchParams }: { para
                   const excludedBase = (r.excluded ?? []).reduce((sum, e) => sum + e.base, 0);
                   return (
                     <TableRow key={r.odooUserId}>
-                      <TableCell data-label="พนักงานขาย"><Link href={drill()} scroll={false} className="font-medium text-primary hover:underline">{r.repName}</Link><span className="block text-xs text-muted-foreground">{r.lines} บรรทัด · กดเพื่อดูทีละบิล</span></TableCell>
+                      <TableCell data-label="พนักงานขาย"><Link href={drill()} scroll={false} className="font-medium text-primary hover:underline">{r.repName}</Link><span className="block text-xs text-muted-foreground">{r.lines} บรรทัด · กดเพื่อดูรายใบแจ้งหนี้</span></TableCell>
                       <TableCell data-label="ยอดเก็บ" className="text-right tabular-nums">
-                        {baht(r.base)}
+                        <Link href={drill()} scroll={false} title="ดูว่ามาจากใบแจ้งหนี้ใบไหน" className="hover:underline">{baht(r.base)}</Link>
                         {r.counted !== undefined && <span className="block text-xs text-emerald-700">นำมาคิด {baht(r.counted)}</span>}
                       </TableCell>
                       <TableCell data-label="ไม่นำมาคิด" className="text-xs whitespace-normal">
@@ -168,7 +187,7 @@ export default async function CommissionRunPage({ params, searchParams }: { para
                         {baht(r.commission)}
                         {r.commissionBeforeTarget !== undefined && r.commissionBeforeTarget !== r.commission && <span className="block text-xs text-destructive">ถ้าถึงเป้าจะได้ {baht(r.commissionBeforeTarget)}</span>}
                         {r.debtRelease ? <span className="block text-xs text-emerald-700">คืนลูกหนี้ +{baht(r.debtRelease)}</span> : null}
-                        {r.tierBonus ? <span className="block text-xs text-emerald-700">เงินพิเศษขั้น {r.tier?.index} +{baht(r.tierBonus)}</span> : null}
+                        {r.tierBonus ? <span className="block text-xs text-emerald-700">เงินพิเศษขั้น {r.tier?.index} +{baht(r.tierBonus)}{r.tier?.salary !== undefined && r.salary != null ? ` (${baht(r.tier.salary)} − ${baht(r.salary)})` : ''}</span> : null}
                         {r.newCustomers?.length ? <span className={cn('block text-xs', r.newCustomerBonus ? 'text-emerald-700' : 'text-muted-foreground')}>ลูกค้าใหม่ {r.newCustomers.length} ราย +{baht(r.newCustomerBonus ?? 0)}</span> : null}
                       </TableCell>
                       <TableCell data-label="หัก / ปรับ" className="text-right text-xs tabular-nums">
@@ -227,12 +246,28 @@ export default async function CommissionRunPage({ params, searchParams }: { para
         <UrlDrawer title={`${repName.get(drillRep) ?? drillResult?.repName ?? `#${drillRep}`} · รายละเอียดรอบ ${period}`} closeHref={close} size="xl">
           {drillResult && <RepExplain rep={drillResult} />}
           {drillResult && <StepTable rep={drillResult} />}
-          <nav className="flex flex-wrap gap-1 text-xs" aria-label="กรองรายการ">
+          <nav className="flex flex-wrap items-center gap-1 text-xs" aria-label="กรองรายการ">
             {([['all', `ทั้งหมด (${repLines.length})`], ['counted', 'นำมาคิดค่าคอม'], ['excluded', 'ไม่นำมาคิด']] as const).map(([key, text]) => (
-              <Link key={key} href={`${path}?${ctxQuery(ctx, { rep: String(drillRep), show: key === 'all' ? undefined : key })}`} scroll={false}
+              <Link key={key} href={drillHref({ show: key === 'all' ? undefined : key })} scroll={false}
                 className={cn('rounded-full border px-3 py-1', show === key ? 'border-primary bg-primary text-primary-foreground' : 'border-border hover:bg-muted')}>{text}</Link>
             ))}
+            <span className="mx-1 h-5 w-px bg-border" aria-hidden />
+            {([['invoice', 'รายใบแจ้งหนี้'], ['line', 'รายบรรทัดสินค้า']] as const).map(([key, text]) => (
+              <Link key={key} href={drillHref({ view: key === 'invoice' ? undefined : key, inv: undefined })} scroll={false}
+                className={cn('rounded-full border px-3 py-1', view === key && !sp.inv ? 'border-primary bg-primary text-primary-foreground' : 'border-border hover:bg-muted')}>{text}</Link>
+            ))}
+            <span className="mx-1 h-5 w-px bg-border" aria-hidden />
+            <Link href={drillHref({ fx: showFormula ? undefined : '1' })} scroll={false} aria-pressed={showFormula}
+              className={cn('rounded-full border px-3 py-1', showFormula ? 'border-primary bg-primary text-primary-foreground' : 'border-border hover:bg-muted')}>
+              {showFormula ? 'ซ่อนสูตรคิดค่าคอม' : 'แสดงสูตรคิดค่าคอม'}
+            </Link>
+            {sp.inv && view === 'line' && (
+              <Link href={drillHref({ view: undefined, inv: undefined })} scroll={false} className="rounded-full border border-primary bg-primary/10 px-3 py-1 text-primary">
+                เฉพาะ {drillLines[0]?.invoiceName ?? `#${sp.inv}`} · ✕ กลับไปรายใบแจ้งหนี้
+              </Link>
+            )}
           </nav>
+          {view === 'invoice' ? <InvoiceTable rows={drillInvoices} formulas={showFormula ? formulasByInvoice : null} lineHref={(id) => drillHref({ view: 'line', inv: String(id) })} /> : (
           <TableCard>
             <Table>
               <TableHeader className="bg-muted/50">
@@ -242,13 +277,13 @@ export default async function CommissionRunPage({ params, searchParams }: { para
                   <TableHead>Pricelist</TableHead>
                   <TableHead className="text-right">หน่วย</TableHead>
                   <TableHead className="text-right">ก่อน VAT</TableHead>
-                  <TableHead className="text-right">อัตรา × พิเศษ × ขั้น</TableHead>
+                  {showFormula && <TableHead>สูตรที่ใช้คิด</TableHead>}
                   <TableHead className="text-right">ค่าคอม</TableHead>
                   <TableHead>ผล</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {drillLines.length === 0 && <EmptyRow colSpan={8}>ไม่มีรายการ</EmptyRow>}
+                {drillLines.length === 0 && <EmptyRow colSpan={showFormula ? 8 : 7}>ไม่มีรายการ</EmptyRow>}
                 {drillLines.map((l) => {
                   const r = lineResults.get(l.lineKey);
                   return (
@@ -258,7 +293,7 @@ export default async function CommissionRunPage({ params, searchParams }: { para
                       <TableCell data-label="Pricelist" className="text-xs">{l.pricelistName ?? '—'}</TableCell>
                       <TableCell data-label="หน่วย" className="text-right text-xs tabular-nums">{l.qty}</TableCell>
                       <TableCell data-label="ก่อน VAT" className="text-right tabular-nums">{baht(l.base)}</TableCell>
-                      <TableCell data-label="อัตรา" className="text-right text-xs tabular-nums">{r ? `${r.rateLabel} × ${r.specialPercent}% × ${r.stepPercent}%` : 'ยังไม่คำนวณ'}</TableCell>
+                      {showFormula && <TableCell data-label="สูตร" className="min-w-72 text-xs whitespace-normal"><Formula formula={formulaOf(l)} /></TableCell>}
                       <TableCell data-label="ค่าคอม" className="text-right font-semibold tabular-nums">{r ? baht(r.commission) : '—'}</TableCell>
                       <TableCell data-label="ผล" className="text-xs whitespace-normal">
                         {(() => {
@@ -273,6 +308,7 @@ export default async function CommissionRunPage({ params, searchParams }: { para
               </TableBody>
             </Table>
           </TableCard>
+          )}
           {drillCredits.length > 0 && (
             <section className="space-y-1 text-sm">
               <h3 className="font-semibold">ใบลดหนี้ (CN) ที่ออกรอบนี้ · แสดงให้ทราบ ไม่หักค่าคอม</h3>
@@ -293,6 +329,72 @@ export default async function CommissionRunPage({ params, searchParams }: { para
 }
 
 const sumOf = (reps: RepResult[], pick: (r: RepResult) => number) => reps.reduce((sum, r) => sum + pick(r), 0);
+
+/**
+ * A rep's collected total broken down per invoice (largest first) with the part counted and the
+ * commission it earned; the totals match the rep row. Each row opens that invoice's product lines.
+ */
+function InvoiceTable({ rows, formulas, lineHref }: { rows: InvoiceCommissionRow[]; formulas: ReadonlyMap<string, { product: string; formula: LineFormula }[]> | null; lineHref: (invoiceId: number) => string }) {
+  const total = rows.reduce((t, r) => ({ base: t.base + r.base, gross: t.gross + r.gross, counted: t.counted + r.counted, commission: t.commission + r.commission }), { base: 0, gross: 0, counted: 0, commission: 0 });
+  return (
+    <TableCard>
+      <Table>
+        <TableHeader className="bg-muted/50">
+          <TableRow>
+            <TableHead>ใบแจ้งหนี้ / ลูกค้า</TableHead>
+            <TableHead>เงินเข้า</TableHead>
+            <TableHead>สินค้า</TableHead>
+            <TableHead className="text-right">รวม VAT</TableHead>
+            <TableHead className="text-right">ก่อน VAT</TableHead>
+            <TableHead className="text-right">นำมาคิด</TableHead>
+            <TableHead className="text-right">ค่าคอม</TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {rows.length === 0 && <EmptyRow colSpan={7}>ไม่มีรายการ</EmptyRow>}
+          {rows.map((r) => (
+            <Fragment key={r.key}>
+            <TableRow className={cn(formulas && 'border-b-0', r.kind === 'RETRO' && 'bg-amber-500/5')}>
+              <TableCell data-label="ใบแจ้งหนี้" className="whitespace-normal">
+                {r.invoiceId !== null ? <Link href={lineHref(r.invoiceId)} scroll={false} className="font-medium text-primary hover:underline">{r.invoiceName}</Link> : <span className="text-muted-foreground">ไม่ใช่ใบแจ้งหนี้</span>}
+                {r.kind === 'RETRO' && <Badge variant="outline" className="ml-1 border-transparent bg-amber-500/15 text-amber-800">ปรับย้อนหลัง</Badge>}
+                <span className="block text-xs text-muted-foreground">{r.partnerName}{r.invoiceDate ? ` · ออก ${thaiDay(r.invoiceDate)}` : ''}</span>
+              </TableCell>
+              <TableCell data-label="เงินเข้า" className="text-xs whitespace-normal">{thaiDay(r.cashDate)} · {r.receipts.join(', ')}<span className="block text-muted-foreground">{r.dueDate ? `ดิว ${thaiDay(r.dueDate)} · เกิน ${r.overdueDays ?? 0} วัน` : ''}</span></TableCell>
+              <TableCell data-label="สินค้า" className="text-xs whitespace-normal">{r.families.join(', ') || '—'}<span className="block text-muted-foreground">{r.qty ? `${r.qty.toLocaleString('th-TH')} หน่วย · ` : ''}{r.lines} บรรทัด</span></TableCell>
+              <TableCell data-label="รวม VAT" className="text-right text-xs tabular-nums">{baht(r.gross)}</TableCell>
+              <TableCell data-label="ก่อน VAT" className="text-right tabular-nums">{baht(r.base)}</TableCell>
+              <TableCell data-label="นำมาคิด" className={cn('text-right tabular-nums', r.counted < r.base && 'text-amber-800')}>{baht(r.counted)}</TableCell>
+              <TableCell data-label="ค่าคอม" className="text-right font-semibold tabular-nums">{baht(r.commission)}</TableCell>
+            </TableRow>
+            {formulas && <TableRow className={cn('border-b-2', r.kind === 'RETRO' && 'bg-amber-500/5')}>
+              <TableCell colSpan={7} className="pt-0 pb-2 whitespace-normal">
+                <ul className="space-y-1 rounded-lg bg-muted/40 p-2 text-xs">
+                  {(formulas.get(r.key) ?? []).map((f, i) => (
+                    <li key={i}><span className="font-medium">{f.product}</span> · <Formula formula={f.formula} inline /></li>
+                  ))}
+                </ul>
+              </TableCell>
+            </TableRow>}
+            </Fragment>
+          ))}
+        </TableBody>
+        {rows.length > 0 && (
+          <tfoot>
+            <TableRow className="bg-muted/40 font-semibold">
+              <TableCell colSpan={3} className="text-right text-xs">รวม {rows.length} รายการ</TableCell>
+              <TableCell className="text-right text-xs tabular-nums">{baht(total.gross)}</TableCell>
+              <TableCell className="text-right tabular-nums">{baht(total.base)}</TableCell>
+              <TableCell className="text-right tabular-nums">{baht(total.counted)}</TableCell>
+              <TableCell className="text-right tabular-nums">{baht(total.commission)}</TableCell>
+            </TableRow>
+          </tfoot>
+        )}
+      </Table>
+      <p className="px-3 py-2 text-xs text-muted-foreground">ค่าคอมต่อใบ = ผลรวมของสูตรแต่ละบรรทัด (ยอดก่อน VAT × % หรือ หน่วย × บาท, × % ราคาพิเศษ, × % ขั้นเกินดิว) ก่อนเงื่อนไขเป้าและก่อนหักส่วนกลาง · กดเลขใบแจ้งหนี้เพื่อดูรายบรรทัดสินค้า</p>
+    </TableCard>
+  );
+}
 
 /**
  * The period in plain words, top to bottom: cash in, what was counted and what was not (and why),
@@ -361,7 +463,7 @@ function RepExplain({ rep }: { rep: RepResult }) {
       {rep.commissionBeforeTarget !== undefined && rep.commissionBeforeTarget !== rep.commission && <span className="text-destructive"> แต่ไม่ถึงเป้า {baht(rep.target ?? 0)} จึงได้ {baht(rep.commission)}</span>}
       {rep.central > 0 && <> หักส่วนกลาง {baht(rep.central)}</>}
       {rep.debtHold > 0 && <> หักลูกหนี้ค้าง {baht(rep.debtHold)}</>}
-      {rep.tierBonus ? <> บวกเงินพิเศษขั้น {rep.tier?.index} {baht(rep.tierBonus)}</> : null}
+      {rep.tierBonus ? <> บวกเงินพิเศษขั้น {rep.tier?.index} {baht(rep.tierBonus)}{rep.tier?.salary !== undefined && rep.salary != null ? ` (เงินเดือนขั้น ${baht(rep.tier.salary)} − เงินเดือน ${baht(rep.salary)})` : ''}</> : null}
       {rep.newCustomerBonus ? <> บวกลูกค้าใหม่ {rep.newCustomers?.length} ราย {baht(rep.newCustomerBonus)}</> : null}
       {rep.adjustments !== 0 && <> ปรับ {baht(rep.adjustments)}</>}
       {' '}จ่ายจริง <b>{baht(rep.payable)}</b>
@@ -419,5 +521,16 @@ function PeriodDatesCard({ calendar, period, hidden, canEdit, endLocked }: { cal
         {endLocked && ' · รอบอนุมัติแล้ว แก้ได้เฉพาะวันจ่าย'}
       </p>
     </details>
+  );
+}
+
+/** The rate rule that matched and the arithmetic of one line. */
+function Formula({ formula, inline }: { formula: LineFormula; inline?: boolean }) {
+  return (
+    <span className={inline ? undefined : 'block'}>
+      <span className="text-muted-foreground">อัตรา: {formula.rule}</span>
+      <span className={cn('tabular-nums', inline ? 'ml-1' : 'block')}>{inline && '· '}{formula.steps}</span>
+      {formula.excluded && <span className={cn('text-amber-800', inline ? 'ml-1' : 'block')}>· ไม่คิด: {formula.excluded}</span>}
+    </span>
   );
 }

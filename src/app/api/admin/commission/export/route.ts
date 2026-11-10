@@ -7,7 +7,7 @@ import { getCurrentUser } from '@/lib/auth/session';
 import { excludedReasonOf, pickStepPercent, stepRangeLabel } from '@/lib/commission/calc';
 import { fetchSales } from '@/lib/commission/odoo';
 import { isPeriod, periodDates } from '@/lib/commission/period';
-import { byRepAndGroup, type RepGroupRow } from '@/lib/commission/report';
+import { byRepAndGroup, commissionByInvoice, type InvoiceCommissionRow, type RepGroupRow } from '@/lib/commission/report';
 import { getRun, getSource, listLedger, listPricelists, listSteps } from '@/lib/commission/repo';
 import { clientFor, periodCalendar } from '@/lib/commission/service';
 import { statementSettings } from '@/lib/commission/statement';
@@ -62,6 +62,8 @@ const REP_COLUMNS: Column<RepResult>[] = [
   { header: 'หักส่วนกลาง', value: (r) => -(r.central ?? 0) },
   { header: 'หักลูกหนี้ค้าง', value: (r) => -(r.debtHold ?? 0) },
   { header: 'ขั้นเงินพิเศษ', value: (r) => r.tier?.index ?? 0 },
+  { header: 'เงินเดือนของขั้น', value: (r) => r.tier?.salary ?? '' },
+  { header: 'เงินเดือนเซลล์', value: (r) => r.salary ?? '' },
   { header: 'เงินพิเศษ', value: (r) => r.tierBonus ?? 0 },
   { header: 'ลูกค้าใหม่ (ราย)', value: (r) => r.newCustomers?.length ?? 0 },
   { header: 'เงินลูกค้าใหม่', value: (r) => r.newCustomerBonus ?? 0 },
@@ -108,6 +110,24 @@ function stepColumns(reps: readonly RepResult[]): Column<RepResult>[] {
   }));
 }
 
+const INVOICE_COLUMNS: Column<InvoiceCommissionRow>[] = [
+  { header: 'พนักงานขาย', value: (r) => r.repName },
+  { header: 'ประเภท', value: (r) => (r.kind === 'RETRO' ? 'ปรับย้อนหลัง' : 'เงินเข้า') },
+  { header: 'ใบแจ้งหนี้', value: (r) => r.invoiceName ?? 'ไม่ใช่ใบแจ้งหนี้' },
+  { header: 'วันที่ใบแจ้งหนี้', value: (r) => r.invoiceDate },
+  { header: 'ลูกค้า', value: (r) => r.partnerName },
+  { header: 'ใบเสร็จ/รายการเงินเข้า', value: (r) => r.receipts.join(', ') },
+  { header: 'วันเงินเข้า (ล่าสุด)', value: (r) => r.cashDate },
+  { header: 'ครบกำหนด', value: (r) => r.dueDate },
+  { header: 'เกินดิว (วัน)', value: (r) => r.overdueDays },
+  { header: 'ยี่ห้อ-กลุ่มสินค้า', value: (r) => r.families.join(', ') },
+  { header: 'หน่วย', value: (r) => r.qty },
+  { header: 'รวม VAT', value: (r) => r.gross },
+  { header: 'ก่อน VAT', value: (r) => r.base },
+  { header: 'นำมาคิดค่าคอม ก่อน VAT', value: (r) => r.counted },
+  { header: 'ค่าคอม (ก่อนเป้า/ส่วนกลาง)', value: (r) => r.commission },
+];
+
 const SALES_COLUMNS: Column<RepGroupRow>[] = [
   { header: 'พนักงานขาย', value: (r) => r.repName },
   { header: 'กลุ่มราคา', value: (r) => (r.priceGroup === 'UNMAPPED' ? 'ยังไม่จัดกลุ่ม' : PRICE_GROUP_LABELS[r.priceGroup]) },
@@ -120,7 +140,8 @@ const SALES_COLUMNS: Column<RepGroupRow>[] = [
 
 /**
  * Excel / CSV of the commission module: `kind=collections` (cash-in lines with invoice, due date,
- * days overdue), `kind=run` (per-rep result sheet; lines with the rule used come as `kind=run-lines`),
+ * days overdue), `kind=run` (per-rep result sheet; lines with the rule used come as `kind=run-lines`, one row per
+ * rep × invoice as `kind=run-invoices`),
  * `kind=sales` (sales per rep × price group × family, read live from Odoo). Needs `commission.view`.
  */
 export async function GET(request: NextRequest) {
@@ -131,7 +152,7 @@ export async function GET(request: NextRequest) {
   const kind = sp.get('kind') ?? '';
   const period = sp.get('period') ?? '';
   const format = sp.get('format') === 'csv' ? 'csv' : 'xlsx';
-  if (!['collections', 'run', 'run-lines', 'sales', 'statement'].includes(kind) || !isPeriod(period)) return NextResponse.json({ error: 'bad request' }, { status: 400 });
+  if (!['collections', 'run', 'run-lines', 'run-invoices', 'sales', 'statement'].includes(kind) || !isPeriod(period)) return NextResponse.json({ error: 'bad request' }, { status: 400 });
   const source = await getSource(sp.get('source') ?? '');
   if (!source) return NextResponse.json({ error: 'source not found' }, { status: 404 });
   const name = `commission-${source.name.replace(/[^\p{L}\p{N}]+/gu, '-')}-${period}`;
@@ -151,6 +172,12 @@ export async function GET(request: NextRequest) {
     file = kind === 'run'
       ? await exportFile(reps, REP_COLUMNS, `${name}-run`, format)
       : await exportFile([...reps].sort((a, b) => a.repName.localeCompare(b.repName, 'th')), statementColumns(reps, debtDays), `${name}-statement`, format);
+  } else if (kind === 'run-invoices') {
+    const [ledger, run] = await Promise.all([listLedger(source.id, period), getRun(source.id, period)]);
+    const results = new Map((run?.results?.lines ?? []).map((l) => [l.lineKey, l]));
+    const rows = commissionByInvoice(ledger, results).sort((a, b) => (a.repName ?? '').localeCompare(b.repName ?? '', 'th') || b.base - a.base);
+    count = rows.length;
+    file = await exportFile(rows, INVOICE_COLUMNS, `${name}-invoices`, format);
   } else {
     const [ledger, steps, pricelists, run] = await Promise.all([listLedger(source.id, period), listSteps(source.id), listPricelists(source.id), getRun(source.id, period)]);
     const groups = new Map(pricelists.map((p) => [p.odooPricelistId, `${PRICE_GROUP_LABELS[p.priceGroup]}${p.isSpecial ? ' (พิเศษ)' : ''}`]));

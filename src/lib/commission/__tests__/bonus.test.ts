@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { bonusSettings, JFC_2569_TIERS, normalizeTiers, pickTier, planNewCustomers, type FirstInvoice } from '../bonus';
-import { calculateRun } from '../calc';
+import { bonusSettings, JFC_2569_TIERS, normalizeTiers, paysBySalary, pickTier, planNewCustomers, tierBonusAmount, type FirstInvoice } from '../bonus';
+import { blockingIssues, calculateRun } from '../calc';
 import type { LedgerLine } from '../types';
 
 describe('pickTier', () => {
@@ -24,6 +24,17 @@ describe('normalizeTiers / bonusSettings', () => {
     expect(normalizeTiers(null)).toEqual([]);
   });
 
+  it('keeps a positive tier salary and drops a blank one', () => {
+    expect(normalizeTiers([{ minAmount: 100, bonus: 1, salary: 18_000 }, { minAmount: 200, bonus: 2, salary: 0 }]))
+      .toEqual([{ minAmount: 100, bonus: 1, salary: 18_000 }, { minAmount: 200, bonus: 2 }]);
+    expect(paysBySalary(JFC_2569_TIERS)).toBe(true);
+    expect(paysBySalary([{ minAmount: 1, bonus: 1 }])).toBe(false);
+  });
+
+  it('JFC bonus column is the salary step-up from the tier before (15,000 below tier 1)', () => {
+    JFC_2569_TIERS.forEach((t, i) => expect(t.salary! - (i ? JFC_2569_TIERS[i - 1].salary! : 15_000)).toBe(t.bonus));
+  });
+
   it('pays nothing until set (columns missing before the migration)', () => {
     expect(bonusSettings({})).toEqual({ bonusTiers: [], newCustomerBonus: 0, newCustomerFrom: null });
     expect(bonusSettings({ newCustomerBonus: '300' as unknown as number, newCustomerFrom: '2026-11-01T00:00:00' })).toMatchObject({ newCustomerBonus: 300, newCustomerFrom: '2026-11-01' });
@@ -32,6 +43,16 @@ describe('normalizeTiers / bonusSettings', () => {
 
 const first = (over: Partial<FirstInvoice>): FirstInvoice => ({ partnerId: 1, partnerName: 'ร้านใหม่', partnerCreated: '2026-11-02', invoiceId: 10, invoiceName: 'INV/10', ...over });
 const cash = (invoiceId: number, cashDate: string, odooUserId: number | null = -7) => ({ kind: 'COLLECTION', invoiceId, cashDate, odooUserId, repName: 'Ake' });
+
+describe('tierBonusAmount', () => {
+  const tier = { minAmount: 2_900_000, bonus: 3_000, salary: 25_000 };
+  it('tier salary − rep salary, never below 0, 0 while the salary is not set', () => {
+    expect(tierBonusAmount(tier, true, 18_000)).toBe(7_000);
+    expect(tierBonusAmount(tier, true, 30_000)).toBe(0);
+    expect(tierBonusAmount(tier, true, null)).toBe(0);
+    expect(tierBonusAmount(tier, false, 18_000)).toBe(3_000);
+  });
+});
 
 describe('planNewCustomers', () => {
   it('counts a customer created after the start day whose first invoice had cash in the period', () => {
@@ -56,13 +77,15 @@ describe('calculateRun with bonuses', () => {
     invoiceDate: '2026-11-01', dueDate: '2026-11-01', overdueDays: 4, paymentKind: 'CREDIT', odooUserId: -7, repName: 'Ake', ownerFrom: 'tag', pricelistId: null, pricelistName: null, pricelistFrom: 'none',
     productId: 1, productName: 'ยาง', brand: 'AT', family: 'TBR', qty: 10, base, gross: base * 1.07, issues: [],
   });
-  const calc = (base: number, target: number) => calculateRun({
+  const BONUS_ONLY = JFC_2569_TIERS.map(({ minAmount, bonus }) => ({ minAmount, bonus }));
+  const calc = (base: number, target: number, salaries?: { odooUserId: number; period: string; amount: number }[], tiers = BONUS_ONLY) => calculateRun({
     lines: [line(base)],
     rates: [{ id: 'r', sourceId: 's', brand: '*', family: 'TBR', priceGroup: '*', odooPricelistId: null, pricelistName: null, odooProductId: null, productName: null, kind: 'PER_UNIT', value: 15, validFrom: '2026-01-01', validTo: null, note: null }],
     steps: [{ id: 'st', sourceId: 's', minDays: 0, maxDays: null, percent: 100, validFrom: '2026-01-01', validTo: null }],
     pricelists: [], targets: [{ id: 't', sourceId: 's', odooUserId: -7, period: '2026-11', amount: target }], adjustments: [], reps: [{ odooUserId: -7, name: 'Ake' }], carryIn: new Map(), period: '2026-11',
     statement: { summaryLines: [], centralPercent: 5, debtDays: 120, debtPercent: 0 },
-    bonus: { bonusTiers: JFC_2569_TIERS, newCustomerBonus: 300, newCustomerFrom: '2026-11-01' },
+    bonus: { bonusTiers: tiers, newCustomerBonus: 300, newCustomerFrom: '2026-11-01' },
+    salaries,
     newCustomers: [
       { odooUserId: -7, repName: 'Ake', partnerName: 'ร้านใหม่', invoiceName: 'INV/1', period: '2026-11' },
       { odooUserId: -7, repName: 'Ake', partnerName: 'ร้านเก่ากว่า', invoiceName: 'INV/0', period: '2026-10' },
@@ -82,6 +105,20 @@ describe('calculateRun with bonuses', () => {
   it('pays no bonus when the target is missed', () => {
     const rep = calc(2_650_000, 3_000_000).reps[0];
     expect(rep).toMatchObject({ targetMet: false, tier: { index: 2 }, tierBonus: 0, newCustomerBonus: 0, payable: 0 });
+  });
+
+  it('pays tier salary − rep salary with a salary ladder', () => {
+    // 2.95M reaches tier 3 (salary 25,000); rep salary 18,000 gives 7,000. A salary of another period is ignored.
+    const r = calc(2_950_000, 1_000_000, [{ odooUserId: -7, period: '2026-11', amount: 18_000 }, { odooUserId: -7, period: '2026-10', amount: 1 }], JFC_2569_TIERS);
+    expect(r.reps[0]).toMatchObject({ tier: { index: 3, salary: 25_000 }, salary: 18_000, tierBonus: 7_000 });
+    expect(calc(2_950_000, 1_000_000, [{ odooUserId: -7, period: '2026-11', amount: 26_000 }], JFC_2569_TIERS).reps[0].tierBonus).toBe(0);
+  });
+
+  it('blocks the run when a rep reaching a tier has no salary', () => {
+    const r = calc(2_950_000, 1_000_000, [], JFC_2569_TIERS);
+    expect(r.reps[0]).toMatchObject({ salary: null, tierBonus: 0 });
+    expect(blockingIssues(r)[0]).toContain('ยังไม่ได้ตั้งเงินเดือนของ Ake');
+    expect(blockingIssues(calc(2_950_000, 3_000_000, [], JFC_2569_TIERS))).toEqual([]);
   });
 
   it('pays no tier bonus below the first tier', () => {

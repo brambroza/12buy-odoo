@@ -5,10 +5,10 @@
  * central fund and overdue-invoice deductions, manual adjustments and any negative balance carried
  * from the previous period. Pure, no I/O.
  */
-import { pickTier } from './bonus';
+import { paysBySalary, pickTier, tierBonusAmount } from './bonus';
 import { OTHER_SUMMARY, statementSettings, summaryKeyOf } from './statement';
 import type {
-  BonusSettings, CommissionAdjustment, CommissionPricelist, CommissionRate, CommissionRep, CommissionTarget, CreditNote, DebtHold, ExcludedAmount, ExcludedReason, LedgerLine, LineResult,
+  BonusSettings, CommissionAdjustment, CommissionPricelist, CommissionRate, CommissionRep, CommissionSalary, CommissionTarget, CreditNote, DebtHold, ExcludedAmount, ExcludedReason, LedgerLine, LineResult,
   NewCustomer, OverdueStep, PriceGroup, RepResult, RunResults, StatementSettings, StepAmount,
 } from './types';
 import { PRICE_GROUP_LABELS } from './types';
@@ -107,6 +107,8 @@ export type CalcInput = {
   refunds?: { count: number; amount: number };
   /** Sales-bonus ladder and new-customer amount; none when missing. */
   bonus?: BonusSettings;
+  /** Rep salaries; with a salary ladder the bonus is tier salary − the rep's salary of `period`. */
+  salaries?: readonly Pick<CommissionSalary, 'odooUserId' | 'period' | 'amount'>[];
   /** New customers counted in the period (those of other periods are ignored). */
   newCustomers?: readonly Pick<NewCustomer, 'odooUserId' | 'repName' | 'partnerName' | 'invoiceName' | 'period'>[];
 };
@@ -265,6 +267,8 @@ export function calculateRun(input: CalcInput): RunResults {
     newByRep.set(c.odooUserId, [...(newByRep.get(c.odooUserId) ?? []), { partnerName: c.partnerName, invoiceName: c.invoiceName }]);
   }
   const tiers = input.bonus?.bonusTiers ?? [];
+  const bySalary = paysBySalary(tiers);
+  const salaries = new Map((input.salaries ?? []).filter((x) => x.period === input.period).map((x) => [x.odooUserId, x.amount]));
   const perCustomer = input.bonus?.newCustomerBonus ?? 0;
 
   const adjustments = new Map<number, number>();
@@ -289,7 +293,9 @@ export function calculateRun(input: CalcInput): RunResults {
     const adj = round2(adjustments.get(odooUserId) ?? 0);
     const carryIn = round2(Math.min(0, input.carryIn.get(odooUserId) ?? 0));
     const tier = pickTier(tiers, base);
-    const tierBonus = targetMet && tier ? round2(tier.bonus) : 0;
+    const salary = bySalary ? salaries.get(odooUserId) ?? null : undefined;
+    if (tier && salary === null && targetMet) issues.push({ message: `ยังไม่ได้ตั้งเงินเดือนของ ${a.name} รอบนี้ จึงยังคิดเงินพิเศษขั้น ${tier.index} ไม่ได้ (ตั้งที่หน้าเป้า)` });
+    const tierBonus = targetMet && tier ? round2(tierBonusAmount(tier, bySalary, salary ?? null)) : 0;
     const newCustomers = newByRep.get(odooUserId) ?? [];
     const newCustomerBonus = targetMet ? round2(newCustomers.length * perCustomer) : 0;
     const total = round2(subtotal - central - debtHold + tierBonus + newCustomerBonus + adj + carryIn);
@@ -300,7 +306,7 @@ export function calculateRun(input: CalcInput): RunResults {
       steps: [...a.steps.values()].sort((x, y) => (x.minDays ?? Infinity) - (y.minDays ?? Infinity))
         .map((st) => ({ ...st, base: round2(st.base), beforeStep: round2(st.beforeStep), commission: round2(st.commission) })),
       summary, debtRelease, subtotal, centralPercent: statement.centralPercent, central, debtHold,
-      adjustments: adj, carryIn, tierBonus, tier: tier ? { index: tier.index, minAmount: tier.minAmount } : null, newCustomers, newCustomerBonus,
+      adjustments: adj, carryIn, tierBonus, tier: tier ? { index: tier.index, minAmount: tier.minAmount, ...(bySalary ? { salary: tier.salary ?? 0 } : {}) } : null, ...(salary !== undefined ? { salary } : {}), newCustomers, newCustomerBonus,
       payable: Math.max(0, total), carryOut: Math.min(0, total),
     };
   }).sort((x, y) => y.payable - x.payable || x.repName.localeCompare(y.repName));
@@ -312,7 +318,7 @@ export function calculateRun(input: CalcInput): RunResults {
   };
 }
 
-/** Issues that stop a run from being submitted: reps without a target. Others are warnings. */
+/** Issues that stop a run from being submitted: reps without a target, or without a salary when it is needed for the bonus. Others are warnings. */
 export function blockingIssues(results: RunResults): string[] {
-  return results.issues.filter((i) => i.message.startsWith('ยังไม่ได้ตั้งเป้า')).map((i) => i.message);
+  return results.issues.filter((i) => i.message.startsWith('ยังไม่ได้ตั้งเป้า') || i.message.startsWith('ยังไม่ได้ตั้งเงินเดือน')).map((i) => i.message);
 }

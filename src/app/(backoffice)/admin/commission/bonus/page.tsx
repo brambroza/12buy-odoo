@@ -48,7 +48,8 @@ export default async function CommissionBonusPage({ searchParams }: { searchPara
           <div>
             <h2 className="font-semibold">ขั้นเงินพิเศษตามยอดเก็บ</h2>
             <p className="text-sm text-muted-foreground">
-              ยอดเก็บก่อน VAT ของเซลล์ในรอบ (ยอดเดียวกับที่ใช้วัดเป้า) ถึงขั้นไหน ได้เงินพิเศษของขั้นสูงสุดที่ถึงขั้นเดียว · ต่ำกว่าขั้นแรกได้ 0 · เว้นยอดเก็บว่างเพื่อลบขั้น
+              ยอดเก็บก่อน VAT ของเซลล์ในรอบ (ยอดเดียวกับที่ใช้วัดเป้า) ถึงขั้นไหน คิดจากขั้นสูงสุดที่ถึงขั้นเดียว · ต่ำกว่าขั้นแรกได้ 0 · เว้นยอดเก็บว่างเพื่อลบขั้น
+              <span className="block">มีเงินเดือนของขั้น: เงินพิเศษ = เงินเดือนของขั้นที่ถึง − เงินเดือนเซลล์รอบนั้น (ตั้งที่หน้าเป้า) ต่ำกว่า 0 ได้ 0 · เว้นเงินเดือนว่างทุกขั้น: จ่ายตามช่องเงินพิเศษ</span>
             </p>
           </div>
           <TableCard>
@@ -57,7 +58,8 @@ export default async function CommissionBonusPage({ searchParams }: { searchPara
                 <TableRow>
                   <TableHead className="w-12">ขั้น</TableHead>
                   <TableHead className="text-right">ยอดเก็บตั้งแต่ (บาท)</TableHead>
-                  <TableHead className="text-right">เงินพิเศษ (บาท)</TableHead>
+                  <TableHead className="text-right">เงินเดือนของขั้น (บาท)</TableHead>
+                  <TableHead className="text-right">เงินพิเศษ (บาท) · ใช้เมื่อไม่มีเงินเดือน</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -66,6 +68,9 @@ export default async function CommissionBonusPage({ searchParams }: { searchPara
                     <TableCell data-label="ขั้น" className="tabular-nums">{i + 1}</TableCell>
                     <TableCell data-label="ยอดเก็บตั้งแต่">
                       <input name={`min_${i}`} defaultValue={tiers[i] ? baht.format(tiers[i].minAmount) : ''} inputMode="decimal" disabled={!canManage} aria-label={`ยอดเก็บขั้น ${i + 1}`} className={input} />
+                    </TableCell>
+                    <TableCell data-label="เงินเดือนของขั้น">
+                      <input name={`salary_${i}`} defaultValue={tiers[i]?.salary ? baht.format(tiers[i].salary!) : ''} inputMode="decimal" disabled={!canManage} aria-label={`เงินเดือนขั้น ${i + 1}`} className={input} />
                     </TableCell>
                     <TableCell data-label="เงินพิเศษ">
                       <input name={`bonus_${i}`} defaultValue={tiers[i] ? baht.format(tiers[i].bonus) : ''} inputMode="decimal" disabled={!canManage} aria-label={`เงินพิเศษขั้น ${i + 1}`} className={input} />
