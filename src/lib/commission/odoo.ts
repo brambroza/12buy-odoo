@@ -106,8 +106,16 @@ async function readInvoiceContext(client: OdooReadClient, invoiceIds: number[]) 
   const saleLines = saleLineIds.length ? await readAll<{ id: number; order_id: M2O }>(client, 'sale.order.line', saleLineIds, ['order_id']) : [];
   const orderIds = saleLines.map((l) => ref(l.order_id)?.[0]).filter((id): id is number => id !== undefined);
   const orders = orderIds.length ? await readAll<{ id: number; pricelist_id: M2O; user_id: M2O }>(client, 'sale.order', orderIds, ['pricelist_id', 'user_id']) : [];
-  const partnerOf = (i: InvoiceRow) => ref(i.commercial_partner_id)?.[0] ?? ref(i.partner_id)?.[0];
-  const partnerIds = invoiceRows.map(partnerOf).filter((id): id is number => id !== undefined);
+  // The invoice's own commercial_partner_id is frozen when it is posted: a contact later moved out of
+  // its parent company keeps the old company there. Use the contact's current company instead.
+  const contactIds = [...new Set(invoiceRows.map((i) => ref(i.partner_id)?.[0]).filter((id): id is number => id !== undefined))];
+  const contacts = contactIds.length ? await readAll<{ id: number; commercial_partner_id: M2O }>(client, 'res.partner', contactIds, ['commercial_partner_id']) : [];
+  const companyOf = new Map(contacts.map((c) => [c.id, ref(c.commercial_partner_id)?.[0] ?? c.id]));
+  const partnerOf = (i: InvoiceRow) => {
+    const contact = ref(i.partner_id)?.[0];
+    return (contact !== undefined ? companyOf.get(contact) : undefined) ?? ref(i.commercial_partner_id)?.[0] ?? contact;
+  };
+  const partnerIds = [...new Set(invoiceRows.map(partnerOf).filter((id): id is number => id !== undefined))];
   const partners = partnerIds.length ? await readAll<{ id: number; property_product_pricelist: M2O; user_id: M2O; category_id?: number[] | false }>(client, 'res.partner', partnerIds, ['property_product_pricelist', 'user_id', 'category_id']) : [];
   const reps = invoiceRows.length ? await fetchRepDirectory(client) : { tags: new Map(), userReps: new Map(), users: [] } as RepDirectory;
   const productIds = lineRows.map((l) => ref(l.product_id)?.[0]).filter((id): id is number => id !== undefined);

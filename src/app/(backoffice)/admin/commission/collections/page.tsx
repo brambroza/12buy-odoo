@@ -1,6 +1,7 @@
 import { AlertTriangle, Download, RefreshCw } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { PendingSubmit } from '@/components/admin/pending-submit';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { CommissionHeader, NoSource, Notice } from '@/components/admin/commission-header';
 import { EmptyRow, FilterChip, ListPagination, ListSearch, TableCard } from '@/components/admin/list-kit';
@@ -55,7 +56,7 @@ export default async function CommissionCollectionsPage({ searchParams }: { sear
             {canSync && (
               <form action={syncPeriodAction}>
                 <input type="hidden" name="source" value={source.id} /><input type="hidden" name="period" value={ctx.period} /><input type="hidden" name="returnTo" value="collections" />
-                <Button type="submit" size="sm" disabled={run?.status === 'APPROVED' || run?.status === 'PAID'}><RefreshCw /> ดึงข้อมูลจาก Odoo</Button>
+                <PendingSubmit variant="default" icon={<RefreshCw />} label="ดึงข้อมูลจาก Odoo" pendingLabel="กำลังดึงข้อมูลจาก Odoo…" hint="ดึงข้อมูลจาก Odoo อาจใช้เวลาหลายนาที กรุณาอย่าปิดหรือรีเฟรชหน้านี้" disabled={run?.status === 'APPROVED' || run?.status === 'PAID'} />
               </form>
             )}
             <Button size="sm" variant="outline" nativeButton={false} render={<a href={`/api/admin/commission/export?${ctxQuery(ctx, { kind: 'collections' })}`} />}><Download /> Excel</Button>

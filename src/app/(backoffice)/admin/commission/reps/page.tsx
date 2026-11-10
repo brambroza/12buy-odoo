@@ -1,5 +1,6 @@
 import { RefreshCw, Save } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { PendingSubmit } from '@/components/admin/pending-submit';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { CommissionHeader, NoSource, Notice } from '@/components/admin/commission-header';
 import { IconSubmit } from '@/components/admin/icon-submit';
@@ -35,7 +36,7 @@ export default async function CommissionRepsPage({ searchParams }: { searchParam
           <form action={syncRepsAction}>
             <input type="hidden" name="source" value={ctx.source.id} />
             <input type="hidden" name="period" value={ctx.period} />
-            <Button type="submit" size="sm" variant="outline"><RefreshCw /> ดึงจาก Odoo</Button>
+            <PendingSubmit icon={<RefreshCw />} label="ดึงจาก Odoo" pendingLabel="กำลังดึงจาก Odoo…" hint="ดึงข้อมูลจาก Odoo อาจใช้เวลาหลายนาที กรุณาอย่าปิดหรือรีเฟรชหน้านี้" />
           </form>
         )} />
       <Notice saved={params.saved} error={params.error} />

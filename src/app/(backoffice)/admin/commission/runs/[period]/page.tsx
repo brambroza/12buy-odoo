@@ -8,6 +8,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { CommissionHeader, NoSource, Notice } from '@/components/admin/commission-header';
 import { StepTable } from '@/components/admin/commission-statement';
 import { IconSubmit } from '@/components/admin/icon-submit';
+import { PendingSubmit } from '@/components/admin/pending-submit';
 import { EmptyRow, TableCard } from '@/components/admin/list-kit';
 import { UrlDrawer } from '@/components/admin/url-drawer';
 import { can } from '@/lib/auth/permissions';
@@ -108,8 +109,8 @@ export default async function CommissionRunPage({ params, searchParams }: { para
       <section className="flex flex-wrap items-center gap-2 rounded-xl border border-border bg-card p-3 text-sm">
         {status === 'DRAFT' && can(role, 'commission.run') && (
           <>
-            <form action={syncPeriodAction}>{hidden}<Button type="submit" size="sm" variant="outline"><RefreshCw /> 1. ดึงข้อมูลจาก Odoo</Button></form>
-            <form action={calculateAction}>{hidden}<Button type="submit" size="sm" variant="outline" disabled={!run?.syncedAt}><Calculator /> 2. คำนวณ</Button></form>
+            <form action={syncPeriodAction}>{hidden}<PendingSubmit icon={<RefreshCw />} label="1. ดึงข้อมูลจาก Odoo" pendingLabel="กำลังดึงข้อมูลจาก Odoo…" hint="ดึงข้อมูลจาก Odoo อาจใช้เวลาหลายนาที กรุณาอย่าปิดหรือรีเฟรชหน้านี้" /></form>
+            <form action={calculateAction}>{hidden}<PendingSubmit icon={<Calculator />} label="2. คำนวณ" pendingLabel="กำลังคำนวณค่าคอม…" disabled={!run?.syncedAt} hint="กำลังคำนวณค่าคอมทุกคนในรอบนี้ กรุณาอย่าปิดหรือรีเฟรชหน้านี้" /></form>
             {step('submit', '3. ส่งอนุมัติ', <Send />)}
           </>
         )}

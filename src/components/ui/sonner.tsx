@@ -9,11 +9,13 @@ import { ToastIcon } from "@/components/ui/notify"
  * Plain `toast.success(...)` calls get the same look through the default icons below.
  */
 const Toaster = ({ ...props }: ToasterProps) => {
-  const { theme = "system" } = useTheme()
+  // No ThemeProvider in this app, so resolvedTheme is undefined and the page is always light. Following the OS
+  // ("system") made sonner switch to its dark text colours on our light card, so default to light.
+  const { resolvedTheme } = useTheme()
 
   return (
     <Sonner
-      theme={theme as ToasterProps["theme"]}
+      theme={resolvedTheme === "dark" ? "dark" : "light"}
       className="toaster group"
       closeButton
       gap={10}
@@ -36,7 +38,7 @@ const Toaster = ({ ...props }: ToasterProps) => {
           icon: "m-0 size-auto shrink-0",
           content: "min-w-0 flex-1 space-y-0.5 pt-0.5",
           title: "text-sm font-semibold leading-snug",
-          description: "text-xs leading-relaxed text-muted-foreground",
+          description: "text-xs leading-relaxed !text-neutral-600 dark:!text-neutral-300",
           closeButton:
             "absolute grid size-6 place-items-center rounded-md border-0 bg-transparent text-muted-foreground opacity-70 transition hover:bg-muted hover:opacity-100",
           actionButton: "ml-2 self-center rounded-md bg-primary px-2.5 py-1 text-xs font-medium text-primary-foreground",

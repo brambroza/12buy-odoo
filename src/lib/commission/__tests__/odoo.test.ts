@@ -145,6 +145,21 @@ describe('fetchCollections', () => {
     expect(untagged.lines.find((l) => l.invoiceName === 'INV/0001')).toMatchObject({ odooUserId: -11, repName: 'สมชาย', ownerFrom: 'order', issues: [ISSUE.noRepTag] });
   });
 
+  it('reads the tag from the contact\'s current company, not the one frozen on the invoice', async () => {
+    // The shop (7) was once under a generic company (34); the invoice still says 34, the contact no longer does.
+    const data = {
+      ...base,
+      'account.move': base['account.move'].map((m) => (m.id === 100 ? { ...m, commercial_partner_id: [34, 'ลูกค้าทั่วไป'] } : m)),
+      'res.partner.category': [{ id: 12, name: 'Sale Tip' }],
+      'res.partner': [
+        { id: 7, commercial_partner_id: [7, 'ร้านยางดี'], property_product_pricelist: [6, 'ราคาส่ง'], user_id: [9, 'สมหญิง'], category_id: [12] },
+        { id: 34, commercial_partner_id: [34, 'ลูกค้าทั่วไป'], property_product_pricelist: false, user_id: false, category_id: [] },
+      ],
+    };
+    const result = await fetchCollections(fakeClient(data), '2026-10', { start: '2026-09-21', end: '2026-10-20' });
+    expect(result.lines.find((l) => l.invoiceName === 'INV/0001')).toMatchObject({ odooUserId: -12, repName: 'Tip', ownerFrom: 'tag' });
+  });
+
   it('defers an invoice that is not fully paid by the period end', async () => {
     const partly = { ...base, 'account.move.line': base['account.move.line'].map((l) => (l.id === 900 ? { ...l, matched_credit_ids: [50] } : l)) };
     const result = await fetchCollections(fakeClient(partly), '2026-10', { start: '2026-09-21', end: '2026-10-20' });

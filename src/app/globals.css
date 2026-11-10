@@ -206,3 +206,13 @@
 @media (max-width: 1279.98px) {
   .rt [data-priority="low"] { display: none; }
 }
+
+/* Indeterminate progress bar used by PendingSubmit while a slow server action runs. */
+@keyframes pending-bar {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(300%); }
+}
+.pending-bar { animation: pending-bar 1.2s ease-in-out infinite; }
+@media (prefers-reduced-motion: reduce) {
+  .pending-bar { animation-duration: 3s; }
+}
