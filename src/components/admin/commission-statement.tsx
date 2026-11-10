@@ -1,5 +1,5 @@
 import { Fragment } from 'react';
-import { EXCLUDED_LABELS, type CommissionAdjustment, type DebtHold, type RepResult } from '@/lib/commission/types';
+import { BONUS_BASE_LABELS, EXCLUDED_LABELS, isSalesBase, type CommissionAdjustment, type DebtHold, type RepResult } from '@/lib/commission/types';
 import { thaiDay } from '@/lib/commission/period';
 import { cn } from '@/lib/utils';
 
@@ -29,8 +29,8 @@ export function CommissionStatement({ company, periodText, payText, rep, debtDay
   // Incentive (sales-bonus tier) as the last row of the list; it is not part of the central-fund base.
   const incentive = rep.tier ? rep.tierBonus ?? 0 : 0;
   if (rep.tier) {
-    const onOrders = rep.bonusBase === 'SALE_ORDER';
-    const measured = onOrders ? `ยอดขายใบสั่งขาย ${money.format(rep.saleOrderBase ?? 0)} (${rep.saleOrderCount ?? 0} ใบ)` : `ยอดเก็บ ${money.format(rep.base)}`;
+    const onOrders = isSalesBase(rep.bonusBase);
+    const measured = onOrders ? `${BONUS_BASE_LABELS[rep.bonusBase!]} ${money.format(rep.saleOrderBase ?? 0)} (${rep.saleOrderCount ?? 0} ใบ)` : `ยอดเก็บ ${money.format(rep.base)}`;
     const salary = rep.tier.salary !== undefined ? ` · เงินเดือนขั้น ${money.format(rep.tier.salary)} − เงินเดือน ${rep.salary == null ? 'ยังไม่ตั้ง' : money.format(rep.salary)}` : '';
     rows.push({
       label: `Incentive ขั้น ${rep.tier.index}`,
@@ -136,7 +136,7 @@ function Line({ label, value, strong, deduct, double }: { label: string; value: 
 export function StepTable({ rep }: { rep: Pick<RepResult, 'steps'> }) {
   if (!rep.steps?.length) return null;
   const total = rep.steps.reduce((sum, s) => ({ base: sum.base + s.base, beforeStep: sum.beforeStep + s.beforeStep, commission: sum.commission + s.commission }), { base: 0, beforeStep: 0, commission: 0 });
-  const range = (s: NonNullable<RepResult['steps']>[number]) => (s.minDays === null ? 'เกินขั้นสุดท้าย' : s.maxDays === null ? `${s.minDays} วันขึ้นไป` : `${s.minDays}–${s.maxDays} วัน`);
+  const range = (s: NonNullable<RepResult['steps']>[number]) => (s.noSteps ? 'ไม่ได้ตั้งขั้นบันได (คิด 100%)' : s.minDays === null ? 'เกินขั้นสุดท้าย' : s.maxDays === null ? `${s.minDays} วันขึ้นไป` : `${s.minDays}–${s.maxDays} วัน`);
   return (
     <div className="text-xs">
       <p className="mb-1 font-medium">ขั้นบันไดเกินดิว (นับจากวันครบกำหนดถึงวันเงินเข้า)</p>
@@ -152,7 +152,7 @@ export function StepTable({ rep }: { rep: Pick<RepResult, 'steps'> }) {
         </thead>
         <tbody>
           {rep.steps.map((s) => (
-            <tr key={`${s.minDays}-${s.maxDays}`} className="border-b border-border/60">
+            <tr key={`${s.noSteps ? 'no-steps' : ''}${s.minDays}-${s.maxDays}`} className="border-b border-border/60">
               <td className="py-1">{range(s)} <span className="text-muted-foreground">({s.lines} บรรทัด)</span></td>
               <td className="py-1 text-right tabular-nums">{money.format(s.base)}</td>
               <td className="py-1 text-right tabular-nums">{money.format(s.beforeStep)}</td>

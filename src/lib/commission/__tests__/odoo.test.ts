@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { OdooReadClient } from '@/lib/odoo/rpc';
 import { ISSUE } from '../ledger';
-import { bangkokToUtc, fetchCategories, fetchCollections, fetchCredits, fetchOdooUsers, fetchOverdueInvoices, fetchPaidInvoiceIds, fetchPricelists, fetchSaleOrders, fetchSales, searchProducts, utcToBangkokDay } from '../odoo';
+import { bangkokToUtc, fetchCategories, fetchCollections, fetchCredits, fetchOdooUsers, fetchOverdueInvoices, fetchPaidInvoiceIds, fetchPricelists, fetchInvoiceSales, fetchSaleOrders, fetchSales, searchProducts, utcToBangkokDay } from '../odoo';
 
 type Row = Record<string, unknown> & { id: number };
 
@@ -68,7 +68,9 @@ const base = {
     { id: 5, move_id: [1003, 'x'], account_type: 'asset_current', matched_debit_ids: [], matched_credit_ids: [61] },
     { id: 6, move_id: [1003, 'x'], account_type: 'asset_receivable', matched_debit_ids: [52], matched_credit_ids: [] },
     { id: 7, move_id: [2001, 'x'], account_type: 'asset_receivable', matched_debit_ids: [53], matched_credit_ids: [] },
-    { id: 900, move_id: [100, 'INV1'] }, { id: 901, move_id: [101, 'INV2'] }, { id: 902, move_id: [300, 'MISC'] },
+    // INV/0001's receivable: half paid on 10 Sep (earlier period, deferred then), half by PBNK1 now.
+    { id: 900, move_id: [100, 'INV1'], account_type: 'asset_receivable', matched_credit_ids: [50, 70] }, { id: 901, move_id: [101, 'INV2'] }, { id: 902, move_id: [300, 'MISC'] },
+    { id: 950, move_id: [1005, 'PBNK0'], journal_id: [1, 'Bank'] },
     { id: 11, move_id: [100, 'INV1'], display_type: 'product', product_id: [501, 'Austone PCR'], name: 'a', quantity: 20, price_subtotal: 60_000, price_total: 64_200, sale_line_ids: [71] },
     { id: 12, move_id: [100, 'INV1'], display_type: 'product', product_id: [502, 'Austone TBR'], name: 'b', quantity: 4, price_subtotal: 40_000, price_total: 42_800, sale_line_ids: [72] },
     { id: 13, move_id: [101, 'INV2'], display_type: 'product', product_id: [501, 'Austone PCR'], name: 'c', quantity: 2, price_subtotal: 10_000, price_total: 10_700, sale_line_ids: [] },
@@ -81,7 +83,9 @@ const base = {
     { id: 53, debit_move_id: [902, 'x'], amount: 500 },
     { id: 60, max_date: '2026-10-05' },
     { id: 61, max_date: '2026-10-25' },
+    { id: 70, debit_move_id: [900, 'x'], credit_move_id: [950, 'PBNK0'], amount: 53_500, max_date: '2026-09-10' },
   ],
+  'account.journal': [{ id: 1, type: 'bank' }],
   'account.move': [
     { id: 100, name: 'INV/0001', move_type: 'out_invoice', state: 'posted', invoice_date: '2026-09-01', invoice_date_due: '2026-10-01', amount_total: 107_000, partner_id: [7, 'ร้านยางดี'], commercial_partner_id: [7, 'ร้านยางดี'], invoice_user_id: false },
     { id: 101, name: 'INV/0002', move_type: 'out_invoice', state: 'posted', invoice_date: '2026-09-21', invoice_date_due: '2026-09-21', amount_total: 10_700, partner_id: [7, 'ร้านยางดี'], commercial_partner_id: false, invoice_user_id: [3, 'คนออกบิล'] },
@@ -118,6 +122,12 @@ describe('fetchCollections', () => {
     expect(cheque[0].issues).toContain(ISSUE.pricelistFromPartner);
 
     expect(byReceipt('PCHQ3')).toHaveLength(0);
+    // INV/0001 is fully paid now: the 10 Sep half (deferred then) is counted too, dated with the final cash.
+    const earlier = byReceipt('PBNK0');
+    expect(earlier).toHaveLength(2);
+    expect(earlier.reduce((t, l) => t + l.base, 0)).toBe(50_000);
+    expect(earlier[0]).toMatchObject({ invoiceName: 'INV/0001', cashDate: '2026-10-08', overdueDays: 7 });
+    expect(result.deferred).toEqual([]);
     expect(byReceipt('โอนเข้า')[0]).toMatchObject({ cashDate: '2026-10-12', base: 0, gross: 500, issues: [ISSUE.notInvoice] });
   });
 
@@ -135,9 +145,17 @@ describe('fetchCollections', () => {
     expect(untagged.lines.find((l) => l.invoiceName === 'INV/0001')).toMatchObject({ odooUserId: -11, repName: 'สมชาย', ownerFrom: 'order', issues: [ISSUE.noRepTag] });
   });
 
+  it('defers an invoice that is not fully paid by the period end', async () => {
+    const partly = { ...base, 'account.move.line': base['account.move.line'].map((l) => (l.id === 900 ? { ...l, matched_credit_ids: [50] } : l)) };
+    const result = await fetchCollections(fakeClient(partly), '2026-10', { start: '2026-09-21', end: '2026-10-20' });
+    expect(result.lines.some((l) => l.invoiceName === 'INV/0001')).toBe(false);
+    expect(result.lines.some((l) => l.invoiceName === 'INV/0002')).toBe(true);
+    expect(result.deferred).toEqual([{ invoiceId: 100, invoiceName: 'INV/0001', partnerName: 'ร้านยางดี', amountTotal: 107_000, settled: 53_500, cashThisPeriod: 53_500 }]);
+  });
+
   it('returns nothing for an empty period without extra reads', async () => {
     const client = fakeClient({});
-    expect(await fetchCollections(client, '2026-10', { start: '2026-09-21', end: '2026-10-20' })).toEqual({ lines: [], receipts: 0, refunds: { count: 0, amount: 0 } });
+    expect(await fetchCollections(client, '2026-10', { start: '2026-09-21', end: '2026-10-20' })).toEqual({ lines: [], receipts: 0, refunds: { count: 0, amount: 0 }, deferred: [] });
     expect(client.calls.every((c) => c.endsWith('search_read'))).toBe(true);
   });
 
@@ -153,6 +171,14 @@ describe('fetchSales', () => {
   it('lists invoiced sales by invoice date with credit notes negative', async () => {
     const lines = await fetchSales(fakeClient(base), '2026-10', { start: '2026-09-21', end: '2026-10-20' });
     expect(lines.map((l) => [l.invoiceName, l.base])).toEqual([['INV/0002', 10_000], ['RINV/0001', -5_000]]);
+  });
+});
+
+describe('fetchInvoiceSales', () => {
+  it('one document per invoice of the period, credit notes negative', async () => {
+    const docs = await fetchInvoiceSales(fakeClient(base), '2026-10', { start: '2026-09-21', end: '2026-10-20' });
+    expect(docs.map((d) => [d.orderName, d.orderDate, d.amountUntaxed])).toEqual([['INV/0002', '2026-09-21', 10_000], ['RINV/0001', '2026-10-02', -5_000]]);
+    expect(docs[0]).toMatchObject({ odooUserId: 3, period: '2026-10' });
   });
 });
 

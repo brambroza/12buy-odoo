@@ -11,7 +11,7 @@ import type {
   BonusSettings, CommissionAdjustment, CommissionPricelist, CommissionRate, CommissionRep, CommissionSalary, CommissionTarget, CreditNote, SaleOrder, DebtHold, ExcludedAmount, ExcludedReason, LedgerLine, LineResult,
   NewCustomer, OverdueStep, PriceGroup, RepResult, RunResults, StatementSettings, StepAmount,
 } from './types';
-import { PRICE_GROUP_LABELS } from './types';
+import { BONUS_DOC_LABELS, isSalesBase, PRICE_GROUP_LABELS } from './types';
 
 const round2 = (value: number) => Math.round((value + Number.EPSILON * Math.sign(value)) * 100) / 100;
 
@@ -50,8 +50,15 @@ export function pickRate(rates: readonly CommissionRate[], line: Pick<LedgerLine
 
 /** Pay-out % for `days` after the due date on `date`; 0 when no step covers it (beyond the last step). */
 export function pickStepPercent(steps: readonly OverdueStep[], days: number, date: string): number {
+  if (!stepsInForce(steps, date)) return NO_STEPS_PERCENT;
   return pickStep(steps, days, date)?.percent ?? 0;
 }
+
+/** Paid when no overdue step is set up for the cash date: the full commission. */
+export const NO_STEPS_PERCENT = 100;
+
+/** True when at least one overdue step is in force on `date` (otherwise every line gets 100%). */
+export const stepsInForce = (steps: readonly OverdueStep[], date: string): boolean => steps.some((s) => isValidOn(s, date));
 
 /** The step covering `days` after the due date on `date`, or null (beyond the last step / none in force). */
 export function pickStep(steps: readonly OverdueStep[], days: number, date: string): OverdueStep | null {
@@ -109,7 +116,7 @@ export type CalcInput = {
   bonus?: BonusSettings;
   /** Rep salaries; with a salary ladder the bonus is tier salary − the rep's salary of `period`. */
   salaries?: readonly Pick<CommissionSalary, 'odooUserId' | 'period' | 'amount'>[];
-  /** Confirmed sale orders of the period: the ladder base when `bonus.bonusBase` is 'SALE_ORDER'. */
+  /** Sales documents of the period (invoices or sale orders): the ladder base when `bonus.bonusBase` is one of them. */
   saleOrders?: readonly Pick<SaleOrder, 'odooUserId' | 'repName' | 'amountUntaxed' | 'period'>[];
   /** New customers counted in the period (those of other periods are ignored). */
   newCustomers?: readonly Pick<NewCustomer, 'odooUserId' | 'repName' | 'partnerName' | 'invoiceName' | 'period'>[];
@@ -129,8 +136,10 @@ export function lineCommission(line: LedgerLine, input: Pick<CalcInput, 'rates' 
   const group = pricelist?.priceGroup ?? null;
   const rate = pickRate(input.rates, line, group);
   const specialPercent = pricelist?.isSpecial ? pricelist.specialPercent : 100;
-  const step = pickStep(input.steps, line.overdueDays ?? 0, line.cashDate);
-  const stepPercent = step?.percent ?? 0;
+  // No overdue steps set up for the cash date: pay 100%; beyond the last step of a set-up ladder: 0%.
+  const noSteps = !stepsInForce(input.steps, line.cashDate);
+  const step = noSteps ? null : pickStep(input.steps, line.overdueDays ?? 0, line.cashDate);
+  const stepPercent = noSteps ? NO_STEPS_PERCENT : step?.percent ?? 0;
   const stepRange = step ? { minDays: step.minDays, maxDays: step.maxDays } : null;
   if (!rate) {
     const where = [line.brand || 'ไม่มียี่ห้อ', line.family || 'ไม่มีกลุ่ม', `${line.pricelistName ?? 'ไม่มี pricelist'} (${group ? PRICE_GROUP_LABELS[group] : 'pricelist ยังไม่จัดกลุ่ม'})`].join(' / ');
@@ -144,10 +153,8 @@ export function lineCommission(line: LedgerLine, input: Pick<CalcInput, 'rates' 
   const beforeStep = (basic * specialPercent) / 100;
   const result = {
     lineKey: line.lineKey, odooUserId: line.odooUserId, rateId: rate.id, rateLabel: rateLabel(rate), specialPercent, stepPercent,
-    commission: (beforeStep * stepPercent) / 100, beforeStep, stepRange,
+    commission: (beforeStep * stepPercent) / 100, beforeStep, stepRange, ...(noSteps ? { noSteps: true } : {}),
   };
-  // No step at all on the cash date (not merely beyond the last step) pays 0 silently otherwise.
-  if (!input.steps.some((s) => isValidOn(s, line.cashDate))) return { ...result, issue: `ไม่มีขั้นบันไดเกินดิวที่มีผลวันที่เงินเข้า ${line.cashDate} จึงได้ 0% (ตรวจวันที่เริ่มใช้ของขั้นบันได)` };
   return result;
 }
 
@@ -217,8 +224,8 @@ export function calculateRun(input: CalcInput): RunResults {
     a.before += lineResult.commission;
     if (lineResult.rateId) {
       const range = lineResult.stepRange ?? null;
-      const key = range ? `${range.minDays}-${range.maxDays ?? ''}` : 'none';
-      const st = a.steps.get(key) ?? { minDays: range?.minDays ?? null, maxDays: range?.maxDays ?? null, percent: lineResult.stepPercent, base: 0, lines: 0, beforeStep: 0, commission: 0 };
+      const key = lineResult.noSteps ? 'no-steps' : range ? `${range.minDays}-${range.maxDays ?? ''}` : 'none';
+      const st = a.steps.get(key) ?? { minDays: range?.minDays ?? null, maxDays: range?.maxDays ?? null, percent: lineResult.stepPercent, base: 0, lines: 0, beforeStep: 0, commission: 0, ...(lineResult.noSteps ? { noSteps: true } : {}) };
       st.base += line.base;
       st.lines += 1;
       st.beforeStep += lineResult.beforeStep ?? 0;
@@ -273,7 +280,7 @@ export function calculateRun(input: CalcInput): RunResults {
   const salaries = new Map((input.salaries ?? []).filter((x) => x.period === input.period).map((x) => [x.odooUserId, x.amount]));
   const perCustomer = input.bonus?.newCustomerBonus ?? 0;
   // Incentive on sale orders: the ladder is measured on each rep's confirmed orders, no target gate.
-  const onOrders = input.bonus?.bonusBase === 'SALE_ORDER';
+  const onOrders = isSalesBase(input.bonus?.bonusBase);
   const orders = new Map<number, { base: number; count: number }>();
   if (onOrders) {
     let noRep = 0;
@@ -287,7 +294,7 @@ export function calculateRun(input: CalcInput): RunResults {
       t.count += 1;
       orders.set(o.odooUserId, t);
     }
-    if (noRep) issues.push({ message: `ใบสั่งขายไม่มีพนักงานขาย ยอด ${round2(noRep).toLocaleString('th-TH')} บาท จึงไม่นับ incentive ให้ใคร` });
+    if (noRep) issues.push({ message: `${BONUS_DOC_LABELS[input.bonus!.bonusBase]}ไม่มีพนักงานขาย ยอด ${round2(noRep).toLocaleString('th-TH')} บาท จึงไม่นับ incentive ให้ใคร` });
   }
 
   const adjustments = new Map<number, number>();
@@ -330,7 +337,7 @@ export function calculateRun(input: CalcInput): RunResults {
         .map((st) => ({ ...st, base: round2(st.base), beforeStep: round2(st.beforeStep), commission: round2(st.commission) })),
       summary, debtRelease, subtotal, centralPercent: statement.centralPercent, central, debtHold,
       adjustments: adj, carryIn, tierBonus, tier: tier ? { index: tier.index, minAmount: tier.minAmount, ...(bySalary ? { salary: tier.salary ?? 0 } : {}) } : null, ...(salary !== undefined ? { salary } : {}),
-      ...(onOrders ? { bonusBase: 'SALE_ORDER' as const, saleOrderBase, saleOrderCount: ordersOf?.count ?? 0 } : {}), newCustomers, newCustomerBonus,
+      ...(onOrders ? { bonusBase: input.bonus!.bonusBase, saleOrderBase, saleOrderCount: ordersOf?.count ?? 0 } : {}), newCustomers, newCustomerBonus,
       payable: Math.max(0, total), carryOut: Math.min(0, total),
     };
   }).sort((x, y) => y.payable - x.payable || x.repName.localeCompare(y.repName));

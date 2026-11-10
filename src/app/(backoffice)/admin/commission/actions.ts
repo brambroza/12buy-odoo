@@ -14,7 +14,7 @@ import { statementSettings } from '@/lib/commission/statement';
 import * as repo from '@/lib/commission/repo';
 import * as service from '@/lib/commission/service';
 import { parseTargetLines } from '@/lib/commission/targets';
-import type { BonusTier, CommissionSource, PriceGroup, SummaryLine } from '@/lib/commission/types';
+import type { BonusBase, BonusTier, CommissionSource, PriceGroup, SummaryLine } from '@/lib/commission/types';
 import { probeOdooConnection } from '@/lib/odoo/rpc';
 import { decryptSecret, encryptSecret } from '@/lib/settings/crypto';
 
@@ -532,12 +532,13 @@ export async function saveBonusAction(formData: FormData) {
   const from = field(formData, 'newCustomerFrom');
   if (from && !isIsoDate(from)) fail(path, formData, 'วันเริ่มนับลูกค้าใหม่ไม่ถูกต้อง');
   if (newCustomerBonus > 0 && !from) fail(path, formData, 'ใส่วันเริ่มนับลูกค้าใหม่ด้วย ไม่งั้นลูกค้าเดิมทุกรายจะนับเป็นลูกค้าใหม่');
-  const bonusBase = field(formData, 'bonusBase') === 'SALE_ORDER' ? 'SALE_ORDER' as const : 'COLLECTION' as const;
+  const picked = field(formData, 'bonusBase');
+  const bonusBase: BonusBase = picked === 'INVOICE' || picked === 'SALE_ORDER' ? picked : 'COLLECTION';
   const settings = { bonusBase, bonusTiers, newCustomerBonus, newCustomerFrom: from || null };
   try {
     await repo.updateBonusSettings(source.id, settings);
   } catch (error) {
-    fail(path, formData, `บันทึกไม่ได้ (รัน migration 20261106150000_commission_bonus.sql${bonusBase === 'SALE_ORDER' ? ' และ 20261110150000_commission_sale_orders.sql' : ''} แล้วหรือยัง): ${errorText(error)}`);
+    fail(path, formData, `บันทึกไม่ได้ (รัน migration 20261106150000_commission_bonus.sql${bonusBase !== 'COLLECTION' ? ' และ 20261110150000_commission_sale_orders.sql, 20261110180000_commission_invoice_base.sql' : ''} แล้วหรือยัง): ${errorText(error)}`);
   }
   await audit(actor.id, 'commission.bonus.save', 'CommissionSource', source.id, { from: bonusSettings(source), to: settings });
   revalidatePath(BASE, 'layout');
@@ -560,11 +561,11 @@ export async function syncPeriodAction(formData: FormData) {
     .catch((error: unknown) => ({ ok: false as const, reason: `ดึงข้อมูลจาก Odoo ไม่สำเร็จ: ${errorText(error)}` }));
   if (!result.ok) fail(path, formData, result.reason);
   const ok = result as Extract<service.SyncResult, { ok: true }>;
-  await audit(actor.id, 'commission.sync', 'CommissionRun', `${source.id}:${period}`, { lines: ok.lines, receipts: ok.receipts, retro: ok.retro, refunds: ok.refunds, held: ok.held, released: ok.released, newCustomers: ok.newCustomers, saleOrders: ok.saleOrders });
+  await audit(actor.id, 'commission.sync', 'CommissionRun', `${source.id}:${period}`, { lines: ok.lines, receipts: ok.receipts, retro: ok.retro, refunds: ok.refunds, held: ok.held, released: ok.released, newCustomers: ok.newCustomers, saleOrders: ok.saleOrders, deferred: ok.deferred });
   revalidatePath(BASE, 'layout');
   await flash('ดึงข้อมูลจาก Odoo แล้ว', {
     icon: 'sync',
-    description: `${ok.receipts} รายการเงินเข้า · ${ok.lines} บรรทัด${ok.retro ? ` · ปรับปรุงย้อนหลัง ${ok.retro}` : ''}${ok.held ? ` · หักลูกหนี้ค้าง ${ok.held} บิล` : ''}${ok.released ? ` · คืนลูกหนี้ค้าง ${ok.released} บิล` : ''}${ok.newCustomers ? ` · ลูกค้าใหม่ ${ok.newCustomers} ราย` : ''}${ok.saleOrders !== null ? ` · ใบสั่งขาย ${ok.saleOrders} ใบ (incentive)` : ''}${ok.refunds.count ? ` · มีเงินคืนลูกค้า ${ok.refunds.count} รายการ (ยังไม่หักอัตโนมัติ ใช้รายการปรับยอด)` : ''}`,
+    description: `${ok.receipts} รายการเงินเข้า · ${ok.lines} บรรทัด${ok.retro ? ` · ปรับปรุงย้อนหลัง ${ok.retro}` : ''}${ok.held ? ` · หักลูกหนี้ค้าง ${ok.held} บิล` : ''}${ok.released ? ` · คืนลูกหนี้ค้าง ${ok.released} บิล` : ''}${ok.newCustomers ? ` · ลูกค้าใหม่ ${ok.newCustomers} ราย` : ''}${ok.saleOrders !== null ? ` · เอกสารขาย ${ok.saleOrders} ใบ (incentive)` : ''}${ok.deferred.count ? ` · รอจ่ายครบ ${ok.deferred.count} บิล (${ok.deferred.cash.toLocaleString('th-TH')} บาท ยกไปนับงวดที่จ่ายครบ)` : ''}${ok.refunds.count ? ` · มีเงินคืนลูกค้า ${ok.refunds.count} รายการ (ยังไม่หักอัตโนมัติ ใช้รายการปรับยอด)` : ''}`,
   });
   back(path, formData, { saved: '1' });
 }

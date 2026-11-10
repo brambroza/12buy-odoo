@@ -11,7 +11,7 @@ import { byRepAndGroup, commissionByInvoice, type InvoiceCommissionRow, type Rep
 import { getRun, getSource, listLedger, listPricelists, listSteps } from '@/lib/commission/repo';
 import { clientFor, periodCalendar } from '@/lib/commission/service';
 import { statementSettings } from '@/lib/commission/statement';
-import { EXCLUDED_LABELS, OWNER_FROM_LABELS, PAYMENT_KIND_LABELS, PRICE_GROUP_LABELS, type LineResult, type RepResult, type StoredLedgerLine } from '@/lib/commission/types';
+import { BONUS_BASE_LABELS, EXCLUDED_LABELS, OWNER_FROM_LABELS, PAYMENT_KIND_LABELS, PRICE_GROUP_LABELS, type LineResult, type RepResult, type StoredLedgerLine } from '@/lib/commission/types';
 
 export const dynamic = 'force-dynamic';
 
@@ -61,9 +61,9 @@ const REP_COLUMNS: Column<RepResult>[] = [
   { header: 'คืนลูกหนี้ค้าง', value: (r) => r.debtRelease ?? 0 },
   { header: 'หักส่วนกลาง', value: (r) => -(r.central ?? 0) },
   { header: 'หักลูกหนี้ค้าง', value: (r) => -(r.debtHold ?? 0) },
-  { header: 'ฐาน incentive', value: (r) => (r.bonusBase === 'SALE_ORDER' ? 'ยอดขายใบสั่งขาย' : 'ยอดเก็บ') },
-  { header: 'ยอดขายใบสั่งขาย ก่อน VAT', value: (r) => r.saleOrderBase ?? '' },
-  { header: 'ใบสั่งขาย (ใบ)', value: (r) => r.saleOrderCount ?? '' },
+  { header: 'ฐาน incentive', value: (r) => BONUS_BASE_LABELS[r.bonusBase ?? 'COLLECTION'] },
+  { header: 'ยอดขายฐาน incentive ก่อน VAT', value: (r) => r.saleOrderBase ?? '' },
+  { header: 'เอกสารขาย (ใบ)', value: (r) => r.saleOrderCount ?? '' },
   { header: 'ขั้นเงินพิเศษ', value: (r) => r.tier?.index ?? 0 },
   { header: 'เงินเดือนของขั้น', value: (r) => r.tier?.salary ?? '' },
   { header: 'เงินเดือนเซลล์', value: (r) => r.salary ?? '' },
@@ -104,12 +104,12 @@ function stepColumns(reps: readonly RepResult[]): Column<RepResult>[] {
   const keys = new Map<string, string>();
   for (const rep of reps) {
     for (const st of rep.steps ?? []) {
-      const key = `${st.minDays}-${st.maxDays}-${st.percent}`;
-      if (!keys.has(key)) keys.set(key, `เกินดิว ${stepRangeLabel(st.minDays === null ? null : { minDays: st.minDays, maxDays: st.maxDays })} × ${st.percent}%`);
+      const key = `${st.noSteps ? 'no-steps:' : ''}${st.minDays}-${st.maxDays}-${st.percent}`;
+      if (!keys.has(key)) keys.set(key, st.noSteps ? 'ไม่ได้ตั้งขั้นบันได × 100%' : `เกินดิว ${stepRangeLabel(st.minDays === null ? null : { minDays: st.minDays, maxDays: st.maxDays })} × ${st.percent}%`);
     }
   }
   return [...keys].map(([key, header]): Column<RepResult> => ({
-    header, value: (r) => r.steps?.find((st) => `${st.minDays}-${st.maxDays}-${st.percent}` === key)?.commission ?? 0,
+    header, value: (r) => r.steps?.find((st) => `${st.noSteps ? 'no-steps:' : ''}${st.minDays}-${st.maxDays}-${st.percent}` === key)?.commission ?? 0,
   }));
 }
 

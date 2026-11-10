@@ -36,7 +36,7 @@ export default async function CommissionStepsPage({ searchParams }: { searchPara
   return (
     <div className="space-y-4">
       <CommissionHeader ctx={ctx} path={PATH} title="ขั้นบันไดเกินดิว" showPeriod={false}
-        description="% ที่จ่ายจากค่าคอมพื้นฐาน ตามจำนวนวันที่เงินเข้าหลังวันครบกำหนดของใบแจ้งหนี้ (จ่ายก่อน/ตรงดิว = 0 วัน)" />
+        description="% ที่จ่ายจากค่าคอมพื้นฐาน ตามจำนวนวันที่เงินเข้าหลังวันครบกำหนดของใบแจ้งหนี้ (จ่ายก่อน/ตรงดิว = 0 วัน) · ไม่ได้ตั้งขั้นบันไดที่มีผลวันเงินเข้า = คิด 100% · ตั้งแล้วแต่เกินขั้นสุดท้าย = 0%" />
       <Notice saved={params.saved} error={params.error} />
       {!ctx.source ? <NoSource /> : (
         <>
@@ -57,7 +57,7 @@ export default async function CommissionStepsPage({ searchParams }: { searchPara
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {steps.length === 0 && <EmptyRow colSpan={4}>ยังไม่มีขั้นบันได (ทุกบิลจะได้ 0%) เพิ่มด้านล่าง หรือสร้างค่าเริ่มต้นที่หน้าอัตราค่าคอม</EmptyRow>}
+                {steps.length === 0 && <EmptyRow colSpan={4}>ยังไม่มีขั้นบันได (ทุกบิลคิด 100% ไม่ว่าจ่ายช้าเท่าไร) เพิ่มด้านล่าง หรือสร้างค่าเริ่มต้นที่หน้าอัตราค่าคอม</EmptyRow>}
                 {steps.map((s) => (
                   <TableRow key={s.id} className={isValidOn(s, today) ? undefined : 'opacity-60'}>
                     <TableCell data-label="เกินดิว" className="font-medium">{s.minDays}{s.maxDays === null ? ' วันขึ้นไป' : ` – ${s.maxDays} วัน`}</TableCell>

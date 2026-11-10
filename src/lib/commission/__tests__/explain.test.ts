@@ -39,6 +39,12 @@ describe('lineFormula', () => {
     expect(lineFormula(line(), undefined, [])).toEqual({ rule: 'ยังไม่คำนวณ', steps: '—' });
   });
 
+  it('says when no overdue steps are set up (100%)', () => {
+    const f = lineFormula(line(), result({ stepPercent: 100, commission: 900, stepRange: null, noSteps: true }), [rate()]);
+    expect(f.steps).toBe('100,000.00 × 0.9% = 900.00 × 100% (เกินดิว 6 วัน · ไม่ได้ตั้งขั้นบันได) = 900.00');
+    expect(f.terms?.at(-1)).toEqual({ label: 'เกินดิว 6 วัน · ไม่ได้ตั้งขั้นบันได', value: '100%', tone: undefined });
+  });
+
   it('describes a product override', () => {
     expect(rateScope(rate({ odooProductId: 9, productName: 'ยาง A' }))).toBe('สินค้า ยาง A');
   });

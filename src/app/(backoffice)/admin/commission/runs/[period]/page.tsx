@@ -20,7 +20,7 @@ import { isPeriod, periodDates, periodLabel, shiftPeriod, thaiDay, type PeriodCa
 import { lineFormula, type LineFormula } from '@/lib/commission/explain';
 import { commissionByInvoice, invoiceKeyOf, type InvoiceCommissionRow } from '@/lib/commission/report';
 import { getRun, listAdjustments, listLedger, listRates, listReps, listSaleOrders } from '@/lib/commission/repo';
-import { EXCLUDED_LABELS, OWNER_FROM_LABELS, PAYMENT_KIND_LABELS, RUN_STATUS_LABELS, RUN_STATUS_TONE, type RepResult, type RunResults } from '@/lib/commission/types';
+import { BONUS_BASE_LABELS, BONUS_DOC_LABELS, EXCLUDED_LABELS, isSalesBase, OWNER_FROM_LABELS, PAYMENT_KIND_LABELS, RUN_STATUS_LABELS, RUN_STATUS_TONE, type RepResult, type RunResults } from '@/lib/commission/types';
 import { baht } from '@/lib/shop/catalog';
 import { cn } from '@/lib/utils';
 import { addAdjustmentAction, calculateAction, deleteAdjustmentAction, runStepAction, savePeriodDatesAction, syncPeriodAction } from '../../actions';
@@ -52,7 +52,7 @@ export default async function CommissionRunPage({ params, searchParams }: { para
     sp.rep && !run?.snapshot?.rates ? listRates(source.id) : Promise.resolve([]),
   ]);
   // Sale orders behind a rep's incentive: those the run was calculated with, else the last pull.
-  const repOrders = sp.rep && (run?.snapshot?.saleOrders || source.bonusBase === 'SALE_ORDER') ? (run?.snapshot?.saleOrders ?? await listSaleOrders(source.id, period)).filter((o) => o.odooUserId === Number(sp.rep)) : [];
+  const repOrders = sp.rep && (run?.snapshot?.saleOrders || isSalesBase(source.bonusBase)) ? (run?.snapshot?.saleOrders ?? await listSaleOrders(source.id, period)).filter((o) => o.odooUserId === Number(sp.rep)) : [];
   const results = run?.results ?? null;
   const status = run?.status ?? 'DRAFT';
   const hidden = (<><input type="hidden" name="source" value={source.id} /><input type="hidden" name="period" value={period} /></>);
@@ -189,7 +189,7 @@ export default async function CommissionRunPage({ params, searchParams }: { para
                         {baht(r.commission)}
                         {r.commissionBeforeTarget !== undefined && r.commissionBeforeTarget !== r.commission && <span className="block text-xs text-destructive">ถ้าถึงเป้าจะได้ {baht(r.commissionBeforeTarget)}</span>}
                         {r.debtRelease ? <span className="block text-xs text-emerald-700">คืนลูกหนี้ +{baht(r.debtRelease)}</span> : null}
-                        {r.bonusBase === 'SALE_ORDER' && <Link href={drill({ so: '1' })} scroll={false} className="block text-xs text-sky-700 hover:underline">ยอดขาย SO {baht(r.saleOrderBase ?? 0)} ({r.saleOrderCount ?? 0} ใบ)</Link>}
+                        {isSalesBase(r.bonusBase) && <Link href={drill({ so: '1' })} scroll={false} className="block text-xs text-sky-700 hover:underline">{BONUS_BASE_LABELS[r.bonusBase!]} {baht(r.saleOrderBase ?? 0)} ({r.saleOrderCount ?? 0} ใบ)</Link>}
                         {r.tierBonus ? <span className="block text-xs text-emerald-700">Incentive ขั้น {r.tier?.index} +{baht(r.tierBonus)}{r.tier?.salary !== undefined && r.salary != null ? ` (${baht(r.tier.salary)} − ${baht(r.salary)})` : ''}</span> : null}
                         {r.newCustomers?.length ? <span className={cn('block text-xs', r.newCustomerBonus ? 'text-emerald-700' : 'text-muted-foreground')}>ลูกค้าใหม่ {r.newCustomers.length} ราย +{baht(r.newCustomerBonus ?? 0)}</span> : null}
                       </TableCell>
@@ -314,7 +314,7 @@ export default async function CommissionRunPage({ params, searchParams }: { para
           )}
           {repOrders.length > 0 && (
             <details className="rounded-xl border border-sky-200 bg-sky-500/5 p-3 text-sm" open={sp.so === '1'}>
-              <summary className="cursor-pointer font-semibold">ใบสั่งขายที่ใช้คิด incentive · {repOrders.length} ใบ · ก่อน VAT {baht(repOrders.reduce((t, o) => t + o.amountUntaxed, 0))}</summary>
+              <summary className="cursor-pointer font-semibold">{BONUS_DOC_LABELS[drillResult?.bonusBase ?? source.bonusBase]}ที่ใช้คิด incentive · {repOrders.length} ใบ · ก่อน VAT {baht(repOrders.reduce((t, o) => t + o.amountUntaxed, 0))}</summary>
               <ul className="mt-2 divide-y divide-border rounded-lg border border-border bg-background">
                 {[...repOrders].sort((a, b) => b.amountUntaxed - a.amountUntaxed).map((o) => (
                   <li key={o.orderId} className="flex flex-wrap items-center gap-x-3 px-3 py-1.5 text-xs">
@@ -450,7 +450,7 @@ function RunSummary({ results }: { results: RunResults }) {
           {row('ค่าคอมตามอัตรา', before)}
           {before !== commission && row('ไม่ได้เพราะไม่ถึงเป้า', commission - before, 'bad')}
           {deducted ? row('หัก ส่วนกลาง / ลูกหนี้ค้างชำระ', -deducted, 'bad') : null}
-          {bonus ? row(results.reps.some((r) => r.bonusBase === 'SALE_ORDER') ? 'บวก incentive (ยอดขายใบสั่งขาย) / ลูกค้าใหม่' : 'บวก incentive (ยอดเก็บ) / ลูกค้าใหม่', bonus, 'good') : null}
+          {bonus ? row(results.reps.some((r) => isSalesBase(r.bonusBase)) ? `บวก incentive (${BONUS_BASE_LABELS[results.reps.find((r) => isSalesBase(r.bonusBase))!.bonusBase!]}) / ลูกค้าใหม่` : 'บวก incentive (ยอดเก็บ) / ลูกค้าใหม่', bonus, 'good') : null}
           {other ? row('ปรับปรุง / คืนลูกหนี้ / ยกมา', other) : null}
           {row('ค่าคอมที่ต้องจ่าย', results.totalPayable, 'strong', `${reps.filter((r) => r.payable > 0).length} คน`)}
         </ul>
@@ -482,7 +482,7 @@ function RepExplain({ rep }: { rep: RepResult }) {
       {rep.commissionBeforeTarget !== undefined && rep.commissionBeforeTarget !== rep.commission && <span className="text-destructive"> แต่ไม่ถึงเป้า {baht(rep.target ?? 0)} จึงได้ {baht(rep.commission)}</span>}
       {rep.central > 0 && <> หักส่วนกลาง {baht(rep.central)}</>}
       {rep.debtHold > 0 && <> หักลูกหนี้ค้าง {baht(rep.debtHold)}</>}
-      {rep.tierBonus ? <> บวก incentive ขั้น {rep.tier?.index}{rep.bonusBase === 'SALE_ORDER' ? ` จากยอดขายใบสั่งขาย ${baht(rep.saleOrderBase ?? 0)} (ไม่ต้องถึงเป้า)` : ''} {baht(rep.tierBonus)}{rep.tier?.salary !== undefined && rep.salary != null ? ` (เงินเดือนขั้น ${baht(rep.tier.salary)} − เงินเดือน ${baht(rep.salary)})` : ''}</> : null}
+      {rep.tierBonus ? <> บวก incentive ขั้น {rep.tier?.index}{isSalesBase(rep.bonusBase) ? ` จาก${BONUS_BASE_LABELS[rep.bonusBase!]} ${baht(rep.saleOrderBase ?? 0)} (ไม่ต้องถึงเป้า)` : ''} {baht(rep.tierBonus)}{rep.tier?.salary !== undefined && rep.salary != null ? ` (เงินเดือนขั้น ${baht(rep.tier.salary)} − เงินเดือน ${baht(rep.salary)})` : ''}</> : null}
       {rep.newCustomerBonus ? <> บวกลูกค้าใหม่ {rep.newCustomers?.length} ราย {baht(rep.newCustomerBonus)}</> : null}
       {rep.adjustments !== 0 && <> ปรับ {baht(rep.adjustments)}</>}
       {' '}จ่ายจริง <b>{baht(rep.payable)}</b>

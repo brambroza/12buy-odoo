@@ -78,7 +78,7 @@ describe('calculateRun with bonuses', () => {
     productId: 1, productName: 'ยาง', brand: 'AT', family: 'TBR', qty: 10, base, gross: base * 1.07, issues: [],
   });
   const BONUS_ONLY = JFC_2569_TIERS.map(({ minAmount, bonus }) => ({ minAmount, bonus }));
-  const calc = (base: number, target: number, salaries?: { odooUserId: number; period: string; amount: number }[], tiers = BONUS_ONLY, bonusBase: 'COLLECTION' | 'SALE_ORDER' = 'COLLECTION', saleOrders?: { odooUserId: number | null; repName: string | null; amountUntaxed: number; period: string }[]) => calculateRun({
+  const calc = (base: number, target: number, salaries?: { odooUserId: number; period: string; amount: number }[], tiers = BONUS_ONLY, bonusBase: 'COLLECTION' | 'SALE_ORDER' | 'INVOICE' = 'COLLECTION', saleOrders?: { odooUserId: number | null; repName: string | null; amountUntaxed: number; period: string }[]) => calculateRun({
     lines: [line(base)],
     rates: [{ id: 'r', sourceId: 's', brand: '*', family: 'TBR', priceGroup: '*', odooPricelistId: null, pricelistName: null, odooProductId: null, productName: null, kind: 'PER_UNIT', value: 15, validFrom: '2026-01-01', validTo: null, note: null }],
     steps: [{ id: 'st', sourceId: 's', minDays: 0, maxDays: null, percent: 100, validFrom: '2026-01-01', validTo: null }],
@@ -133,6 +133,16 @@ describe('calculateRun with bonuses', () => {
     const r = calc(100_000, 1_000_000, [{ odooUserId: -7, period: '2026-11', amount: 18_000 }], JFC_2569_TIERS, 'SALE_ORDER', orders);
     expect(r.reps[0]).toMatchObject({ targetMet: false, commission: 0, bonusBase: 'SALE_ORDER', saleOrderBase: 2_950_000, saleOrderCount: 2, tier: { index: 3 }, tierBonus: 7_000, newCustomerBonus: 0, payable: 7_000 });
     expect(r.issues.some((i) => i.message.startsWith('ใบสั่งขายไม่มีพนักงานขาย'))).toBe(true);
+  });
+
+  it('on invoices: credit notes reduce the base, no target needed', () => {
+    const docs = [
+      { odooUserId: -7, repName: 'Ake', amountUntaxed: 2_500_000, period: '2026-11' },
+      { odooUserId: -7, repName: 'Ake', amountUntaxed: -250_000, period: '2026-11' },
+    ];
+    const r = calc(100_000, 1_000_000, undefined, BONUS_ONLY, 'INVOICE', docs).reps[0];
+    expect(r).toMatchObject({ targetMet: false, bonusBase: 'INVOICE', saleOrderBase: 2_250_000, tier: null, tierBonus: 0 });
+    expect(calc(100_000, 1_000_000, undefined, BONUS_ONLY, 'INVOICE', docs.slice(0, 1)).reps[0]).toMatchObject({ tier: { index: 1 }, tierBonus: 3_000 });
   });
 
   it('on sale orders: a rep with orders but no collections still gets the incentive', () => {

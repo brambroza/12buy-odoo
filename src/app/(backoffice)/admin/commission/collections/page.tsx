@@ -12,7 +12,7 @@ import { pickStepPercent } from '@/lib/commission/calc';
 import { commissionContext, ctxQuery } from '@/lib/commission/context';
 import { periodDates, periodLabel, thaiDay } from '@/lib/commission/period';
 import { groupByInvoice } from '@/lib/commission/report';
-import { getRun, listLedger, listSteps } from '@/lib/commission/repo';
+import { getRun, listDeferred, listLedger, listSteps } from '@/lib/commission/repo';
 import { baht } from '@/lib/shop/catalog';
 import { cn } from '@/lib/utils';
 import { syncPeriodAction } from '../actions';
@@ -31,7 +31,9 @@ export default async function CommissionCollectionsPage({ searchParams }: { sear
   const params = await searchParams;
   const ctx = await commissionContext(params);
   const source = ctx.source;
-  const [ledger, steps, run] = source ? await Promise.all([listLedger(source.id, ctx.period), listSteps(source.id), getRun(source.id, ctx.period)]) : [[], [], null];
+  const [ledger, steps, run, deferred] = source
+    ? await Promise.all([listLedger(source.id, ctx.period), listSteps(source.id), getRun(source.id, ctx.period), listDeferred(source.id, ctx.period)])
+    : [[], [], null, []];
   const all = groupByInvoice(ledger);
   const reps = [...new Map(all.filter((r) => r.odooUserId !== null).map((r) => [String(r.odooUserId), r.repName ?? ''])).entries()].sort((a, b) => a[1].localeCompare(b[1]));
   const q = searchText(params.q);
@@ -69,6 +71,23 @@ export default async function CommissionCollectionsPage({ searchParams }: { sear
             <Tile label="ใบแจ้งหนี้" value={String(new Set(rows.map((r) => r.invoiceName).filter(Boolean)).size)} sub={`${new Set(rows.map((r) => r.receiptName)).size} ใบเสร็จ/รายการเงินเข้า`} />
             <Tile label="ต้องตรวจสอบ" value={String(withIssues)} sub="ไม่มีพนักงาน / ไม่มี pricelist / ไม่ใช่ใบแจ้งหนี้" warn={withIssues > 0} />
           </section>
+
+          {deferred.length > 0 && (
+            <details className="rounded-xl border border-amber-300 bg-amber-500/5 p-3 text-sm">
+              <summary className="cursor-pointer font-medium text-amber-800">
+                รอจ่ายครบ {deferred.length} บิล · เงินเข้ารอบนี้ {baht(deferred.reduce((t, d) => t + d.cashThisPeriod, 0))} ยังไม่นับ (นับทั้งใบในงวดที่จ่ายครบ)
+              </summary>
+              <ul className="mt-2 divide-y divide-border rounded-lg border border-border bg-background">
+                {deferred.map((d) => (
+                  <li key={d.invoiceId} className="flex flex-wrap items-center gap-x-3 px-3 py-1.5 text-xs">
+                    <span className="font-medium">{d.invoiceName}</span><span className="flex-1 text-muted-foreground">{d.partnerName}</span>
+                    <span className="tabular-nums">บิล {baht(d.amountTotal)}</span><span className="tabular-nums">ตัดชำระแล้ว {baht(d.settled)}</span>
+                    <span className="font-semibold tabular-nums text-amber-800">ค้าง {baht(Math.max(0, d.amountTotal - d.settled))}</span>
+                  </li>
+                ))}
+              </ul>
+            </details>
+          )}
 
           <div className="flex flex-wrap items-center gap-2">
             <FilterChip href={href({ rep: undefined })} active={!params.rep}>ทุกคน</FilterChip>

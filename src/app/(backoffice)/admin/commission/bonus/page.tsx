@@ -51,7 +51,8 @@ export default async function CommissionBonusPage({ searchParams }: { searchPara
               <legend className="mb-1 text-xs font-medium">วัดขั้นจาก</legend>
               {([
                 ['COLLECTION', 'ยอดเก็บ (เงินเข้า)', 'ยอดเดียวกับที่ใช้วัดเป้า · ได้เฉพาะเมื่อถึงเป้า'],
-                ['SALE_ORDER', 'ยอดขายจากใบสั่งขาย Odoo', 'ใบสั่งขายที่ยืนยันแล้วตามวันที่สั่งในรอบ ก่อน VAT ทุกสินค้า ไม่นับที่ยกเลิก · ไม่ต้องถึงเป้า · ค่าคอมยังคิดจากยอดเก็บเหมือนเดิม'],
+                ['INVOICE', 'ยอดขายตามใบแจ้งหนี้ Odoo', 'ใบแจ้งหนี้ที่ลงบัญชีแล้วตามวันที่ใบแจ้งหนี้ในรอบ ก่อน VAT หักใบลดหนี้ของรอบ ทุกสินค้า · ไม่ต้องถึงเป้า · ค่าคอมยังคิดจากยอดเก็บเหมือนเดิม'],
+                ...(source.bonusBase === 'SALE_ORDER' ? [['SALE_ORDER', 'ยอดขายจากใบสั่งขาย Odoo (เดิม)', 'ใบสั่งขายที่ยืนยันแล้วตามวันที่สั่ง · เปลี่ยนเป็นใบแจ้งหนี้แทนได้'] as const] : []),
               ] as const).map(([value, label, hint]) => (
                 <label key={value} className="flex max-w-sm cursor-pointer items-start gap-2 rounded-lg border border-border p-2 has-[:checked]:border-primary has-[:checked]:bg-primary/5">
                   <input type="radio" name="bonusBase" value={value} defaultChecked={source.bonusBase === value} className="mt-1" />

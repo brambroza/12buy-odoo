@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { ISSUE, buildLedger, isTagRep, lastCategorySegment, repTagName, retroDiff, splitCategory, tagRepKey, type LedgerInput, type RawInvoice } from '../ledger';
+import { ISSUE, buildLedger, isTagRep, lastCategorySegment, planFullPayment, repTagName, retroDiff, splitCategory, tagRepKey, withFinalCashDate, type LedgerInput, type RawInvoice } from '../ledger';
 
 const invoice = (over: Partial<RawInvoice> = {}): RawInvoice => ({
   id: 100, name: 'INV/2026/0001', invoiceDate: '2026-09-01', dueDate: '2026-10-01', amountTotal: 107_000, partnerId: 7, partnerName: 'ร้านยางดี', invoiceUser: null, ...over,
@@ -147,5 +147,30 @@ describe('retroDiff', () => {
     expect(retroDiff(paid, paid, '2026-10')).toEqual([]);
     const firstFix = retroDiff(paid, [], '2026-10');
     expect(retroDiff([...paid, ...firstFix], [], '2026-10')).toEqual([]);
+  });
+});
+
+describe('planFullPayment', () => {
+  const range = { start: '2026-10-21', end: '2026-11-20' };
+  const invoices = new Map([[1, { amountTotal: 38_500 }], [2, { amountTotal: 1_000 }], [3, { amountTotal: 500 }]]);
+  const s = (partialId: number, invoiceId: number, amount: number, date: string | null, cash = true) => ({ partialId, invoiceId, amount, date, cash, name: `P${partialId}` });
+
+  it('defers part-paid invoices, adds earlier cash of invoices completed now, skips credit notes', () => {
+    const out = planFullPayment({
+      range, invoices,
+      settlements: [s(10, 1, 38_000, '2026-10-30'), s(20, 2, 400, '2026-10-01'), s(21, 2, 100, '2026-10-02', false), s(22, 2, 500, '2026-11-05'), s(30, 3, 500, '2026-09-01'), s(31, 3, 50, null)],
+      currentPartialIds: new Set([10, 22, 31]),
+    });
+    expect([...out.deferred]).toEqual([1]);
+    // Invoice 2: the 400 cash of 1 Oct joins this period; the 100 credit note is not cash. Invoice 3 was settled before: nothing added.
+    expect(out.earlier.map((e) => e.partialId)).toEqual([20]);
+  });
+});
+
+describe('withFinalCashDate', () => {
+  it('dates every line of an invoice with its last cash and recomputes days overdue', () => {
+    const base = { kind: 'COLLECTION', invoiceId: 1, dueDate: '2026-10-01', overdueDays: 0 } as const;
+    const out = withFinalCashDate([{ ...base, cashDate: '2026-10-02' } as never, { ...base, cashDate: '2026-10-11', overdueDays: 10 } as never, { ...base, invoiceId: null, cashDate: '2026-10-01' } as never]);
+    expect(out.map((l) => [l.cashDate, l.overdueDays])).toEqual([['2026-10-11', 10], ['2026-10-11', 10], ['2026-10-01', 0]]);
   });
 });

@@ -9,6 +9,7 @@ import type {
   NewCustomer, OverdueStep, PriceGroup, RunStatus, StatementSettings, StoredLedgerLine,
 } from './types';
 import { bonusSettings, type NewCustomerRow } from './bonus';
+import type { DeferredInvoice } from './ledger';
 import type { PeriodOverride } from './period';
 import type { NewHold } from './statement';
 
@@ -431,6 +432,21 @@ export async function ensureRun(sourceId: string, period: string): Promise<Commi
 export async function updateRun(id: string, fromStatus: RunStatus[], patch: Partial<Omit<CommissionRun, 'id' | 'sourceId' | 'period' | 'createdAt'>>): Promise<boolean> {
   const data = unwrap(await db().from('CommissionRun').update(toRow({ ...patch, updatedAt: new Date() })).eq('id', id).in('status', fromStatus).select('id'));
   return Array.isArray(data) && data.length > 0;
+}
+
+/** Stores the invoices waiting to be fully paid; skipped before migration 20261110170000 ran. */
+export async function saveDeferred(runId: string, deferred: readonly DeferredInvoice[]): Promise<void> {
+  const result = await db().from('CommissionRun').update({ deferred }).eq('id', runId);
+  if (result.error && missingTable(result.error.message, 'deferred')) return;
+  unwrap(result);
+}
+
+/** Invoices of a period waiting to be fully paid ([] before the migration or the first pull). */
+export async function listDeferred(sourceId: string, period: string): Promise<DeferredInvoice[]> {
+  const result = await db().from('CommissionRun').select('deferred').eq('sourceId', sourceId).eq('period', period).maybeSingle();
+  if (result.error && missingTable(result.error.message, 'deferred')) return [];
+  const row = rowOrNull<{ deferred: DeferredInvoice[] | null }>(result);
+  return Array.isArray(row?.deferred) ? row.deferred : [];
 }
 
 // ---------- adjustments ----------

@@ -52,9 +52,18 @@ export const OWNER_FROM_LABELS: Record<OwnerFrom, string> = { tag: 'tag ลู�
 export type BonusTier = { minAmount: number; bonus: number; salary?: number };
 
 /** What the bonus ladder is measured on: collections (gated by the target) or confirmed sale orders (no gate). */
-export type BonusBase = 'COLLECTION' | 'SALE_ORDER';
+export type BonusBase = 'COLLECTION' | 'SALE_ORDER' | 'INVOICE';
 
-/** A confirmed Odoo sale order of a period with its rep (table CommissionSaleOrder, migration 20261110150000). */
+/** True for a ladder measured on sales documents (invoices or sale orders): no target gate. */
+export const isSalesBase = (base: BonusBase | undefined): base is 'SALE_ORDER' | 'INVOICE' => base === 'SALE_ORDER' || base === 'INVOICE';
+/** What the ladder is measured on, and the document it counts, in Thai. */
+export const BONUS_BASE_LABELS: Record<BonusBase, string> = { COLLECTION: 'ยอดเก็บ', SALE_ORDER: 'ยอดขายใบสั่งขาย', INVOICE: 'ยอดขายตามใบแจ้งหนี้' };
+export const BONUS_DOC_LABELS: Record<BonusBase, string> = { COLLECTION: 'รายการเงินเข้า', SALE_ORDER: 'ใบสั่งขาย', INVOICE: 'ใบแจ้งหนี้ / ใบลดหนี้' };
+
+/**
+ * A sales document behind the incentive (table CommissionSaleOrder, migration 20261110150000): a
+ * confirmed sale order, or with the invoice base a posted invoice (credit notes negative).
+ */
 export type SaleOrder = {
   orderId: number; orderName: string; orderDate: string; partnerName: string;
   odooUserId: number | null; repName: string | null; amountUntaxed: number; amountTotal: number; period: string;
@@ -225,10 +234,12 @@ export type LineResult = {
   /** Commission at the rate (× special %) before the overdue step, and the step range used (null = none). */
   beforeStep?: number;
   stepRange?: { minDays: number; maxDays: number | null } | null;
+  /** No overdue step was set up for the cash date, so the line is paid at 100%. */
+  noSteps?: boolean;
 };
 
 /** A rep's commission per overdue step: how late the money came in and what that did to the pay. */
-export type StepAmount = { minDays: number | null; maxDays: number | null; percent: number; base: number; lines: number; beforeStep: number; commission: number };
+export type StepAmount = { minDays: number | null; maxDays: number | null; percent: number; base: number; lines: number; beforeStep: number; commission: number; noSteps?: boolean };
 
 /** One row of a rep's statement. */
 /** A statement row's commission, with its base before VAT and the rates used (from the rates tab). */

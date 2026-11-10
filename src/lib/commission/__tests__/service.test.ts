@@ -4,7 +4,7 @@ import type { CommissionRun, CommissionSource, LedgerLine } from '../types';
 const repo = vi.hoisted(() => ({
   ensureRun: vi.fn(), getRun: vi.fn(), updateRun: vi.fn(), listBookedFor: vi.fn(), replaceLedger: vi.fn(), listLedger: vi.fn(), listRates: vi.fn(), listSteps: vi.fn(),
   listPricelists: vi.fn(), listTargets: vi.fn(), listSalaries: vi.fn(), listAdjustments: vi.fn(), listReps: vi.fn(), listDebtHolds: vi.fn(), applyDebtPlan: vi.fn(), listPeriodOverrides: vi.fn(),
-  listNewCustomers: vi.fn(), replaceNewCustomers: vi.fn(), upsertReps: vi.fn(), listSaleOrders: vi.fn(), replaceSaleOrders: vi.fn(),
+  listNewCustomers: vi.fn(), replaceNewCustomers: vi.fn(), upsertReps: vi.fn(), listSaleOrders: vi.fn(), replaceSaleOrders: vi.fn(), saveDeferred: vi.fn(),
 }));
 const odoo = vi.hoisted(() => ({ fetchCollections: vi.fn(), fetchCredits: vi.fn(), fetchOverdueInvoices: vi.fn(), fetchPaidInvoiceIds: vi.fn(), fetchFirstInvoices: vi.fn(), fetchRepDirectory: vi.fn(), fetchSaleOrders: vi.fn() }));
 vi.mock('../repo', () => repo);

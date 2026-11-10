@@ -51,7 +51,7 @@ export function lineFormula(line: LedgerLine, result: LineResult | undefined, ra
   const parts = [`${basic} = ${money.format(basicAmount)}`];
   if (result.specialPercent !== 100) parts.push(`× ${result.specialPercent}% (ราคาพิเศษ) = ${money.format((basicAmount * result.specialPercent) / 100)}`);
   const days = line.overdueDays ?? 0;
-  const range = result.stepRange === undefined ? '' : ` · ขั้น ${stepRangeLabel(result.stepRange)}`;
+  const range = result.noSteps ? ' · ไม่ได้ตั้งขั้นบันได' : result.stepRange === undefined ? '' : ` · ขั้น ${stepRangeLabel(result.stepRange)}`;
   parts.push(`× ${result.stepPercent}% (เกินดิว ${days} วัน${range}) = ${money.format(result.commission)}`);
   const perUnit = rate?.kind === 'PER_UNIT' || result.rateLabel.includes('/หน่วย');
   const terms: FormulaTerm[] = [
@@ -60,7 +60,7 @@ export function lineFormula(line: LedgerLine, result: LineResult | undefined, ra
   ];
   if (result.specialPercent !== 100) terms.push({ label: 'ราคาพิเศษ', value: `${result.specialPercent}%`, tone: 'down' });
   terms.push({
-    label: `เกินดิว ${days} วัน${result.stepRange === undefined ? '' : ` · ขั้น ${stepRangeLabel(result.stepRange)}`}`,
+    label: `เกินดิว ${days} วัน${range}`,
     value: `${result.stepPercent}%`, tone: result.stepPercent > 100 ? 'up' : result.stepPercent < 100 ? 'down' : undefined,
   });
   return { rule, terms, result: money.format(result.commission), steps: parts.join(' '), excluded: reason ? EXCLUDED_LABELS[reason] : undefined };

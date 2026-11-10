@@ -103,9 +103,16 @@ describe('lineCommission', () => {
     const late = lineCommission(line({ cashDate: '2026-10-08' }), { rates: [rate({ validFrom: '2026-11-04' })], steps: STEPS }, PRICELISTS[0]);
     expect(late.commission).toBe(0);
     expect(late.issue).toContain('เริ่มใช้ 2026-11-04 หลังวันเงินเข้า 2026-10-08');
+    // No overdue step in force on the cash date: paid at 100%, no warning.
     const noStep = lineCommission(line({ cashDate: '2026-10-08' }), { rates: RATES, steps: [step(0, 10, 110, '2026-11-04')] }, PRICELISTS[0]);
-    expect(noStep.commission).toBe(0);
-    expect(noStep.issue).toContain('ไม่มีขั้นบันไดเกินดิวที่มีผลวันที่เงินเข้า 2026-10-08');
+    expect(noStep).toMatchObject({ stepPercent: 100, noSteps: true, stepRange: null });
+    expect(noStep.commission).toBeCloseTo(noStep.beforeStep!, 6);
+    expect(noStep.commission).toBeGreaterThan(0);
+    expect(noStep.issue).toBeUndefined();
+    expect(lineCommission(line({ overdueDays: 400 }), { rates: RATES, steps: [] }, PRICELISTS[0])).toMatchObject({ stepPercent: 100, noSteps: true });
+    expect(pickStepPercent([], 400, '2026-10-08')).toBe(100);
+    // With steps set up, beyond the last one still pays 0%.
+    expect(pickStepPercent(STEPS, 400, '2026-10-08')).toBe(0);
     expect(lineCommission(line({ overdueDays: 40 }), { rates: RATES, steps: STEPS }, PRICELISTS[0]).issue).toBeUndefined();
   });
 });

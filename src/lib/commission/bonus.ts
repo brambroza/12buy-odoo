@@ -54,7 +54,7 @@ export function tierBonusAmount(tier: BonusTier, bySalary: boolean, repSalary: n
 export function bonusSettings(source: Partial<BonusSettings>): BonusSettings {
   const from = source.newCustomerFrom ? String(source.newCustomerFrom).slice(0, 10) : null;
   return {
-    bonusBase: source.bonusBase === 'SALE_ORDER' ? 'SALE_ORDER' : 'COLLECTION',
+    bonusBase: source.bonusBase === 'SALE_ORDER' || source.bonusBase === 'INVOICE' ? source.bonusBase : 'COLLECTION',
     bonusTiers: normalizeTiers(source.bonusTiers), newCustomerBonus: Math.max(0, Number(source.newCustomerBonus ?? 0) || 0), newCustomerFrom: from,
   };
 }
