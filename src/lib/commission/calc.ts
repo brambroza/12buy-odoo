@@ -8,7 +8,7 @@
 import { paysBySalary, pickTier, tierBonusAmount } from './bonus';
 import { OTHER_SUMMARY, statementSettings, summaryKeyOf } from './statement';
 import type {
-  BonusSettings, CommissionAdjustment, CommissionPricelist, CommissionRate, CommissionRep, CommissionSalary, CommissionTarget, CreditNote, DebtHold, ExcludedAmount, ExcludedReason, LedgerLine, LineResult,
+  BonusSettings, CommissionAdjustment, CommissionPricelist, CommissionRate, CommissionRep, CommissionSalary, CommissionTarget, CreditNote, SaleOrder, DebtHold, ExcludedAmount, ExcludedReason, LedgerLine, LineResult,
   NewCustomer, OverdueStep, PriceGroup, RepResult, RunResults, StatementSettings, StepAmount,
 } from './types';
 import { PRICE_GROUP_LABELS } from './types';
@@ -109,6 +109,8 @@ export type CalcInput = {
   bonus?: BonusSettings;
   /** Rep salaries; with a salary ladder the bonus is tier salary − the rep's salary of `period`. */
   salaries?: readonly Pick<CommissionSalary, 'odooUserId' | 'period' | 'amount'>[];
+  /** Confirmed sale orders of the period: the ladder base when `bonus.bonusBase` is 'SALE_ORDER'. */
+  saleOrders?: readonly Pick<SaleOrder, 'odooUserId' | 'repName' | 'amountUntaxed' | 'period'>[];
   /** New customers counted in the period (those of other periods are ignored). */
   newCustomers?: readonly Pick<NewCustomer, 'odooUserId' | 'repName' | 'partnerName' | 'invoiceName' | 'period'>[];
 };
@@ -270,6 +272,23 @@ export function calculateRun(input: CalcInput): RunResults {
   const bySalary = paysBySalary(tiers);
   const salaries = new Map((input.salaries ?? []).filter((x) => x.period === input.period).map((x) => [x.odooUserId, x.amount]));
   const perCustomer = input.bonus?.newCustomerBonus ?? 0;
+  // Incentive on sale orders: the ladder is measured on each rep's confirmed orders, no target gate.
+  const onOrders = input.bonus?.bonusBase === 'SALE_ORDER';
+  const orders = new Map<number, { base: number; count: number }>();
+  if (onOrders) {
+    let noRep = 0;
+    for (const o of input.saleOrders ?? []) {
+      if (o.period !== input.period) continue;
+      if (o.odooUserId === null) { noRep += o.amountUntaxed; continue; }
+      if (input.inactive?.has(o.odooUserId)) continue;
+      accFor(o.odooUserId, o.repName);
+      const t = orders.get(o.odooUserId) ?? { base: 0, count: 0 };
+      t.base += o.amountUntaxed;
+      t.count += 1;
+      orders.set(o.odooUserId, t);
+    }
+    if (noRep) issues.push({ message: `ใบสั่งขายไม่มีพนักงานขาย ยอด ${round2(noRep).toLocaleString('th-TH')} บาท จึงไม่นับ incentive ให้ใคร` });
+  }
 
   const adjustments = new Map<number, number>();
   for (const adj of input.adjustments) adjustments.set(adj.odooUserId, (adjustments.get(adj.odooUserId) ?? 0) + adj.amount);
@@ -292,10 +311,14 @@ export function calculateRun(input: CalcInput): RunResults {
     const debtHold = round2(a.held);
     const adj = round2(adjustments.get(odooUserId) ?? 0);
     const carryIn = round2(Math.min(0, input.carryIn.get(odooUserId) ?? 0));
-    const tier = pickTier(tiers, base);
+    const ordersOf = orders.get(odooUserId);
+    const saleOrderBase = round2(ordersOf?.base ?? 0);
+    const tier = pickTier(tiers, onOrders ? saleOrderBase : base);
+    // On sale orders the incentive needs no target; on collections only when the target is met (as before).
+    const bonusAllowed = onOrders || targetMet;
     const salary = bySalary ? salaries.get(odooUserId) ?? null : undefined;
-    if (tier && salary === null && targetMet) issues.push({ message: `ยังไม่ได้ตั้งเงินเดือนของ ${a.name} รอบนี้ จึงยังคิดเงินพิเศษขั้น ${tier.index} ไม่ได้ (ตั้งที่หน้าเป้า)` });
-    const tierBonus = targetMet && tier ? round2(tierBonusAmount(tier, bySalary, salary ?? null)) : 0;
+    if (tier && salary === null && bonusAllowed) issues.push({ message: `ยังไม่ได้ตั้งเงินเดือนของ ${a.name} รอบนี้ จึงยังคิดเงินพิเศษขั้น ${tier.index} ไม่ได้ (ตั้งที่หน้าเป้า)` });
+    const tierBonus = bonusAllowed && tier ? round2(tierBonusAmount(tier, bySalary, salary ?? null)) : 0;
     const newCustomers = newByRep.get(odooUserId) ?? [];
     const newCustomerBonus = targetMet ? round2(newCustomers.length * perCustomer) : 0;
     const total = round2(subtotal - central - debtHold + tierBonus + newCustomerBonus + adj + carryIn);
@@ -306,7 +329,8 @@ export function calculateRun(input: CalcInput): RunResults {
       steps: [...a.steps.values()].sort((x, y) => (x.minDays ?? Infinity) - (y.minDays ?? Infinity))
         .map((st) => ({ ...st, base: round2(st.base), beforeStep: round2(st.beforeStep), commission: round2(st.commission) })),
       summary, debtRelease, subtotal, centralPercent: statement.centralPercent, central, debtHold,
-      adjustments: adj, carryIn, tierBonus, tier: tier ? { index: tier.index, minAmount: tier.minAmount, ...(bySalary ? { salary: tier.salary ?? 0 } : {}) } : null, ...(salary !== undefined ? { salary } : {}), newCustomers, newCustomerBonus,
+      adjustments: adj, carryIn, tierBonus, tier: tier ? { index: tier.index, minAmount: tier.minAmount, ...(bySalary ? { salary: tier.salary ?? 0 } : {}) } : null, ...(salary !== undefined ? { salary } : {}),
+      ...(onOrders ? { bonusBase: 'SALE_ORDER' as const, saleOrderBase, saleOrderCount: ordersOf?.count ?? 0 } : {}), newCustomers, newCustomerBonus,
       payable: Math.max(0, total), carryOut: Math.min(0, total),
     };
   }).sort((x, y) => y.payable - x.payable || x.repName.localeCompare(y.repName));

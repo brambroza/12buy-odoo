@@ -8,7 +8,7 @@ import { requirePermission } from '@/lib/auth/session';
 import { commissionContext, ctxQuery } from '@/lib/commission/context';
 import { periodLabel } from '@/lib/commission/period';
 import { paysBySalary, pickTier, tierBonusAmount } from '@/lib/commission/bonus';
-import { getRun, listLedger, listReps, listSalaries, listTargets } from '@/lib/commission/repo';
+import { getRun, listLedger, listReps, listSalaries, listSaleOrders, listTargets } from '@/lib/commission/repo';
 import { isLocked, targetReps } from '@/lib/commission/service';
 import { baht } from '@/lib/shop/catalog';
 import { copyTargetsAction, importTargetsAction, saveTargetsAction } from '../actions';
@@ -34,6 +34,10 @@ export default async function CommissionTargetsPage({ searchParams }: { searchPa
   const targetOf = new Map(targets.map((t) => [t.odooUserId, t.amount]));
   const salaryOf = new Map(salaries.map((x) => [x.odooUserId, x.amount]));
   const tiers = source?.bonusTiers ?? [];
+  // Incentive on sale orders: the tier preview uses each rep's confirmed orders of the last pull.
+  const onOrders = source?.bonusBase === 'SALE_ORDER';
+  const orderTotals = new Map<number, number>();
+  if (source && onOrders) for (const o of await listSaleOrders(source.id, ctx.period)) if (o.odooUserId !== null) orderTotals.set(o.odooUserId, (orderTotals.get(o.odooUserId) ?? 0) + o.amountUntaxed);
   const bySalary = paysBySalary(tiers);
   const locked = isLocked(run);
   // Collections of reps switched off on the reps page: paid to nobody, so not listed below.
@@ -46,7 +50,7 @@ export default async function CommissionTargetsPage({ searchParams }: { searchPa
   return (
     <div className="space-y-4">
       <CommissionHeader ctx={ctx} path={PATH} title="เป้ายอดเก็บ"
-        description={source ? `รอบ ${periodLabel(ctx.period, ctx.calendar)} · ยอดเก็บก่อน VAT ไม่ถึงเป้า = ไม่ได้ค่าคอมรอบนั้น · ว่าง = ยังไม่ตั้ง (ส่งอนุมัติไม่ได้) · 0 = ไม่ใช้เป้า · เงินเดือนใช้คิดเงินพิเศษ = เงินเดือนของขั้นที่ถึง − เงินเดือนเซลล์` : undefined} />
+        description={source ? `รอบ ${periodLabel(ctx.period, ctx.calendar)} · ยอดเก็บก่อน VAT ไม่ถึงเป้า = ไม่ได้ค่าคอมรอบนั้น · ว่าง = ยังไม่ตั้ง (ส่งอนุมัติไม่ได้) · 0 = ไม่ใช้เป้า · เงินเดือนใช้คิด incentive = เงินเดือนของขั้นที่ถึง − เงินเดือนเซลล์${source.bonusBase === 'SALE_ORDER' ? ' · incentive วัดจากยอดขายใบสั่งขาย ไม่ต้องถึงเป้า' : ''}` : undefined} />
       <Notice saved={params.saved} error={params.error} />
       {locked && <p className="rounded-lg bg-muted p-3 text-sm">รอบนี้อนุมัติแล้ว แก้เป้าและเงินเดือนไม่ได้</p>}
       {source && tiers.length > 0 && !bySalary && <p className="rounded-lg bg-amber-500/10 p-3 text-sm text-amber-800">ขั้นเงินพิเศษยังไม่มีเงินเดือนของแต่ละขั้น ตอนนี้จ่ายตามช่องเงินพิเศษ ไม่ได้ใช้เงินเดือนเซลล์ · ใส่เงินเดือนของขั้นที่ tab “เงินพิเศษ / ลูกค้าใหม่”</p>}
@@ -68,17 +72,19 @@ export default async function CommissionTargetsPage({ searchParams }: { searchPa
                     <TableHead className="text-right">เป้า (บาท ก่อน VAT)</TableHead>
                     <TableHead className="text-right">เก็บได้ตอนนี้</TableHead>
                     <TableHead className="text-right">% ของเป้า</TableHead>
+                    {onOrders && <TableHead className="text-right">ยอดขาย SO (ก่อน VAT)</TableHead>}
                     <TableHead className="text-right">เงินเดือน (บาท)</TableHead>
-                    <TableHead className="text-right">เงินพิเศษตอนนี้</TableHead>
+                    <TableHead className="text-right">Incentive ตอนนี้</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {active.length === 0 && <EmptyRow colSpan={6}>ยังไม่มี tag “Sale …” ใน Odoo และยังไม่มียอดเก็บรอบนี้</EmptyRow>}
+                  {active.length === 0 && <EmptyRow colSpan={onOrders ? 7 : 6}>ยังไม่มี tag “Sale …” ใน Odoo และยังไม่มียอดเก็บรอบนี้</EmptyRow>}
                   {active.map((r) => {
                     const target = targetOf.get(r.odooUserId);
                     const got = r.collected;
                     const salary = salaryOf.get(r.odooUserId);
-                    const tier = pickTier(tiers, got);
+                    const ordered = orderTotals.get(r.odooUserId) ?? 0;
+                    const tier = pickTier(tiers, onOrders ? ordered : got);
                     return (
                       <TableRow key={r.odooUserId}>
                         <TableCell data-label="พนักงานขาย" className="font-medium">
@@ -92,13 +98,14 @@ export default async function CommissionTargetsPage({ searchParams }: { searchPa
                         <TableCell data-label="% ของเป้า" className="text-right tabular-nums">
                           {target ? <span className={got >= target ? 'text-emerald-700' : 'text-amber-700'}>{Math.round((got / target) * 100)}%</span> : <span className="text-muted-foreground">{target === 0 ? 'ไม่ใช้เป้า' : 'ยังไม่ตั้ง'}</span>}
                         </TableCell>
+                        {onOrders && <TableCell data-label="ยอดขาย SO" className="text-right tabular-nums">{baht(ordered)}</TableCell>}
                         <TableCell data-label="เงินเดือน" className="text-right">
                           <input name={`s_${r.odooUserId}`} type="number" min={0} step="0.01" inputMode="decimal" defaultValue={salary ?? ''} disabled={locked} aria-label={`เงินเดือนของ ${r.name}`} className={input} />
                         </TableCell>
                         <TableCell data-label="เงินพิเศษตอนนี้" className="text-right text-xs tabular-nums">
                           {!tier ? <span className="text-muted-foreground">{tiers.length ? 'ยังไม่ถึงขั้นแรก' : '—'}</span>
                             : bySalary && salary === undefined ? <span className="text-destructive">ขั้น {tier.index} · ใส่เงินเดือนก่อน</span>
-                            : <>ขั้น {tier.index} · {baht(tierBonusAmount(tier, bySalary, salary ?? null))}{bySalary && <span className="block text-muted-foreground">{baht(tier.salary ?? 0)} − {baht(salary ?? 0)}</span>}{target !== undefined && target > 0 && got < target && <span className="block text-destructive">ยังไม่ถึงเป้า ยังไม่ได้</span>}</>}
+                            : <>ขั้น {tier.index} · {baht(tierBonusAmount(tier, bySalary, salary ?? null))}{bySalary && <span className="block text-muted-foreground">{baht(tier.salary ?? 0)} − {baht(salary ?? 0)}</span>}{!onOrders && target !== undefined && target > 0 && got < target && <span className="block text-destructive">ยังไม่ถึงเป้า ยังไม่ได้</span>}</>}
                         </TableCell>
                       </TableRow>
                     );

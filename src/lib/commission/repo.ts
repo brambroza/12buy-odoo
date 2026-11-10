@@ -5,7 +5,7 @@
 import { db } from '@/lib/db/client';
 import { newId, rowOrNull, rows, toRow, unwrap } from '@/lib/db/rows';
 import type {
-  BonusSettings, CommissionAdjustment, CommissionPricelist, CommissionRate, CommissionRep, CommissionRun, CommissionSalary, CommissionSource, CommissionTarget, DebtHold, LedgerKind, LedgerLine,
+  BonusSettings, CommissionAdjustment, CommissionPricelist, CommissionRate, CommissionRep, CommissionRun, CommissionSalary, CommissionSource, CommissionTarget, SaleOrder, DebtHold, LedgerKind, LedgerLine,
   NewCustomer, OverdueStep, PriceGroup, RunStatus, StatementSettings, StoredLedgerLine,
 } from './types';
 import { bonusSettings, type NewCustomerRow } from './bonus';
@@ -55,7 +55,15 @@ export async function updateSource(id: string, patch: Partial<SourceInput>): Pro
 
 /** Saves the bonus ladder and the new-customer bonus of a company. */
 export async function updateBonusSettings(id: string, settings: BonusSettings): Promise<void> {
-  unwrap(await db().from('CommissionSource').update({ ...settings, updatedAt: now() }).eq('id', id));
+  const result = await db().from('CommissionSource').update({ ...settings, updatedAt: now() }).eq('id', id);
+  // Before migration 20261110150000 there is no bonusBase column: keeping collections still saves.
+  if (result.error && settings.bonusBase === 'COLLECTION' && missingTable(result.error.message, 'bonusBase')) {
+    const { bonusBase: _omit, ...rest } = settings;
+    void _omit;
+    unwrap(await db().from('CommissionSource').update({ ...rest, updatedAt: now() }).eq('id', id));
+    return;
+  }
+  unwrap(result);
 }
 
 // ---------- new customers ----------
@@ -87,6 +95,31 @@ export async function replaceNewCustomers(sourceId: string, period: string, list
   const createdAt = now();
   const payload = list.map((c) => ({ id: newId(), sourceId, ...c, createdAt }));
   for (let i = 0; i < payload.length; i += 500) unwrap(await db().from('CommissionNewCustomer').insert(payload.slice(i, i + 500)));
+}
+
+// ---------- sale orders (incentive base) ----------
+
+/** Confirmed sale orders pulled for a period; [] before migration 20261110150000 ran. */
+export async function listSaleOrders(sourceId: string, period: string): Promise<SaleOrder[]> {
+  const out: SaleOrder[] = [];
+  for (let from = 0; ; from += 1000) {
+    const result = await db().from('CommissionSaleOrder').select('orderId,orderName,orderDate,partnerName,odooUserId,repName,amountUntaxed,amountTotal,period')
+      .eq('sourceId', sourceId).eq('period', period).order('orderDate').order('orderId').range(from, from + 999);
+    if (result.error && missingTable(result.error.message, 'CommissionSaleOrder')) return [];
+    const page = rows<SaleOrder>(result).map((r) => ({ ...r, orderDate: String(r.orderDate).slice(0, 10), amountUntaxed: num(r.amountUntaxed), amountTotal: num(r.amountTotal) }));
+    out.push(...page);
+    if (page.length < 1000) return out;
+  }
+}
+
+/** Replaces a period's sale orders with a fresh pull. */
+export async function replaceSaleOrders(sourceId: string, period: string, list: readonly SaleOrder[]): Promise<void> {
+  const cleared = await db().from('CommissionSaleOrder').delete().eq('sourceId', sourceId).eq('period', period);
+  if (cleared.error && missingTable(cleared.error.message, 'CommissionSaleOrder')) throw new Error('ยังไม่ได้รัน migration 20261110150000_commission_sale_orders.sql');
+  unwrap(cleared);
+  const createdAt = now();
+  const payload = list.map((o) => ({ id: newId(), sourceId, ...o, createdAt }));
+  for (let i = 0; i < payload.length; i += 500) unwrap(await db().from('CommissionSaleOrder').insert(payload.slice(i, i + 500)));
 }
 
 // ---------- period dates ----------

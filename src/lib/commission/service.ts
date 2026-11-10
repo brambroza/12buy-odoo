@@ -8,7 +8,7 @@ import { decryptSecret } from '@/lib/settings/crypto';
 import { bonusSettings, planNewCustomers, type NewCustomerRow } from './bonus';
 import { blockingIssues, calculateRun } from './calc';
 import { isTagRep, retroDiff } from './ledger';
-import { fetchCollections, fetchCredits, fetchFirstInvoices, fetchOverdueInvoices, fetchPaidInvoiceIds, fetchRepDirectory } from './odoo';
+import { fetchCollections, fetchCredits, fetchFirstInvoices, fetchOverdueInvoices, fetchPaidInvoiceIds, fetchRepDirectory, fetchSaleOrders } from './odoo';
 import { calendarOf, periodDates, shiftPeriod, type PeriodCalendar } from './period';
 import * as repo from './repo';
 import { planDebt, statementSettings } from './statement';
@@ -55,7 +55,7 @@ async function rangeOf(source: CommissionSource, period: string): Promise<{ star
 }
 
 export type SyncResult =
-  | { ok: true; lines: number; receipts: number; retro: number; refunds: { count: number; amount: number }; held: number; released: number; newCustomers: number }
+  | { ok: true; lines: number; receipts: number; retro: number; refunds: { count: number; amount: number }; held: number; released: number; newCustomers: number; saleOrders: number | null }
   | { ok: false; reason: string };
 
 /**
@@ -134,6 +134,8 @@ export async function syncPeriod(source: CommissionSource, period: string): Prom
 
   const debt = await planPeriodDebt(source, period, client, fetched.lines);
   const newCustomers = await planPeriodNewCustomers(source, period, client, fetched.lines);
+  // Sale orders only when the incentive is measured on them, so other companies pull exactly as before.
+  const saleOrders = bonusSettings(source).bonusBase === 'SALE_ORDER' ? await fetchSaleOrders(client, period, await rangeOf(source, period)) : null;
 
   // Lock check again right before writing: someone may have approved while Odoo was being read.
   const latest = await repo.getRun(source.id, period);
@@ -143,10 +145,11 @@ export async function syncPeriod(source: CommissionSource, period: string): Prom
   await repo.replaceLedger(source.id, period, 'RETRO', retro);
   await repo.applyDebtPlan(source.id, period, debt.holds, debt.releaseIds);
   await repo.replaceNewCustomers(source.id, period, newCustomers);
+  if (saleOrders) await repo.replaceSaleOrders(source.id, period, saleOrders);
   await repo.updateRun(latest.id, OPEN, { status: 'DRAFT', syncedAt: new Date(), calculatedAt: null, results: null, snapshot: null, totalPayable: 0, submittedById: null, submittedAt: null });
   return {
     ok: true, lines: fetched.lines.length, receipts: fetched.receipts, retro: retro.length, refunds: fetched.refunds, held: debt.holds.length, released: debt.releaseIds.length,
-    newCustomers: newCustomers.length,
+    newCustomers: newCustomers.length, saleOrders: saleOrders?.length ?? null,
   };
 }
 
@@ -185,11 +188,13 @@ async function planPeriodDebt(source: CommissionSource, period: string, client: 
 
 /** Rules and inputs a run is calculated with (also stored with the run). */
 async function loadSnapshot(source: CommissionSource, run: CommissionRun): Promise<RunSnapshot> {
-  const [rates, steps, pricelists, targets, adjustments, holds, newCustomers, salaries] = await Promise.all([
+  const bonus = bonusSettings(source);
+  const [rates, steps, pricelists, targets, adjustments, holds, newCustomers, salaries, saleOrders] = await Promise.all([
     repo.listRates(source.id), repo.listSteps(source.id), repo.listPricelists(source.id), repo.listTargets(source.id, run.period), repo.listAdjustments(run.id),
     periodHolds(source.id, run.period), periodNewCustomers(source.id, run.period), repo.listSalaries(source.id, run.period),
+    bonus.bonusBase === 'SALE_ORDER' ? repo.listSaleOrders(source.id, run.period) : Promise.resolve(undefined),
   ]);
-  return { rates, steps, pricelists, targets, salaries, adjustments, statement: statementSettings(source), holds, bonus: bonusSettings(source), newCustomers };
+  return { rates, steps, pricelists, targets, salaries, adjustments, statement: statementSettings(source), holds, bonus, newCustomers, ...(saleOrders ? { saleOrders } : {}) };
 }
 
 /** New customers counted in a period. */
@@ -283,15 +288,17 @@ export function isLocked(run: Pick<CommissionRun, 'status'> | null): boolean {
 export async function repEstimate(source: CommissionSource, period: string, odooUserId: number) {
   const run = await repo.getRun(source.id, period);
   if (run && isLocked(run) && run.results) return { locked: true, run, rep: run.results.reps.find((r) => r.odooUserId === odooUserId) ?? null };
-  const [ledger, rates, steps, pricelists, targets, carryIn, holds, newCustomers, salaries] = await Promise.all([
+  const [ledger, rates, steps, pricelists, targets, carryIn, holds, newCustomers, salaries, saleOrders] = await Promise.all([
     repo.listLedger(source.id, period), repo.listRates(source.id), repo.listSteps(source.id), repo.listPricelists(source.id), repo.listTargets(source.id, period), carryInFor(source.id, period),
     periodHolds(source.id, period), periodNewCustomers(source.id, period), repo.listSalaries(source.id, period),
+    bonusSettings(source).bonusBase === 'SALE_ORDER' ? repo.listSaleOrders(source.id, period) : Promise.resolve([]),
   ]);
   const lines = ledger.filter((l) => l.odooUserId === odooUserId);
   const results = calculateRun({
     lines, rates, steps, pricelists, targets, adjustments: [], reps: [], carryIn: new Map([...carryIn].filter(([id]) => id === odooUserId)), period,
     statement: statementSettings(source), holds: holds.filter((h) => h.odooUserId === odooUserId),
     bonus: bonusSettings(source), newCustomers: newCustomers.filter((c) => c.odooUserId === odooUserId), salaries,
+    saleOrders: saleOrders.filter((o) => o.odooUserId === odooUserId),
   });
   return { locked: false, run, rep: results.reps.find((r) => r.odooUserId === odooUserId) ?? null };
 }

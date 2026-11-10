@@ -22,10 +22,22 @@ export function CommissionStatement({ company, periodText, payText, rep, debtDay
   adjustments: Pick<CommissionAdjustment, 'amount' | 'reason'>[];
   status: string;
 }) {
-  const rows = [
+  const rows: { label: string; value: number; note: string | undefined }[] = [
     ...rep.summary.map((s) => ({ label: s.label, value: s.amount, note: s.base ? `ยอดเก็บก่อน VAT ${money.format(s.base)}${s.rates?.length ? ` · อัตรา ${s.rates.join(', ')}` : ''}` : undefined })),
     { label: `คืนเงินลูกหนี้ค้างชำระ (+${debtDays + 1} วัน)`, value: rep.debtRelease, note: undefined },
   ];
+  // Incentive (sales-bonus tier) as the last row of the list; it is not part of the central-fund base.
+  const incentive = rep.tier ? rep.tierBonus ?? 0 : 0;
+  if (rep.tier) {
+    const onOrders = rep.bonusBase === 'SALE_ORDER';
+    const measured = onOrders ? `ยอดขายใบสั่งขาย ${money.format(rep.saleOrderBase ?? 0)} (${rep.saleOrderCount ?? 0} ใบ)` : `ยอดเก็บ ${money.format(rep.base)}`;
+    const salary = rep.tier.salary !== undefined ? ` · เงินเดือนขั้น ${money.format(rep.tier.salary)} − เงินเดือน ${rep.salary == null ? 'ยังไม่ตั้ง' : money.format(rep.salary)}` : '';
+    rows.push({
+      label: `Incentive ขั้น ${rep.tier.index}`,
+      value: incentive,
+      note: `${measured} ถึงขั้นตั้งแต่ ${money.format(rep.tier.minAmount)}${salary}${!onOrders && !rep.targetMet ? ' · ไม่ถึงเป้า ไม่ได้' : ''}`,
+    });
+  }
   const net = rep.payable + rep.carryOut;
   return (
     <article className="mx-auto max-w-2xl break-after-page space-y-3 rounded-xl border border-border bg-card p-5 text-sm print:max-w-none print:rounded-none print:border-0 print:p-0">
@@ -53,10 +65,9 @@ export function CommissionStatement({ company, periodText, payText, rep, debtDay
           ))}
         </tbody>
         <tfoot>
-          <Line label="รวม" value={amount(rep.subtotal)} strong />
-          <Line label={`หัก ส่วนกลาง ${rep.centralPercent}%`} value={amount(rep.central, true)} deduct />
+          <Line label="รวม" value={amount(rep.subtotal + incentive)} strong />
+          <Line label={`หัก ส่วนกลาง ${rep.centralPercent}%${incentive ? ' (ของค่าคอม ไม่รวม incentive)' : ''}`} value={amount(rep.central, true)} deduct />
           <Line label="หัก ลูกหนี้ค้างชำระ" value={amount(rep.debtHold, true)} deduct />
-          {rep.tier && <Line label={`บวก เงินพิเศษขั้น ${rep.tier.index} (ยอดเก็บตั้งแต่ ${money.format(rep.tier.minAmount)}${rep.tier.salary !== undefined ? ` · เงินเดือนขั้น ${money.format(rep.tier.salary)} − เงินเดือน ${rep.salary == null ? 'ยังไม่ตั้ง' : money.format(rep.salary)}` : ''})${rep.targetMet ? '' : ' · ไม่ถึงเป้า'}`} value={amount(rep.tierBonus ?? 0)} />}
           {rep.newCustomers?.length ? <Line label={`บวก ลูกค้าใหม่ ${rep.newCustomers.length} ราย${rep.targetMet ? '' : ' · ไม่ถึงเป้า'}`} value={amount(rep.newCustomerBonus ?? 0)} /> : null}
           {rep.adjustments !== 0 && <Line label="ปรับปรุงอื่นๆ" value={amount(rep.adjustments, rep.adjustments < 0)} deduct={rep.adjustments < 0} />}
           {rep.carryIn !== 0 && <Line label="ยอดติดลบยกมาจากรอบก่อน" value={amount(rep.carryIn, true)} deduct />}

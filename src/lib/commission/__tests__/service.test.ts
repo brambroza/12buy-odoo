@@ -4,9 +4,9 @@ import type { CommissionRun, CommissionSource, LedgerLine } from '../types';
 const repo = vi.hoisted(() => ({
   ensureRun: vi.fn(), getRun: vi.fn(), updateRun: vi.fn(), listBookedFor: vi.fn(), replaceLedger: vi.fn(), listLedger: vi.fn(), listRates: vi.fn(), listSteps: vi.fn(),
   listPricelists: vi.fn(), listTargets: vi.fn(), listSalaries: vi.fn(), listAdjustments: vi.fn(), listReps: vi.fn(), listDebtHolds: vi.fn(), applyDebtPlan: vi.fn(), listPeriodOverrides: vi.fn(),
-  listNewCustomers: vi.fn(), replaceNewCustomers: vi.fn(), upsertReps: vi.fn(),
+  listNewCustomers: vi.fn(), replaceNewCustomers: vi.fn(), upsertReps: vi.fn(), listSaleOrders: vi.fn(), replaceSaleOrders: vi.fn(),
 }));
-const odoo = vi.hoisted(() => ({ fetchCollections: vi.fn(), fetchCredits: vi.fn(), fetchOverdueInvoices: vi.fn(), fetchPaidInvoiceIds: vi.fn(), fetchFirstInvoices: vi.fn(), fetchRepDirectory: vi.fn() }));
+const odoo = vi.hoisted(() => ({ fetchCollections: vi.fn(), fetchCredits: vi.fn(), fetchOverdueInvoices: vi.fn(), fetchPaidInvoiceIds: vi.fn(), fetchFirstInvoices: vi.fn(), fetchRepDirectory: vi.fn(), fetchSaleOrders: vi.fn() }));
 vi.mock('../repo', () => repo);
 vi.mock('../odoo', () => odoo);
 vi.mock('@/lib/settings/crypto', () => ({ decryptSecret: (v: string) => `plain-${v}` }));
@@ -14,7 +14,7 @@ vi.mock('@/lib/settings/crypto', () => ({ decryptSecret: (v: string) => `plain-$
 const service = await import('../service');
 
 const source: CommissionSource = { id: 's1', name: 'A', url: 'https://a.odoo.test', db: 'a', username: 'u', apiKeyEnc: 'enc', cutoffDay: 20, payDay: 0, payMonths: 1, active: true, createdAt: new Date(0), updatedAt: new Date(0),
-  summaryLines: [], centralPercent: 5, debtDays: 120, debtPercent: 1, bonusTiers: [], newCustomerBonus: 0, newCustomerFrom: null };
+  summaryLines: [], centralPercent: 5, debtDays: 120, debtPercent: 1, bonusBase: 'COLLECTION', bonusTiers: [], newCustomerBonus: 0, newCustomerFrom: null };
 const runRow = (over: Partial<CommissionRun> = {}): CommissionRun => ({
   id: 'run1', sourceId: 's1', period: '2026-10', status: 'DRAFT', syncedAt: null, calculatedAt: null, snapshot: null, results: null, totalPayable: 0,
   submittedById: null, submittedAt: null, approvedById: null, approvedAt: null, paidAt: null, createdAt: new Date(0), updatedAt: new Date(0), ...over,
@@ -96,6 +96,9 @@ describe('syncPeriod', () => {
     expect(odoo.fetchCollections).toHaveBeenCalledWith(expect.anything(), '2026-09', { start: '2026-08-21', end: '2026-09-20' });
     expect(repo.replaceLedger).toHaveBeenCalledWith('s1', '2026-10', 'RETRO', [expect.objectContaining({ kind: 'RETRO', base: -100, originPeriod: '2026-09' })]);
     expect(repo.updateRun).toHaveBeenCalledWith('run1', ['DRAFT', 'PENDING_APPROVAL'], expect.objectContaining({ status: 'DRAFT', results: null }));
+    // Sale orders are pulled only when the incentive is measured on them.
+    expect(odoo.fetchSaleOrders).not.toHaveBeenCalled();
+    expect(repo.replaceSaleOrders).not.toHaveBeenCalled();
     // Reps are pulled with the period so tag reps in the ledger exist on the targets page.
     expect(repo.upsertReps).toHaveBeenCalledWith('s1', [{ id: -3, name: 'Ake' }, { id: 8, name: 'A' }], new Map([[9, -3]]));
   });
@@ -214,6 +217,20 @@ describe('new customers on sync', () => {
     await service.syncPeriod(source, '2026-10');
     expect(odoo.fetchFirstInvoices).not.toHaveBeenCalled();
     expect(repo.replaceNewCustomers).toHaveBeenCalledWith('s1', '2026-10', []);
+  });
+});
+
+describe('syncPeriod with an incentive on sale orders', () => {
+  it('pulls the period\'s confirmed sale orders and stores them', async () => {
+    repo.ensureRun.mockResolvedValue(runRow());
+    repo.getRun.mockResolvedValue(runRow());
+    odoo.fetchCollections.mockResolvedValue({ lines: [], receipts: 0, refunds: { count: 0, amount: 0 } });
+    const order = { orderId: 1, orderName: 'S1', orderDate: '2026-10-01', partnerName: 'ร้าน', odooUserId: -3, repName: 'Ake', amountUntaxed: 100, amountTotal: 107, period: '2026-10' };
+    odoo.fetchSaleOrders.mockResolvedValue([order]);
+    const result = await service.syncPeriod({ ...source, bonusBase: 'SALE_ORDER' }, '2026-10');
+    expect(result).toMatchObject({ ok: true, saleOrders: 1 });
+    expect(odoo.fetchSaleOrders).toHaveBeenCalledWith(expect.anything(), '2026-10', { start: '2026-09-21', end: '2026-10-20' });
+    expect(repo.replaceSaleOrders).toHaveBeenCalledWith('s1', '2026-10', [order]);
   });
 });
 

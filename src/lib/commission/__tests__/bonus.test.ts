@@ -36,7 +36,7 @@ describe('normalizeTiers / bonusSettings', () => {
   });
 
   it('pays nothing until set (columns missing before the migration)', () => {
-    expect(bonusSettings({})).toEqual({ bonusTiers: [], newCustomerBonus: 0, newCustomerFrom: null });
+    expect(bonusSettings({})).toEqual({ bonusBase: 'COLLECTION', bonusTiers: [], newCustomerBonus: 0, newCustomerFrom: null });
     expect(bonusSettings({ newCustomerBonus: '300' as unknown as number, newCustomerFrom: '2026-11-01T00:00:00' })).toMatchObject({ newCustomerBonus: 300, newCustomerFrom: '2026-11-01' });
   });
 });
@@ -78,13 +78,14 @@ describe('calculateRun with bonuses', () => {
     productId: 1, productName: 'ยาง', brand: 'AT', family: 'TBR', qty: 10, base, gross: base * 1.07, issues: [],
   });
   const BONUS_ONLY = JFC_2569_TIERS.map(({ minAmount, bonus }) => ({ minAmount, bonus }));
-  const calc = (base: number, target: number, salaries?: { odooUserId: number; period: string; amount: number }[], tiers = BONUS_ONLY) => calculateRun({
+  const calc = (base: number, target: number, salaries?: { odooUserId: number; period: string; amount: number }[], tiers = BONUS_ONLY, bonusBase: 'COLLECTION' | 'SALE_ORDER' = 'COLLECTION', saleOrders?: { odooUserId: number | null; repName: string | null; amountUntaxed: number; period: string }[]) => calculateRun({
     lines: [line(base)],
     rates: [{ id: 'r', sourceId: 's', brand: '*', family: 'TBR', priceGroup: '*', odooPricelistId: null, pricelistName: null, odooProductId: null, productName: null, kind: 'PER_UNIT', value: 15, validFrom: '2026-01-01', validTo: null, note: null }],
     steps: [{ id: 'st', sourceId: 's', minDays: 0, maxDays: null, percent: 100, validFrom: '2026-01-01', validTo: null }],
     pricelists: [], targets: [{ id: 't', sourceId: 's', odooUserId: -7, period: '2026-11', amount: target }], adjustments: [], reps: [{ odooUserId: -7, name: 'Ake' }], carryIn: new Map(), period: '2026-11',
     statement: { summaryLines: [], centralPercent: 5, debtDays: 120, debtPercent: 0 },
-    bonus: { bonusTiers: tiers, newCustomerBonus: 300, newCustomerFrom: '2026-11-01' },
+    bonus: { bonusBase, bonusTiers: tiers, newCustomerBonus: 300, newCustomerFrom: '2026-11-01' },
+    saleOrders,
     salaries,
     newCustomers: [
       { odooUserId: -7, repName: 'Ake', partnerName: 'ร้านใหม่', invoiceName: 'INV/1', period: '2026-11' },
@@ -119,6 +120,24 @@ describe('calculateRun with bonuses', () => {
     expect(r.reps[0]).toMatchObject({ salary: null, tierBonus: 0 });
     expect(blockingIssues(r)[0]).toContain('ยังไม่ได้ตั้งเงินเดือนของ Ake');
     expect(blockingIssues(calc(2_950_000, 3_000_000, [], JFC_2569_TIERS))).toEqual([]);
+  });
+
+  it('on sale orders: the tier comes from confirmed orders and needs no target', () => {
+    const orders = [
+      { odooUserId: -7, repName: 'Ake', amountUntaxed: 2_000_000, period: '2026-11' },
+      { odooUserId: -7, repName: 'Ake', amountUntaxed: 950_000, period: '2026-11' },
+      { odooUserId: -7, repName: 'Ake', amountUntaxed: 9_000_000, period: '2026-10' },
+      { odooUserId: null, repName: null, amountUntaxed: 5, period: '2026-11' },
+    ];
+    // Collections 100k miss the 1M target: no commission, but 2.95M of orders reach tier 3 (25,000 − 18,000).
+    const r = calc(100_000, 1_000_000, [{ odooUserId: -7, period: '2026-11', amount: 18_000 }], JFC_2569_TIERS, 'SALE_ORDER', orders);
+    expect(r.reps[0]).toMatchObject({ targetMet: false, commission: 0, bonusBase: 'SALE_ORDER', saleOrderBase: 2_950_000, saleOrderCount: 2, tier: { index: 3 }, tierBonus: 7_000, newCustomerBonus: 0, payable: 7_000 });
+    expect(r.issues.some((i) => i.message.startsWith('ใบสั่งขายไม่มีพนักงานขาย'))).toBe(true);
+  });
+
+  it('on sale orders: a rep with orders but no collections still gets the incentive', () => {
+    const r = calc(0, 0, undefined, BONUS_ONLY, 'SALE_ORDER', [{ odooUserId: -9, repName: 'Joy', amountUntaxed: 2_400_000, period: '2026-11' }]);
+    expect(r.reps.find((x) => x.odooUserId === -9)).toMatchObject({ repName: 'Joy', tierBonus: 3_000, payable: 3_000 });
   });
 
   it('pays no tier bonus below the first tier', () => {

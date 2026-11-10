@@ -53,7 +53,10 @@ export function tierBonusAmount(tier: BonusTier, bySalary: boolean, repSalary: n
 /** Bonus settings of a company; nothing is paid until they are set (or before the migration ran). */
 export function bonusSettings(source: Partial<BonusSettings>): BonusSettings {
   const from = source.newCustomerFrom ? String(source.newCustomerFrom).slice(0, 10) : null;
-  return { bonusTiers: normalizeTiers(source.bonusTiers), newCustomerBonus: Math.max(0, Number(source.newCustomerBonus ?? 0) || 0), newCustomerFrom: from };
+  return {
+    bonusBase: source.bonusBase === 'SALE_ORDER' ? 'SALE_ORDER' : 'COLLECTION',
+    bonusTiers: normalizeTiers(source.bonusTiers), newCustomerBonus: Math.max(0, Number(source.newCustomerBonus ?? 0) || 0), newCustomerFrom: from,
+  };
 }
 
 /** The highest tier `amount` reaches (index 1 = lowest), or null below the first tier. */

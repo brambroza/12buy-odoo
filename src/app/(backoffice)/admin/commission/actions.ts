@@ -221,8 +221,11 @@ export async function createRateAction(formData: FormData) {
   // The price field is '*', a price group, or `pl:<id>|<name>` for one Odoo pricelist.
   const price = field(formData, 'priceGroup') || '*';
   const pricelist = /^pl:(\d+)\|([^]*)$/.exec(price);
+  // One Odoo product category ("AT-PCR" → brand AT, family PCR) as `brand|family`, '*' = any; else the two text fields.
+  const category = formData.has('category') ? field(formData, 'category').split('|') : null;
+  const anyOf = (v: string | undefined) => (!v || v === '*' ? '' : v);
   const parsed = rateSchema.safeParse({
-    brand: field(formData, 'brand'), family: field(formData, 'family'), priceGroup: pricelist ? '*' : price,
+    brand: category ? anyOf(category[0]) : field(formData, 'brand'), family: category ? anyOf(category[1]) : field(formData, 'family'), priceGroup: pricelist ? '*' : price,
     odooPricelistId: pricelist ? Number(pricelist[1]) : null, pricelistName: pricelist ? pricelist[2] || null : null,
     odooProductId: Number.isInteger(productId) && productId > 0 ? productId : null, productName: field(formData, 'productName') || null,
     kind: field(formData, 'kind'), value: numberField(formData, 'value'), validFrom: field(formData, 'validFrom'), validTo: field(formData, 'validTo') || null, note: field(formData, 'note') || null,
@@ -529,16 +532,17 @@ export async function saveBonusAction(formData: FormData) {
   const from = field(formData, 'newCustomerFrom');
   if (from && !isIsoDate(from)) fail(path, formData, 'วันเริ่มนับลูกค้าใหม่ไม่ถูกต้อง');
   if (newCustomerBonus > 0 && !from) fail(path, formData, 'ใส่วันเริ่มนับลูกค้าใหม่ด้วย ไม่งั้นลูกค้าเดิมทุกรายจะนับเป็นลูกค้าใหม่');
-  const settings = { bonusTiers, newCustomerBonus, newCustomerFrom: from || null };
+  const bonusBase = field(formData, 'bonusBase') === 'SALE_ORDER' ? 'SALE_ORDER' as const : 'COLLECTION' as const;
+  const settings = { bonusBase, bonusTiers, newCustomerBonus, newCustomerFrom: from || null };
   try {
     await repo.updateBonusSettings(source.id, settings);
   } catch (error) {
-    fail(path, formData, `บันทึกไม่ได้ (รัน migration 20261106150000_commission_bonus.sql แล้วหรือยัง): ${errorText(error)}`);
+    fail(path, formData, `บันทึกไม่ได้ (รัน migration 20261106150000_commission_bonus.sql${bonusBase === 'SALE_ORDER' ? ' และ 20261110150000_commission_sale_orders.sql' : ''} แล้วหรือยัง): ${errorText(error)}`);
   }
   await audit(actor.id, 'commission.bonus.save', 'CommissionSource', source.id, { from: bonusSettings(source), to: settings });
   revalidatePath(BASE, 'layout');
-  back(path, formData, { saved: from !== (source.newCustomerFrom ?? '')
-    ? 'บันทึกแล้ว · เปลี่ยนวันเริ่มนับลูกค้าใหม่ ต้องกดดึงข้อมูลรอบที่ยังเป็นร่างใหม่ แล้วคำนวณ'
+  back(path, formData, { saved: from !== (source.newCustomerFrom ?? '') || bonusBase !== bonusSettings(source).bonusBase
+    ? 'บันทึกแล้ว · เปลี่ยนวันเริ่มนับลูกค้าใหม่หรือฐานคิดเงินพิเศษ ต้องกดดึงข้อมูลรอบที่ยังเป็นร่างใหม่ แล้วคำนวณ'
     : 'บันทึกแล้ว มีผลเมื่อกดคำนวณรอบที่ยังเป็นร่าง' });
 }
 
@@ -556,11 +560,11 @@ export async function syncPeriodAction(formData: FormData) {
     .catch((error: unknown) => ({ ok: false as const, reason: `ดึงข้อมูลจาก Odoo ไม่สำเร็จ: ${errorText(error)}` }));
   if (!result.ok) fail(path, formData, result.reason);
   const ok = result as Extract<service.SyncResult, { ok: true }>;
-  await audit(actor.id, 'commission.sync', 'CommissionRun', `${source.id}:${period}`, { lines: ok.lines, receipts: ok.receipts, retro: ok.retro, refunds: ok.refunds, held: ok.held, released: ok.released, newCustomers: ok.newCustomers });
+  await audit(actor.id, 'commission.sync', 'CommissionRun', `${source.id}:${period}`, { lines: ok.lines, receipts: ok.receipts, retro: ok.retro, refunds: ok.refunds, held: ok.held, released: ok.released, newCustomers: ok.newCustomers, saleOrders: ok.saleOrders });
   revalidatePath(BASE, 'layout');
   await flash('ดึงข้อมูลจาก Odoo แล้ว', {
     icon: 'sync',
-    description: `${ok.receipts} รายการเงินเข้า · ${ok.lines} บรรทัด${ok.retro ? ` · ปรับปรุงย้อนหลัง ${ok.retro}` : ''}${ok.held ? ` · หักลูกหนี้ค้าง ${ok.held} บิล` : ''}${ok.released ? ` · คืนลูกหนี้ค้าง ${ok.released} บิล` : ''}${ok.newCustomers ? ` · ลูกค้าใหม่ ${ok.newCustomers} ราย` : ''}${ok.refunds.count ? ` · มีเงินคืนลูกค้า ${ok.refunds.count} รายการ (ยังไม่หักอัตโนมัติ ใช้รายการปรับยอด)` : ''}`,
+    description: `${ok.receipts} รายการเงินเข้า · ${ok.lines} บรรทัด${ok.retro ? ` · ปรับปรุงย้อนหลัง ${ok.retro}` : ''}${ok.held ? ` · หักลูกหนี้ค้าง ${ok.held} บิล` : ''}${ok.released ? ` · คืนลูกหนี้ค้าง ${ok.released} บิล` : ''}${ok.newCustomers ? ` · ลูกค้าใหม่ ${ok.newCustomers} ราย` : ''}${ok.saleOrders !== null ? ` · ใบสั่งขาย ${ok.saleOrders} ใบ (incentive)` : ''}${ok.refunds.count ? ` · มีเงินคืนลูกค้า ${ok.refunds.count} รายการ (ยังไม่หักอัตโนมัติ ใช้รายการปรับยอด)` : ''}`,
   });
   back(path, formData, { saved: '1' });
 }

@@ -51,8 +51,19 @@ export const OWNER_FROM_LABELS: Record<OwnerFrom, string> = { tag: 'tag ลู�
  */
 export type BonusTier = { minAmount: number; bonus: number; salary?: number };
 
+/** What the bonus ladder is measured on: collections (gated by the target) or confirmed sale orders (no gate). */
+export type BonusBase = 'COLLECTION' | 'SALE_ORDER';
+
+/** A confirmed Odoo sale order of a period with its rep (table CommissionSaleOrder, migration 20261110150000). */
+export type SaleOrder = {
+  orderId: number; orderName: string; orderDate: string; partnerName: string;
+  odooUserId: number | null; repName: string | null; amountUntaxed: number; amountTotal: number; period: string;
+};
+
 /** Bonuses paid on top of commission (stored on CommissionSource, migration 20261106150000). */
 export type BonusSettings = {
+  /** Base of the ladder; 'COLLECTION' until migration 20261110150000 and when not changed. */
+  bonusBase: BonusBase;
   /** Sales-bonus ladder ("เงินพิเศษ"); a rep gets the bonus of the highest tier reached. */
   bonusTiers: BonusTier[];
   /** Baht per new customer. */
@@ -287,6 +298,11 @@ export type RepResult = {
   tierBonus?: number;
   /** The tier reached: its number (1 = lowest) and minimum; null = below the first tier. */
   tier?: { index: number; minAmount: number; salary?: number } | null;
+  /** With a sale-order ladder: the rep's confirmed sale orders before VAT and their count. */
+  saleOrderBase?: number;
+  saleOrderCount?: number;
+  /** Base the tier was picked on (missing = collections). */
+  bonusBase?: BonusBase;
   /** The rep's salary of the period (null = not set), when the ladder pays by salary. */
   salary?: number | null;
   /** New customers of the period and their bonus (0 when the target is missed), added after the deductions. */
@@ -350,4 +366,6 @@ export type RunSnapshot = {
   /** Bonus ladder and new-customer amount in force, and the period's new customers. */
   bonus?: BonusSettings;
   newCustomers?: NewCustomer[];
+  /** The period's confirmed sale orders, when the ladder is on sale orders. */
+  saleOrders?: SaleOrder[];
 };

@@ -37,7 +37,7 @@ export default async function CommissionBonusPage({ searchParams }: { searchPara
   return (
     <div className="space-y-4">
       <CommissionHeader ctx={ctx} path={PATH} title={title}
-        description="จ่ายเพิ่มจากค่าคอม หลังหักส่วนกลางและลูกหนี้ค้าง · ได้เฉพาะเซลล์ที่ถึงเป้ารอบนั้น · มีผลเมื่อกดคำนวณรอบที่ยังเป็นร่าง" />
+        description="จ่ายเพิ่มจากค่าคอม ไม่โดนหักส่วนกลาง · ลูกค้าใหม่ได้เฉพาะเซลล์ที่ถึงเป้า · มีผลเมื่อกดคำนวณรอบที่ยังเป็นร่าง (เปลี่ยนฐานแล้วกดดึงข้อมูลใหม่ก่อน)" />
       <Notice saved={params.saved} error={params.error} />
 
       <form action={saveBonusAction} className="space-y-4">
@@ -46,9 +46,21 @@ export default async function CommissionBonusPage({ searchParams }: { searchPara
 
         <section className="space-y-3 rounded-xl border border-border bg-card p-4">
           <div>
-            <h2 className="font-semibold">ขั้นเงินพิเศษตามยอดเก็บ</h2>
-            <p className="text-sm text-muted-foreground">
-              ยอดเก็บก่อน VAT ของเซลล์ในรอบ (ยอดเดียวกับที่ใช้วัดเป้า) ถึงขั้นไหน คิดจากขั้นสูงสุดที่ถึงขั้นเดียว · ต่ำกว่าขั้นแรกได้ 0 · เว้นยอดเก็บว่างเพื่อลบขั้น
+            <h2 className="font-semibold">ขั้นเงินพิเศษ (incentive)</h2>
+            <fieldset className="mt-2 flex flex-wrap gap-2 text-sm" disabled={!canManage}>
+              <legend className="mb-1 text-xs font-medium">วัดขั้นจาก</legend>
+              {([
+                ['COLLECTION', 'ยอดเก็บ (เงินเข้า)', 'ยอดเดียวกับที่ใช้วัดเป้า · ได้เฉพาะเมื่อถึงเป้า'],
+                ['SALE_ORDER', 'ยอดขายจากใบสั่งขาย Odoo', 'ใบสั่งขายที่ยืนยันแล้วตามวันที่สั่งในรอบ ก่อน VAT ทุกสินค้า ไม่นับที่ยกเลิก · ไม่ต้องถึงเป้า · ค่าคอมยังคิดจากยอดเก็บเหมือนเดิม'],
+              ] as const).map(([value, label, hint]) => (
+                <label key={value} className="flex max-w-sm cursor-pointer items-start gap-2 rounded-lg border border-border p-2 has-[:checked]:border-primary has-[:checked]:bg-primary/5">
+                  <input type="radio" name="bonusBase" value={value} defaultChecked={source.bonusBase === value} className="mt-1" />
+                  <span><span className="font-medium">{label}</span><span className="block text-xs text-muted-foreground">{hint}</span></span>
+                </label>
+              ))}
+            </fieldset>
+            <p className="mt-2 text-sm text-muted-foreground">
+              ยอดของเซลล์ในรอบถึงขั้นไหน คิดจากขั้นสูงสุดที่ถึงขั้นเดียว · ต่ำกว่าขั้นแรกได้ 0 · เว้นยอดว่างเพื่อลบขั้น
               <span className="block">มีเงินเดือนของขั้น: เงินพิเศษ = เงินเดือนของขั้นที่ถึง − เงินเดือนเซลล์รอบนั้น (ตั้งที่หน้าเป้า) ต่ำกว่า 0 ได้ 0 · เว้นเงินเดือนว่างทุกขั้น: จ่ายตามช่องเงินพิเศษ</span>
             </p>
           </div>
@@ -57,7 +69,7 @@ export default async function CommissionBonusPage({ searchParams }: { searchPara
               <TableHeader className="bg-muted/50">
                 <TableRow>
                   <TableHead className="w-12">ขั้น</TableHead>
-                  <TableHead className="text-right">ยอดเก็บตั้งแต่ (บาท)</TableHead>
+                  <TableHead className="text-right">ยอดตั้งแต่ (บาท ก่อน VAT)</TableHead>
                   <TableHead className="text-right">เงินเดือนของขั้น (บาท)</TableHead>
                   <TableHead className="text-right">เงินพิเศษ (บาท) · ใช้เมื่อไม่มีเงินเดือน</TableHead>
                 </TableRow>

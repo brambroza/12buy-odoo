@@ -50,6 +50,11 @@ export default async function CommissionRatesPage({ searchParams }: { searchPara
   const pricelists = odooPricelists.length > 0 ? odooPricelists : mapped.map((p) => ({ id: p.odooPricelistId, name: p.name }));
   const brands = [...new Set(categories.map((c) => splitCategory(c).brand).filter(Boolean))].sort();
   const families = [...new Set(categories.map((c) => splitCategory(c).family).filter(Boolean))].sort();
+  // One pick per Odoo product category; the rate stores it as brand + family ("AT-PCR" → AT, PCR).
+  const categoryOptions = categories.map((c) => {
+    const { brand, family } = splitCategory(c);
+    return { value: `${brand || '*'}|${family || '*'}`, label: c.toUpperCase() };
+  }).filter((o, i, all) => all.findIndex((x) => x.value === o.value) === i);
   const showAll = params.all === '1';
   const visible = rates.filter((r) => showAll || !r.validTo || r.validTo >= today);
   const pid = Number(params.pid);
@@ -89,7 +94,7 @@ export default async function CommissionRatesPage({ searchParams }: { searchPara
                 {visible.map((r) => (
                   <TableRow key={r.id} className={isValidOn(r, today) ? undefined : 'opacity-60'}>
                     <TableCell data-label="ใช้กับ" className="whitespace-normal">
-                      {r.odooProductId ? <><Badge variant="outline">รายสินค้า</Badge> {r.productName ?? `#${r.odooProductId}`}</> : <span className="font-medium">{r.brand === '*' ? 'ทุกยี่ห้อ' : r.brand} · {r.family === '*' ? 'ทุกกลุ่มสินค้า' : r.family}</span>}
+                      {r.odooProductId ? <><Badge variant="outline">รายสินค้า</Badge> {r.productName ?? `#${r.odooProductId}`}</> : <span className="font-medium">{r.brand === '*' && r.family === '*' ? 'ทุกหมวดสินค้า' : `${r.brand === '*' ? 'ทุกยี่ห้อ' : r.brand}${r.family === '*' ? (r.brand === '*' ? '' : ' (ทุกกลุ่ม)') : `-${r.family}`}`}</span>}
                     </TableCell>
                     <TableCell data-label="กลุ่มราคา" className="whitespace-normal">
                       {r.odooPricelistId ? <><Badge variant="outline">Pricelist</Badge> {r.pricelistName ?? `#${r.odooPricelistId}`}</> : r.priceGroup === '*' ? 'ทุกกลุ่ม' : PRICE_GROUP_LABELS[r.priceGroup]}
@@ -135,14 +140,31 @@ export default async function CommissionRatesPage({ searchParams }: { searchPara
               {hidden}
               {Number.isInteger(pid) && pid > 0 ? (
                 <p className="rounded-lg bg-muted p-2 text-sm sm:col-span-2 lg:col-span-4">
-                  รายสินค้า: <b>{params.pname}</b> (#{pid}) <Link href={`${PATH}?${ctxQuery(ctx)}`} className="ml-2 text-xs text-primary underline">ยกเลิก ใช้ยี่ห้อ/กลุ่มแทน</Link>
+                  รายสินค้า: <b>{params.pname}</b> (#{pid}) <Link href={`${PATH}?${ctxQuery(ctx)}`} className="ml-2 text-xs text-primary underline">ยกเลิก ใช้หมวดสินค้าแทน</Link>
                   <input type="hidden" name="odooProductId" value={pid} /><input type="hidden" name="productName" value={params.pname ?? ''} />
                 </p>
               ) : (
-                <>
-                  <label className={label}>ยี่ห้อ (ว่าง = ทุกยี่ห้อ)<input name="brand" list="brand-list" placeholder="เช่น AT" className={input} /></label>
-                  <label className={label}>กลุ่มสินค้า (ว่าง = ทุกกลุ่ม)<input name="family" list="family-list" placeholder="เช่น PCR, TBR" className={input} /></label>
-                </>
+                categoryOptions.length > 0 ? (
+                  <label className={`${label} sm:col-span-2`}>หมวดสินค้า (product category จาก Odoo)
+                    <select name="category" defaultValue="*|*" className={input}>
+                      <option value="*|*">ทุกหมวดสินค้า</option>
+                      <optgroup label="หมวดสินค้าใน Odoo">
+                        {categoryOptions.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+                      </optgroup>
+                      {families.length > 0 && (
+                        <optgroup label="กลุ่มสินค้า ทุกยี่ห้อ">
+                          {families.map((f) => <option key={f} value={`*|${f}`}>ทุกยี่ห้อ-{f}</option>)}
+                        </optgroup>
+                      )}
+                    </select>
+                  </label>
+                ) : (
+                  <>
+                    <label className={label}>ยี่ห้อ (ว่าง = ทุกยี่ห้อ)<input name="brand" list="brand-list" placeholder="เช่น AT" className={input} /></label>
+                    <label className={label}>กลุ่มสินค้า (ว่าง = ทุกกลุ่ม)<input name="family" list="family-list" placeholder="เช่น PCR, TBR" className={input} /></label>
+                    <p className="text-xs text-amber-700 sm:col-span-2">อ่านหมวดสินค้าจาก Odoo ไม่ได้ จึงให้พิมพ์ยี่ห้อ / กลุ่มสินค้าเอง</p>
+                  </>
+                )
               )}
               <label className={label}>Pricelist
                 <select name="priceGroup" defaultValue="*" className={input}>
@@ -171,7 +193,7 @@ export default async function CommissionRatesPage({ searchParams }: { searchPara
             </form>
             <datalist id="brand-list">{brands.map((b) => <option key={b} value={b} />)}</datalist>
             <datalist id="family-list">{families.map((f) => <option key={f} value={f} />)}</datalist>
-            <p className="mt-3 text-xs text-muted-foreground">ยี่ห้อ/กลุ่มสินค้าอ่านจากชื่อหมวดสินค้าใน Odoo แบบ <code>ยี่ห้อ-กลุ่ม</code> เช่น AT-PCR (Austone), TM-WH (กระทะล้อ) · วันที่มีผลเทียบกับวันที่เงินเข้า</p>
+            <p className="mt-3 text-xs text-muted-foreground">หมวดสินค้าอ่านจาก product category ใน Odoo แบบ <code>ยี่ห้อ-กลุ่ม</code> เช่น AT-PCR (Austone), TM-WH (กระทะล้อ) · เลือก “ทุกยี่ห้อ-PCR” ถ้าอัตราเดียวกันทุกยี่ห้อ · วันที่มีผลเทียบกับวันที่เงินเข้า</p>
           </section>
         </>
       )}

@@ -14,7 +14,7 @@ import type { FirstInvoice } from './bonus';
 import { buildLedger, lastCategorySegment, ownerOf, repTagName, tagRepKey, type LedgerInput, type RawInvoice, type RawInvoiceLine, type RawPartial, type RawReceipt } from './ledger';
 import { addDays } from './period';
 import type { OpenInvoice } from './statement';
-import type { CreditNote, LedgerLine } from './types';
+import type { CreditNote, LedgerLine, SaleOrder } from './types';
 
 type Ref = [number, string] | null;
 type M2O = [number, string] | false;
@@ -339,4 +339,45 @@ export async function searchProducts(client: OdooReadClient, text: string): Prom
 export async function fetchCategories(client: OdooReadClient): Promise<string[]> {
   const rows = await client.searchRead<{ id: number; name: string }>('product.category', [], ['id', 'name'], { limit: 1000 });
   return [...new Set(rows.map((r) => lastCategorySegment(r.name)).filter(Boolean))].sort();
+}
+
+/** Bangkok day `day` 00:00 (or 23:59:59 with `end`) as Odoo's UTC datetime text ("YYYY-MM-DD HH:MM:SS"). */
+export function bangkokToUtc(day: string, end = false): string {
+  const local = new Date(`${day}T${end ? '23:59:59' : '00:00:00'}+07:00`);
+  return local.toISOString().slice(0, 19).replace('T', ' ');
+}
+
+/** Odoo UTC datetime text → Bangkok calendar day. */
+export function utcToBangkokDay(value: string): string {
+  const time = new Date(`${value.replace(' ', 'T')}Z`).getTime();
+  return Number.isFinite(time) ? new Date(time + 7 * 3_600_000).toISOString().slice(0, 10) : value.slice(0, 10);
+}
+
+type SaleOrderRow = { id: number; name: string; state: string; date_order: string | false; amount_untaxed: number; amount_total: number; partner_id: M2O; user_id: M2O };
+
+/**
+ * Confirmed sale orders (state sale / done, not cancelled) dated in the period (Bangkok days), each
+ * with its rep by the commission rule: the customer's (commercial partner's) first "Sale …" tag, else
+ * the order's salesperson mapped to the tag rep of the same name. All products count.
+ */
+export async function fetchSaleOrders(client: OdooReadClient, period: string, range: { start: string; end: string }): Promise<SaleOrder[]> {
+  const rows = await searchAll<SaleOrderRow>(client, 'sale.order', [
+    ['state', 'in', ['sale', 'done']], ['date_order', '>=', bangkokToUtc(range.start)], ['date_order', '<=', bangkokToUtc(range.end, true)],
+  ], ['id', 'name', 'state', 'date_order', 'amount_untaxed', 'amount_total', 'partner_id', 'user_id']);
+  if (!rows.length) return [];
+  const contacts = await readAll<{ id: number; commercial_partner_id: M2O }>(client, 'res.partner', rows.map((r) => ref(r.partner_id)?.[0]).filter((id): id is number => id !== undefined), ['commercial_partner_id']);
+  const commercialOf = new Map(contacts.map((c) => [c.id, ref(c.commercial_partner_id)?.[0] ?? c.id]));
+  const companies = await readAll<{ id: number; category_id?: number[] | false }>(client, 'res.partner', [...new Set(commercialOf.values())], ['category_id']);
+  const reps = await fetchRepDirectory(client);
+  const tagsOf = new Map(companies.map((p) => [p.id, (Array.isArray(p.category_id) ? p.category_id : []).flatMap((id) => (reps.tags.has(id) ? [reps.tags.get(id)!] : []))]));
+  return rows.map((r) => {
+    const partner = ref(r.partner_id);
+    const tags = partner ? tagsOf.get(commercialOf.get(partner[0]) ?? partner[0]) ?? [] : [];
+    const user = ref(r.user_id);
+    const owner = tags[0] ?? (user ? reps.userReps.get(user[0]) ?? user : null);
+    return {
+      orderId: r.id, orderName: r.name, orderDate: r.date_order ? utcToBangkokDay(r.date_order) : range.start, partnerName: partner?.[1] ?? '',
+      odooUserId: owner?.[0] ?? null, repName: owner?.[1] ?? null, amountUntaxed: Number(r.amount_untaxed) || 0, amountTotal: Number(r.amount_total) || 0, period,
+    };
+  });
 }

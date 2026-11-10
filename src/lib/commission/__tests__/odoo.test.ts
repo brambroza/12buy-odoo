@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { OdooReadClient } from '@/lib/odoo/rpc';
 import { ISSUE } from '../ledger';
-import { fetchCategories, fetchCollections, fetchCredits, fetchOdooUsers, fetchOverdueInvoices, fetchPaidInvoiceIds, fetchPricelists, fetchSales, searchProducts } from '../odoo';
+import { bangkokToUtc, fetchCategories, fetchCollections, fetchCredits, fetchOdooUsers, fetchOverdueInvoices, fetchPaidInvoiceIds, fetchPricelists, fetchSaleOrders, fetchSales, searchProducts, utcToBangkokDay } from '../odoo';
 
 type Row = Record<string, unknown> & { id: number };
 
@@ -201,5 +201,36 @@ describe('reference reads', () => {
     expect(await fetchPricelists(client)).toEqual([{ id: 5, name: 'ราคาปลีก' }]);
     expect(await searchProducts(client, 'a2')).toEqual([{ id: 502, name: '[A2] Austone TBR', category: 'AUSTONE-TBR' }]);
     expect(await fetchCategories(client)).toEqual(['AUSTONE-PCR', 'AUSTONE-TBR']);
+  });
+});
+
+describe('fetchSaleOrders', () => {
+  it('converts Bangkok days to Odoo UTC and back', () => {
+    expect(bangkokToUtc('2026-10-21')).toBe('2026-10-20 17:00:00');
+    expect(bangkokToUtc('2026-11-20', true)).toBe('2026-11-20 16:59:59');
+    expect(utcToBangkokDay('2026-11-20 18:30:00')).toBe('2026-11-21');
+  });
+
+  it('reads confirmed orders of the period with the customer tag rep, else the salesperson', async () => {
+    const client = fakeClient({
+      'sale.order': [
+        { id: 1, name: 'S1', state: 'sale', date_order: '2026-10-20 17:30:00', amount_untaxed: 1000, amount_total: 1070, partner_id: [11, 'สาขา 1'], user_id: [5, 'Sea'] },
+        { id: 2, name: 'S2', state: 'done', date_order: '2026-11-01 03:00:00', amount_untaxed: 500, amount_total: 535, partner_id: [20, 'ร้านไม่มี tag'], user_id: [6, 'Tip'] },
+        { id: 3, name: 'S3', state: 'cancel', date_order: '2026-11-01 03:00:00', amount_untaxed: 999, amount_total: 999, partner_id: [20, 'x'], user_id: false },
+        { id: 4, name: 'S4', state: 'sale', date_order: '2026-10-20 16:00:00', amount_untaxed: 7, amount_total: 7, partner_id: [20, 'x'], user_id: false },
+      ],
+      'res.partner': [
+        { id: 10, commercial_partner_id: [10, 'บริษัทแม่'], category_id: [3] },
+        { id: 11, commercial_partner_id: [10, 'บริษัทแม่'], category_id: [] },
+        { id: 20, commercial_partner_id: [20, 'ร้านไม่มี tag'], category_id: [] },
+      ],
+      'res.partner.category': [{ id: 3, name: 'Sale Wit' }, { id: 4, name: 'Sale Tip' }],
+      'res.users': [{ id: 5, name: 'Sea', login: 's', share: false }, { id: 6, name: 'Tip', login: 't', share: false }],
+    });
+    const out = await fetchSaleOrders(client, '2026-11', { start: '2026-10-21', end: '2026-11-20' });
+    expect(out).toEqual([
+      { orderId: 1, orderName: 'S1', orderDate: '2026-10-21', partnerName: 'สาขา 1', odooUserId: -3, repName: 'Wit', amountUntaxed: 1000, amountTotal: 1070, period: '2026-11' },
+      { orderId: 2, orderName: 'S2', orderDate: '2026-11-01', partnerName: 'ร้านไม่มี tag', odooUserId: -4, repName: 'Tip', amountUntaxed: 500, amountTotal: 535, period: '2026-11' },
+    ]);
   });
 });
