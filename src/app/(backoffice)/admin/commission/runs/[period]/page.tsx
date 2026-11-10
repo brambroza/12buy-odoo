@@ -293,7 +293,7 @@ export default async function CommissionRunPage({ params, searchParams }: { para
                       <TableCell data-label="Pricelist" className="text-xs">{l.pricelistName ?? '—'}</TableCell>
                       <TableCell data-label="หน่วย" className="text-right text-xs tabular-nums">{l.qty}</TableCell>
                       <TableCell data-label="ก่อน VAT" className="text-right tabular-nums">{baht(l.base)}</TableCell>
-                      {showFormula && <TableCell data-label="สูตร" className="min-w-72 text-xs whitespace-normal"><Formula formula={formulaOf(l)} /></TableCell>}
+                      {showFormula && <TableCell data-label="สูตร" className="min-w-[26rem] whitespace-normal"><Formula formula={formulaOf(l)} /></TableCell>}
                       <TableCell data-label="ค่าคอม" className="text-right font-semibold tabular-nums">{r ? baht(r.commission) : '—'}</TableCell>
                       <TableCell data-label="ผล" className="text-xs whitespace-normal">
                         {(() => {
@@ -369,9 +369,12 @@ function InvoiceTable({ rows, formulas, lineHref }: { rows: InvoiceCommissionRow
             </TableRow>
             {formulas && <TableRow className={cn('border-b-2', r.kind === 'RETRO' && 'bg-amber-500/5')}>
               <TableCell colSpan={7} className="pt-0 pb-2 whitespace-normal">
-                <ul className="space-y-1 rounded-lg bg-muted/40 p-2 text-xs">
+                <ul className="divide-y divide-border/60 rounded-xl border border-border/70 bg-muted/30">
                   {(formulas.get(r.key) ?? []).map((f, i) => (
-                    <li key={i}><span className="font-medium">{f.product}</span> · <Formula formula={f.formula} inline /></li>
+                    <li key={i} className="space-y-1.5 px-3 py-2">
+                      <p className="text-xs font-medium">{f.product}</p>
+                      <Formula formula={f.formula} />
+                    </li>
                   ))}
                 </ul>
               </TableCell>
@@ -524,13 +527,37 @@ function PeriodDatesCard({ calendar, period, hidden, canEdit, endLocked }: { cal
   );
 }
 
-/** The rate rule that matched and the arithmetic of one line. */
-function Formula({ formula, inline }: { formula: LineFormula; inline?: boolean }) {
+/**
+ * One line's commission as labelled boxes: [ยอดก่อน VAT] × [อัตรา] × [ราคาพิเศษ] × [เกินดิว] = [ค่าคอม],
+ * with the rate rule that matched above. Steps above 100% show green, below red.
+ */
+function Formula({ formula }: { formula: LineFormula }) {
+  const tone = { up: 'border-emerald-300 bg-emerald-500/10 text-emerald-800', down: 'border-red-300 bg-red-500/10 text-red-800' } as const;
   return (
-    <span className={inline ? undefined : 'block'}>
-      <span className="text-muted-foreground">อัตรา: {formula.rule}</span>
-      <span className={cn('tabular-nums', inline ? 'ml-1' : 'block')}>{inline && '· '}{formula.steps}</span>
-      {formula.excluded && <span className={cn('text-amber-800', inline ? 'ml-1' : 'block')}>· ไม่คิด: {formula.excluded}</span>}
-    </span>
+    <div className="space-y-1.5 text-xs">
+      <p className="flex flex-wrap items-center gap-1.5 text-muted-foreground">
+        <span className="rounded-md bg-primary/10 px-1.5 py-0.5 text-[11px] font-medium text-primary">อัตราที่ใช้</span>
+        <span>{formula.rule}</span>
+      </p>
+      {formula.terms ? (
+        <div className="flex flex-wrap items-stretch gap-1.5">
+          {formula.terms.map((t, i) => (
+            <Fragment key={i}>
+              {i > 0 && <span className="self-center text-base text-muted-foreground" aria-hidden>×</span>}
+              <span className={cn('flex min-w-20 flex-col rounded-lg border border-border bg-background px-2 py-1', t.tone && tone[t.tone])}>
+                <span className="text-[10px] leading-tight text-muted-foreground">{t.label}</span>
+                <span className="font-semibold tabular-nums">{t.value}</span>
+              </span>
+            </Fragment>
+          ))}
+          <span className="self-center text-base text-muted-foreground" aria-hidden>=</span>
+          <span className="flex min-w-20 flex-col rounded-lg border border-primary bg-primary px-2 py-1 text-primary-foreground">
+            <span className="text-[10px] leading-tight opacity-80">ค่าคอม</span>
+            <span className="font-bold tabular-nums">{formula.result}</span>
+          </span>
+        </div>
+      ) : <p className="tabular-nums">{formula.steps}</p>}
+      {formula.excluded && <p><span className="rounded-md bg-amber-500/15 px-1.5 py-0.5 font-medium text-amber-800">ไม่คิด: {formula.excluded}</span></p>}
+    </div>
   );
 }

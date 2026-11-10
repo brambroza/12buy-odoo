@@ -9,9 +9,15 @@ import { EXCLUDED_LABELS, PRICE_GROUP_LABELS, type CommissionRate, type LedgerLi
 const money = new Intl.NumberFormat('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const units = new Intl.NumberFormat('th-TH', { maximumFractionDigits: 4 });
 
+/** One factor of the formula, for display as a labelled box ("ยอดก่อน VAT 100,000.00"). */
+export type FormulaTerm = { label: string; value: string; tone?: 'up' | 'down' };
+
 export type LineFormula = {
   /** The rate rule that matched, e.g. "AT-PCR · pricelist ราคาปลีก · 0.9% (เริ่ม 2026-09-21)". */
   rule: string;
+  /** The factors multiplied together and the commission they give (absent when not calculated). */
+  terms?: FormulaTerm[];
+  result?: string;
   /** The arithmetic, e.g. "100,000.00 × 0.9% = 900.00 × 110% (เกินดิว 0–10 วัน) = 990.00". */
   steps: string;
   /** Set when the line earned nothing: why. */
@@ -47,5 +53,15 @@ export function lineFormula(line: LedgerLine, result: LineResult | undefined, ra
   const days = line.overdueDays ?? 0;
   const range = result.stepRange === undefined ? '' : ` · ขั้น ${stepRangeLabel(result.stepRange)}`;
   parts.push(`× ${result.stepPercent}% (เกินดิว ${days} วัน${range}) = ${money.format(result.commission)}`);
-  return { rule, steps: parts.join(' '), excluded: reason ? EXCLUDED_LABELS[reason] : undefined };
+  const perUnit = rate?.kind === 'PER_UNIT' || result.rateLabel.includes('/หน่วย');
+  const terms: FormulaTerm[] = [
+    perUnit ? { label: 'จำนวน', value: `${units.format(line.qty)} หน่วย` } : { label: 'ยอดก่อน VAT', value: money.format(line.base) },
+    { label: perUnit ? 'บาท / หน่วย' : 'อัตรา', value: result.rateLabel.replace('/หน่วย', '') },
+  ];
+  if (result.specialPercent !== 100) terms.push({ label: 'ราคาพิเศษ', value: `${result.specialPercent}%`, tone: 'down' });
+  terms.push({
+    label: `เกินดิว ${days} วัน${result.stepRange === undefined ? '' : ` · ขั้น ${stepRangeLabel(result.stepRange)}`}`,
+    value: `${result.stepPercent}%`, tone: result.stepPercent > 100 ? 'up' : result.stepPercent < 100 ? 'down' : undefined,
+  });
+  return { rule, terms, result: money.format(result.commission), steps: parts.join(' '), excluded: reason ? EXCLUDED_LABELS[reason] : undefined };
 }

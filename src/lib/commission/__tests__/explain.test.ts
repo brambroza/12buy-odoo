@@ -17,16 +17,19 @@ const result = (over: Partial<LineResult> = {}): LineResult => ({
 
 describe('lineFormula', () => {
   it('names the matched rule and spells out base × rate × step', () => {
-    expect(lineFormula(line(), result(), [rate()])).toEqual({
+    expect(lineFormula(line(), result(), [rate()])).toMatchObject({
       rule: 'AT-PCR · pricelist ราคาปลีก · 0.9% (เริ่ม 2026-09-21)',
       steps: '100,000.00 × 0.9% = 900.00 × 110% (เกินดิว 6 วัน · ขั้น 0–10 วัน) = 990.00',
       excluded: undefined,
+      terms: [{ label: 'ยอดก่อน VAT', value: '100,000.00' }, { label: 'อัตรา', value: '0.9%' }, { label: 'เกินดิว 6 วัน · ขั้น 0–10 วัน', value: '110%', tone: 'up' }],
+      result: '990.00',
     });
   });
 
   it('per-unit rates with a special price', () => {
     const f = lineFormula(line(), result({ rateLabel: '฿15/หน่วย', specialPercent: 50, stepPercent: 100, commission: 30, beforeStep: 30 }), [rate({ kind: 'PER_UNIT', value: 15, family: 'TBR', brand: '*', odooPricelistId: null, pricelistName: null })]);
     expect(f.rule).toContain('ทุกยี่ห้อ-TBR · ทุกกลุ่มราคา · ฿15/หน่วย');
+    expect(f.terms?.map((t) => t.value)).toEqual(['4 หน่วย', '฿15', '50%', '100%']);
     expect(f.steps).toBe('4 หน่วย × ฿15 = 60.00 × 50% (ราคาพิเศษ) = 30.00 × 100% (เกินดิว 6 วัน · ขั้น 0–10 วัน) = 30.00');
   });
 
