@@ -11,13 +11,17 @@ const DEALER_TYPES = Object.keys(DEALER_TYPE_LABELS) as DealerType[];
 const PHONE_RE = /^0\d{1,2}[- ]?\d{3}[- ]?\d{3,4}$/;
 
 /**
- * Validation for the public "สมัครเป็นดีลเลอร์" form: shop, tax id, full Thai address, contact,
+ * Validation for the public "สมัครเป็นดีลเลอร์" form: shop, optional tax id, full Thai address, contact,
  * product families and the owner's login (email + password typed twice).
  */
 export const dealerLeadSchema = z.object({
   shopName: z.string().trim().min(2, 'กรุณากรอกชื่อร้าน').max(120, 'ชื่อร้านยาวเกินไป'),
-  /** 13 digits (checksum verified); the duplicate key for dealers and Odoo customers. */
-  taxId: z.string().transform((v, ctx) => {
+  /**
+   * Optional: cash customers often have none. When given it must be a valid 13-digit Thai tax id
+   * (checksum verified) and becomes the duplicate key for dealers and Odoo customers.
+   */
+  taxId: z.string().trim().transform((v, ctx) => {
+    if (!v) return null;
     const problem = taxIdProblem(v);
     if (problem) {
       ctx.addIssue({ code: 'custom', message: problem });

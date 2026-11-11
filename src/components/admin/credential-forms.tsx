@@ -1,21 +1,36 @@
 'use client';
 
 import { useActionState } from 'react';
-import { Copy, KeyRound, UserPlus } from 'lucide-react';
+import { Copy, KeyRound, MailCheck, UserPlus } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { notify } from '@/components/ui/notify';
 
-export type CredentialResult = { ok: true; message: string; email?: string; tempPassword?: string } | { ok: false; message: string } | null;
+/**
+ * `tempPassword` is present only when staff must hand the password over themselves (email off or failed);
+ * `emailed: true` means the user already received it by email and nothing is shown.
+ */
+export type CredentialResult = { ok: true; message: string; email?: string; tempPassword?: string; emailed?: boolean; emailError?: string } | { ok: false; message: string } | null;
 type CredentialAction = (prev: CredentialResult, formData: FormData) => Promise<CredentialResult>;
 
-/** Shows a freshly generated temporary password exactly once, with a copy button. */
-function TempPassword({ email, password }: { email?: string; password: string }) {
+/** Confirms the temporary password went out by email (nothing sensitive on screen). */
+function EmailedNotice({ email }: { email?: string }) {
+  return (
+    <div role="status" className="flex items-start gap-2 rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-900">
+      <MailCheck className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
+      <p><span className="font-semibold">ส่งรหัสผ่านชั่วคราวทางอีเมลแล้ว</span>{email && <> ไปที่ <span className="font-mono">{email}</span></>} ผู้ใช้เข้าสู่ระบบแล้วระบบจะให้ตั้งรหัสใหม่</p>
+    </div>
+  );
+}
+
+/** Shows a freshly generated temporary password exactly once, with a copy button. `note` explains why it was not emailed. */
+function TempPassword({ email, password, note }: { email?: string; password: string; note?: string }) {
   const origin = typeof window !== 'undefined' ? window.location.origin : '';
   const text = `อีเมล: ${email ?? ''}\nรหัสผ่านชั่วคราว: ${password}\nเข้าสู่ระบบที่ ${origin}/login แล้วตั้งรหัสใหม่`;
   return (
     <div role="status" className="rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-900">
       <p className="font-semibold">สร้างแล้ว ส่งรหัสนี้ให้ผู้ใช้ทาง LINE (แสดงครั้งเดียว)</p>
+      {note && <p className="mt-1 text-xs text-amber-800">{note}</p>}
       {email && <p className="mt-1">อีเมล: <span className="font-mono">{email}</span></p>}
       <p>รหัสผ่านชั่วคราว: <span className="font-mono text-base font-bold">{password}</span></p>
       <Button type="button" size="sm" variant="outline" className="mt-2" onClick={() => navigator.clipboard?.writeText(text).then(
@@ -44,10 +59,11 @@ export function CreateUserForm({ action, hidden, roles }: { action: CredentialAc
   );
 }
 
-/** One-click temporary password reset; reveals the new password once. `compact` renders an icon-only button for table rows. */
+/** One-click temporary password reset: emails the new password, or reveals it once when email is unavailable. `compact` renders an icon-only button for table rows. */
 export function ResetPasswordButton({ action, userId, compact = false }: { action: CredentialAction; userId: string; compact?: boolean }) {
   const [state, formAction, pending] = useActionState<CredentialResult, FormData>(action, null);
-  if (state?.ok && state.tempPassword) return <TempPassword email={state.email} password={state.tempPassword} />;
+  if (state?.ok && state.emailed) return <EmailedNotice email={state.email} />;
+  if (state?.ok && state.tempPassword) return <TempPassword email={state.email} password={state.tempPassword} note={state.emailError} />;
   return (
     <form action={formAction} className="inline">
       <input type="hidden" name="userId" value={userId} />

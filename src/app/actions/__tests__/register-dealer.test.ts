@@ -51,6 +51,15 @@ describe('registerDealerAction tax id dedupe', () => {
     expect(leadsRepo.createLead).toHaveBeenCalledWith(expect.objectContaining({ taxId: TAX }));
   });
 
+  it('accepts a blank tax id and skips every tax id lookup (cash customer)', async () => {
+    const result = await registerDealerAction(null, form({ taxId: '' }));
+    expect(result).toMatchObject({ ok: true });
+    expect(dealersRepo.findDealerByTaxId).not.toHaveBeenCalled();
+    expect(leadsRepo.findOpenLeadByTaxId).not.toHaveBeenCalled();
+    expect(claim.findPartnersByTaxId).not.toHaveBeenCalled();
+    expect(leadsRepo.createLead).toHaveBeenCalledWith(expect.objectContaining({ taxId: null }));
+  });
+
   it('rejects a bad check digit before touching the database', async () => {
     const result = await registerDealerAction(null, form({ taxId: '0105556123456' }));
     expect(result).toMatchObject({ ok: false, field: 'taxId' });

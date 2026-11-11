@@ -9,6 +9,7 @@ import { audit } from '@/lib/auth/audit';
 import { notifyDealerApproved } from '@/lib/notify';
 import { generateTempPassword } from '@/lib/auth/password';
 import { findResetRequest, resolveResetRequests } from '@/lib/auth/reset-requests';
+import { sendTempPasswordEmail } from '@/lib/auth/temp-password-mail';
 import { canManageRole, isBackofficeRole, type Role } from '@/lib/auth/roles';
 import { parseProfileForm } from '@/lib/auth/profile';
 import { requireAdmin, requireBackoffice, revokeAllSessions } from '@/lib/auth/session';
@@ -324,7 +325,10 @@ export async function createDealerUserAction(_prev: CredentialResult, formData: 
   }
 }
 
-/** Issues a new temporary password and signs the user out everywhere. */
+/**
+ * Issues a new temporary password, signs the user out everywhere and emails the password to them.
+ * When SMTP is not configured or the send fails, the password is returned so staff can hand it over by LINE.
+ */
 export async function resetPasswordAction(_prev: CredentialResult, formData: FormData): Promise<CredentialResult> {
   const actor = await requireAdmin();
   const userId = String(formData.get('userId') ?? '');
@@ -335,10 +339,15 @@ export async function resetPasswordAction(_prev: CredentialResult, formData: For
   await setPassword(userId, tempPassword, true);
   await revokeAllSessions(userId);
   await resolveResetRequests(userId, actor.id);
-  await audit(actor.id, 'user.reset-password', 'User', userId);
+  const mail = await sendTempPasswordEmail(target, tempPassword);
+  await audit(actor.id, 'user.reset-password', 'User', userId, { emailed: mail.ok, emailError: mail.ok ? undefined : mail.reason });
   revalidate();
-  await flash('รีเซ็ตรหัสผ่านแล้ว', { icon: 'key', description: `${target.email} · ออกจากระบบทุกอุปกรณ์แล้ว ส่งรหัสชั่วคราวให้ผู้ใช้` });
-  return { ok: true, message: 'รีเซ็ตแล้ว', email: target.email, tempPassword };
+  if (mail.ok) {
+    await flash('รีเซ็ตรหัสผ่านแล้ว', { icon: 'mail', description: `ส่งรหัสชั่วคราวไปที่ ${target.email} แล้ว · ออกจากระบบทุกอุปกรณ์แล้ว` });
+    return { ok: true, message: 'รีเซ็ตแล้ว', email: target.email, emailed: true };
+  }
+  await flash('รีเซ็ตรหัสผ่านแล้ว', { type: 'warning', icon: 'key', description: `${target.email} · ส่งอีเมลไม่สำเร็จ ส่งรหัสชั่วคราวให้ผู้ใช้ทาง LINE` });
+  return { ok: true, message: 'รีเซ็ตแล้ว', email: target.email, tempPassword, emailed: false, emailError: mail.reason === 'not-configured' ? 'ยังไม่ได้ตั้งค่าอีเมลขาออก (ตั้งได้ที่ ตั้งค่า → อีเมล)' : `ส่งอีเมลไม่สำเร็จ: ${mail.error}` };
 }
 
 /** Closes a forgot-password request without issuing a new password (spam, or handled another way). */

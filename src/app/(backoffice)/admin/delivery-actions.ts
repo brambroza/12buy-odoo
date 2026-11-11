@@ -9,6 +9,9 @@ import { flash } from '@/lib/flash';
 import { createCarrier, setCarrierActive, updateCarrier } from '@/lib/odoo/delivery-carrier';
 import { odooWritesEnabled } from '@/lib/odoo/rpc';
 import { clearReferenceCache } from '@/lib/shop/catalog';
+import { setFreightRates } from '@/lib/admin/store';
+import { FREIGHT_TYPES, formatFreightRates, parseFreightRate, type FreightRates } from '@/lib/shop/freight';
+import { DEALER_TYPE_LABELS } from '@/lib/shop/types';
 
 const PAGE = '/admin/delivery';
 
@@ -111,5 +114,32 @@ export async function setCarrierActiveAction(formData: FormData) {
   await audit(actor.id, active ? 'delivery.carrier.restore' : 'delivery.carrier.archive', 'delivery.carrier', String(id));
   refresh();
   await flash(active ? 'เปิดใช้งานแล้ว' : 'ปิดใช้งานแล้ว', { type: active ? 'success' : 'info', icon: 'truck', description: active ? 'ยังไม่เปิดบนเว็บ กด "เปิดบนเว็บ" ถ้าต้องการ' : field(formData, 'name') || undefined });
+  redirect(backTo(formData));
+}
+
+/**
+ * Saves the freight discount of one delivery method (baht per tyre / wheel / pack for each family, field
+ * `freight_<TYPE>`; blank or 0 = none). Stored on the web, not in Odoo, so it works with Odoo read-only.
+ */
+export async function saveFreightRatesAction(formData: FormData) {
+  const actor = await requireAdmin();
+  const id = idSchema.safeParse(field(formData, 'id')).data;
+  if (!id) redirect(backTo(formData));
+  const rates: FreightRates = {};
+  for (const type of FREIGHT_TYPES) {
+    const parsed = parseFreightRate(field(formData, `freight_${type}`));
+    if (parsed && typeof parsed === 'object') return fail(formData, 'บันทึกไม่สำเร็จ', `${DEALER_TYPE_LABELS[type]}: ${parsed.error}`, { edit: String(id) });
+    if (parsed) rates[type] = parsed;
+  }
+  let saved: FreightRates;
+  try {
+    saved = await setFreightRates(id, rates);
+  } catch (e) {
+    return fail(formData, 'บันทึกไม่สำเร็จ', e instanceof Error ? e.message : 'บันทึกไม่ได้', { edit: String(id) });
+  }
+  await audit(actor.id, 'delivery.freight.save', 'delivery.carrier', String(id), { rates: saved });
+  revalidatePath(PAGE);
+  revalidatePath('/shop/cart');
+  await flash('บันทึกส่วนลดค่าขนส่งแล้ว', { icon: 'truck', description: formatFreightRates(saved) || 'ไม่มีส่วนลด' });
   redirect(backTo(formData));
 }

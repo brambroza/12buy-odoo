@@ -25,8 +25,11 @@ describe('dealerLeadSchema', () => {
     }
   });
 
-  it('requires a 13-digit tax id with a valid check digit', () => {
-    expect(issue({ ...valid, taxId: '' })).toMatchObject({ path: ['taxId'], message: 'เลขผู้เสียภาษีต้องมี 13 หลัก' });
+  it('accepts a blank tax id (cash customers) but checks one that is typed', () => {
+    expect(issue({ ...valid, taxId: '' })).toBeNull();
+    expect(issue({ ...valid, taxId: '   ' })).toBeNull();
+    const blank = dealerLeadSchema.safeParse({ ...valid, taxId: '' });
+    expect(blank.success && blank.data.taxId).toBeNull();
     expect(issue({ ...valid, taxId: '010555612345' })?.path).toEqual(['taxId']);
     expect(issue({ ...valid, taxId: '0105556123456' })?.message).toContain('ไม่ถูกต้อง');
     expect(issue({ ...valid, taxId: 'TH0105556123453' })).toBeNull();

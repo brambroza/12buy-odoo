@@ -19,7 +19,7 @@ import { getPendingOrderCredit } from '@/lib/shop/credit-line';
 import { creditOutstanding, creditPayments, pendingCreditPayments } from '@/lib/shop/credit-payment';
 import { creditPaymentsToResend } from '@/lib/shop/credit-payment-odoo';
 import { formatAmount } from '@/lib/money';
-import type { OrderCreditView } from '@/lib/shop/credit';
+import { thaiDate, type OrderCreditView } from '@/lib/shop/credit';
 import { countStalePending, isPaymentReady, listAllOrders } from '@/lib/shop/store';
 import { CREDIT_PAYMENT_STATUS_LABELS, ORDER_STATUS_FLOW, ORDER_STATUS_LABELS, type CreditPayment, type CreditPaymentStatus, type OdooSync, type OrderStatus, type ProtoOrder } from '@/lib/shop/types';
 import { cn } from '@/lib/utils';
@@ -111,12 +111,13 @@ function SalesRepCell({ rep }: { rep: OrderSalesRep | null }) {
   return <span className="block break-words text-xs text-muted-foreground" title="ลูกค้าไม่มี tag Sale ใน Odoo · แสดง Salesperson แทน">Salesperson: {rep.name}</span>;
 }
 
-/** Total with the end-of-bill cash discount and coupon lines underneath. */
+/** Total with the end-of-bill cash discount, freight discount and coupon lines underneath. */
 function OrderTotal({ order: o }: { order: ProtoOrder }) {
   return (
     <span className="block whitespace-nowrap font-bold tabular-nums">
       {baht(o.total)}
       {o.cashDiscount > 0 && <span className="block whitespace-normal text-xs font-normal text-emerald-700">ลดเงินสด{percentLabel(o.lines)} −{baht(o.cashDiscount)}<span className="hidden xl:inline"> จาก {baht(o.subtotal)}</span></span>}
+      {(o.freightDiscount ?? 0) > 0 && <span className="block whitespace-normal text-xs font-normal text-emerald-700">ลดค่าขนส่ง −{baht(o.freightDiscount!)}</span>}
       {o.coupon && o.couponDiscount > 0 && <span className="block whitespace-normal text-xs font-normal text-emerald-700">คูปอง {o.coupon.code} −{baht(o.couponDiscount)}</span>}
     </span>
   );
@@ -501,7 +502,10 @@ async function CreditPanel({ order: o }: { order: ProtoOrder }) {
     <div className="grid gap-2 sm:grid-cols-1">
       <CreditCard title="วงเงินเครดิต" view={web} usedLabel="ยอดค้างยกมา (Odoo) + ออเดอร์เครดิตค้าง" empty="ไม่ได้ตั้งวงเงินบนเว็บ" />
      {overdue && overdue.count > 0 && (
-        <p className="rounded-md bg-destructive/10 p-2 text-destructive">ลูกค้ามียอดเลยกำหนดชำระ {overdue.count} ใบ รวม {baht(overdue.amount)}{overdue.oldestDueDate ? ` (เก่าสุดครบ ${overdue.oldestDueDate})` : ''}{overdue.source === 'web' ? ' · นับจากออเดอร์เว็บ เพราะอ่าน Odoo ไม่ได้' : ''} · หน้าร้านปิดสั่งเครดิตไว้แล้ว ตรวจกับบัญชีก่อนยืนยัน</p>
+        <p className="rounded-md bg-destructive/10 p-2 text-destructive">ลูกค้ามียอดเลยกำหนดชำระ{overdue.graceDays > 0 ? `เกิน ${overdue.graceDays} วัน` : ''} {overdue.count} ใบ รวม {baht(overdue.amount)}{overdue.oldestDueDate ? ` (เก่าสุดครบ ${thaiDate(overdue.oldestDueDate)})` : ''}{overdue.source === 'web' ? ' · นับจากออเดอร์เว็บ เพราะอ่าน Odoo ไม่ได้' : ''} · หน้าร้านปิดสั่งเครดิตไว้แล้ว ตรวจกับบัญชีก่อนยืนยัน</p>
+      )}
+     {overdue && overdue.grace && overdue.grace.count > 0 && (
+        <p className="rounded-md bg-amber-500/10 p-2 text-amber-800">ลูกค้ามีบิลเลยกำหนด {overdue.grace.count} ใบ รวม {baht(overdue.grace.amount)} อยู่ในช่วงผ่อนผัน {overdue.graceDays} วัน · {overdue.count > 0 ? 'ล็อกเครดิตอยู่แล้ว' : `หน้าร้านจะปิดสั่งเครดิตตั้งแต่ ${thaiDate(overdue.grace.lockDate)} ถ้ายังไม่ชำระ`}</p>
       )}
      {(web?.over || credit.odoo?.over) && (
         <p className="rounded-md bg-destructive/10 p-2 text-destructive sm:col-span-2">ออเดอร์นี้เกินวงเงินเครดิต · ตรวจสอบกับฝ่ายขาย/บัญชีก่อนยืนยัน</p>

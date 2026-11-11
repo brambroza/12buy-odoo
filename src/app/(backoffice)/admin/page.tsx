@@ -4,6 +4,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { CountUp } from '@/components/admin/count-up';
 import * as admin from '@/lib/admin/store';
+import { getOverdueGraceDays } from '@/lib/shop/credit-policy';
 import { DUE_SOON_DAYS, DUE_URGENT_DAYS, TIME_ZONE, buildTasks, creditDues, currentTime, dueLabel, percentChange, summarizeOrders, thaiDay, type CreditDue, type DashboardTask, type SalesSummary, type TaskPriority } from '@/lib/admin/dashboard';
 import { listPendingResetRequests } from '@/lib/auth/reset-requests';
 import { isAdminRole, type Role } from '@/lib/auth/roles';
@@ -76,6 +77,7 @@ export default async function AdminDashboardPage({ searchParams }: { searchParam
     orders, now, newLeads: leads.length, oldestNewLeadAt: leads.at(-1)?.createdAt ? new Date(leads.at(-1)!.createdAt).toISOString() : null,
     pendingDealers: pendingDealers.length, booksPending, resetRequests: resets.length, publishedCarriers: carriers,
     apiKeyDaysLeft: isAdmin ? daysUntil((await getOdooConnection()).apiKeyExpiresAt, new Date(now)) : null,
+    creditGraceDays: await getOverdueGraceDays(),
   }).filter((t) => isAdmin || !t.adminOnly);
   const urgent = tasks.filter((t) => t.priority === 'urgent').length;
   const pendingOrders = summary.byStatus.PENDING;

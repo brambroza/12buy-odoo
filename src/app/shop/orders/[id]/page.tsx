@@ -179,11 +179,14 @@ export default async function OrderDetailPage({ params, searchParams }: { params
           ))}
         </ul>
         <div className="mt-2 space-y-1 border-t border-border pt-2">
-          {(order.cashDiscount > 0 || order.couponDiscount > 0) && (
+          {(order.cashDiscount > 0 || (order.freightDiscount ?? 0) > 0 || order.couponDiscount > 0) && (
             <div className="flex justify-between text-sm"><span className="text-muted-foreground">รวมราคาสินค้า</span><span>{baht(order.subtotal)}</span></div>
           )}
           {order.cashDiscount > 0 && (
             <div className="flex justify-between text-sm text-emerald-700 dark:text-emerald-400"><span>ส่วนลดเงินสด{cashPercent !== null ? ` ${cashPercent}%` : ''} (ท้ายบิล)</span><span>−{baht(order.cashDiscount)}</span></div>
+          )}
+          {(order.freightDiscount ?? 0) > 0 && (
+            <div className="flex justify-between text-sm text-emerald-700 dark:text-emerald-400"><span>ส่วนลดค่าขนส่ง ({order.carrier})</span><span>−{baht(order.freightDiscount!)}</span></div>
           )}
           {order.couponDiscount > 0 && order.coupon && (
             <div className="flex justify-between gap-2 text-sm text-emerald-700 dark:text-emerald-400"><span>คูปอง <span className="font-mono">{order.coupon.code}</span> · {order.coupon.label}</span><span>−{baht(order.couponDiscount)}</span></div>

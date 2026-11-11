@@ -26,8 +26,9 @@ function typedValues(formData: FormData): RegisterValues {
 
 /**
  * Handles the public dealer sign-up form: bot check (Cloudflare Turnstile), validate,
- * rate-limit, refuse a tax id or email that already belongs to a dealer, an open application or an
- * Odoo customer (those activate instead), store the lead (password as a hash) and notify sales.
+ * rate-limit, refuse a tax id (when given; cash customers may leave it blank) or email that already
+ * belongs to a dealer, an open application or an Odoo customer (those activate instead), store the
+ * lead (password as a hash) and notify sales.
  */
 export async function registerDealerAction(prev: RegisterResult, formData: FormData): Promise<RegisterResult> {
   const result = await register(formData);
@@ -64,7 +65,7 @@ async function register(formData: FormData): Promise<RegisterResult> {
     return { ok: false, message: issue?.message ?? 'ข้อมูลไม่ครบ', field: String(path[0] === 'address' ? path[1] ?? 'line' : path[0] ?? '') };
   }
   if (!(await allowSubmission(ip))) return { ok: false, message: 'ส่งข้อมูลบ่อยเกินไป กรุณาลองใหม่ภายหลัง หรือทัก LINE ได้เลย' };
-  const duplicate = await duplicateTaxId(parsed.data.taxId);
+  const duplicate = parsed.data.taxId ? await duplicateTaxId(parsed.data.taxId) : null;
   if (duplicate) return { ok: false, message: duplicate.message, hint: duplicate.hint, field: 'taxId' };
   if (await findUserByEmail(parsed.data.email)) return { ok: false, message: 'อีเมลนี้มีบัญชีอยู่แล้ว เข้าสู่ระบบ หรือกด "ลืมรหัสผ่าน"', field: 'email' };
   if (await findOpenLeadByEmail(parsed.data.email)) return { ok: false, message: 'อีเมลนี้ส่งใบสมัครไว้แล้ว ทีมงานกำลังตรวจสอบ', field: 'email' };

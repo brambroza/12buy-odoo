@@ -171,6 +171,16 @@ describe('buildTasks credit reminders', () => {
     expect(tasks[0].priority).toBe('urgent');
   });
 
+  it('splits past-due invoices into locked and in-grace tasks when the policy has grace days', () => {
+    const tasks = buildTasks({ ...baseTasks, creditGraceDays: 2, orders: [
+      invoiced('a', [{ dueDate: '2026-10-28', amountResidual: 1500 }]),
+      invoiced('b', [{ dueDate: '2026-10-25', amountResidual: 500 }]),
+    ] });
+    expect(tasks.find((t) => t.id === 'credit-overdue')).toMatchObject({ priority: 'urgent', count: 1, href: '/admin/orders?open=b' });
+    expect(tasks.find((t) => t.id === 'credit-overdue')?.title).toContain('เกิน 2 วัน');
+    expect(tasks.find((t) => t.id === 'credit-grace')).toMatchObject({ priority: 'today', count: 1, href: '/admin/orders?open=a' });
+  });
+
   it('makes a reminder more than 3 days out a follow-up', () => {
     const tasks = buildTasks({ ...baseTasks, orders: [invoiced('a', [{ dueDate: '2026-11-04' }])] });
     expect(tasks).toEqual([expect.objectContaining({ id: 'credit-due-soon', priority: 'soon' })]);

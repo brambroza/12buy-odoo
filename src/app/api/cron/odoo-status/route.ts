@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { timingSafeEqual } from 'node:crypto';
+import { runOverdueReminders } from '@/lib/shop/overdue-reminders';
 import { refreshOrderStatuses } from '@/lib/shop/status-sync';
 
 /** True when the request carries `Authorization: Bearer <CRON_SECRET>`. */
@@ -12,7 +13,8 @@ function authorized(request: Request): boolean {
 }
 
 /**
- * Scheduled pull of delivery/invoice/payment status from Odoo into web orders (read-only on Odoo).
+ * Scheduled pull of delivery/invoice/payment status from Odoo into web orders (read-only on Odoo), followed
+ * by the overdue credit reminders (dealer inbox + LINE, staff group summary; at most once per kind per day).
  * Call every 5–10 minutes with the secret: Vercel Cron sends GET with `Authorization: Bearer $CRON_SECRET`,
  * other schedulers (GitHub Actions) may POST.
  */
@@ -23,7 +25,12 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   if (!authorized(request)) return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
   try {
-    return NextResponse.json(await refreshOrderStatuses());
+    const sync = await refreshOrderStatuses();
+    const reminders = await runOverdueReminders().catch((error) => {
+      console.error('[cron] overdue reminders failed', error);
+      return null;
+    });
+    return NextResponse.json({ ...sync, reminders });
   } catch (error) {
     console.error('[cron] odoo status sync failed', error);
     return NextResponse.json({ error: 'sync failed' }, { status: 502 });

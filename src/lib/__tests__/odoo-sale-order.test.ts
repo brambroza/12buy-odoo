@@ -230,3 +230,27 @@ describe('salespersonFor', () => {
     expect(await salespersonFor(7)).toBe(false);
   });
 });
+
+describe('freight discount', () => {
+  const freight = { productId: 777, taxField: 'tax_ids' };
+  const lines = [
+    { productId: 1, name: 'TBR', code: 'a', size: null, qty: 4, unitPrice: 5000, cashDiscountPerUnit: 0, freightDiscount: 600, taxIds: [5] },
+    { productId: 2, name: 'PCR', code: 'b', size: null, qty: 4, unitPrice: 2000, cashDiscountPerUnit: 0, freightDiscount: 320, taxIds: [5] },
+    { productId: 3, name: 'MC', code: 'c', size: null, qty: 20, unitPrice: 200, cashDiscountPerUnit: 0, taxIds: [5] },
+  ];
+
+  it('sends one negative line per tax set with the delivery method name, on credit too', () => {
+    const out = buildOrderLines({ lines, paymentMethod: 'CREDIT', ref: 'WEB-2', carrier: 'รถบริษัท' }, null, freight);
+    expect(out.slice(0, 3).map((l) => l.price_unit)).toEqual([5000, 2000, 200]);
+    expect(out.slice(3)).toEqual([{ product_id: 777, name: 'ส่วนลดค่าขนส่ง รถบริษัท (ออเดอร์เว็บ WEB-2)', product_uom_qty: 1, price_unit: -920, tax_ids: [[6, 0, [5]]] }]);
+  });
+
+  it('folds the freight discount into prices when its Odoo product is not set', () => {
+    const out = buildOrderLines({ lines, paymentMethod: 'CREDIT', ref: 'WEB-2' });
+    expect(out.map((l) => l.price_unit)).toEqual([4850, 1920, 200]);
+  });
+
+  it('notes the freight discount on the SO', () => {
+    expect(buildOrderNote(sampleOrder({ freightDiscount: 920 }))).toContain('ส่วนลดค่าขนส่ง 920.00 บาท');
+  });
+});

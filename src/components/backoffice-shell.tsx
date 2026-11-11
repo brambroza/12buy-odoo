@@ -5,7 +5,7 @@ import { usePathname } from 'next/navigation';
 import { useRef, useState } from 'react';
 import gsap from 'gsap';
 import { useGSAP } from '@gsap/react';
-import { BarChart3, Gauge, History, LayoutDashboard, Megaphone, Menu, PanelLeftClose, PanelLeftOpen, MapPinned, Tags, Store, Inbox, Smartphone, UserPlus, ShieldCheck, LogOut, UsersRound, TicketPercent, BadgePercent, Truck, UserRound, KeyRound, ChevronDown, Plug, Coins } from 'lucide-react';
+import { BarChart3, Gauge, History, LayoutDashboard, Megaphone, Menu, PanelLeftClose, PanelLeftOpen, MapPinned, Tags, Store, Inbox, Smartphone, UserPlus, ShieldCheck, LogOut, UsersRound, TicketPercent, BadgePercent, Truck, UserRound, KeyRound, ChevronDown, Plug, Coins, LayoutTemplate } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { SIDEBAR_COOKIE } from '@/lib/backoffice-ui';
 import { AdminMotion } from '@/components/admin/admin-motion';
@@ -32,6 +32,7 @@ const NAV_ITEMS: { href: string; label: string; icon: typeof LayoutDashboard; gr
   { href: '/admin/cash-discounts', label: 'ส่วนลดเงินสด', icon: BadgePercent, adminOnly: true },
   { href: '/admin/coupons', label: 'คูปอง', icon: TicketPercent, adminOnly: true },
   { href: '/admin/delivery', label: 'การจัดส่ง', icon: Truck, adminOnly: true },
+  { href: '/admin/landing', label: 'เนื้อหาหน้าแรก', icon: LayoutTemplate, adminOnly: true },
   { href: '/admin/promotions', label: 'โปรโมชันหน้าแรก', icon: Megaphone, adminOnly: true },
   { href: '/admin/users', label: 'ผู้ใช้งานระบบ', icon: ShieldCheck, adminOnly: true },
   { href: '/admin/settings', label: 'ตั้งค่าระบบ (Odoo · LINE)', icon: Plug, adminOnly: true },

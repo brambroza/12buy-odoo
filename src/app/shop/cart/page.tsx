@@ -5,11 +5,13 @@ import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { baht, findProduct, getCatalog, getDealerCarrier } from '@/lib/shop/catalog';
 import { getCreditSummary } from '@/lib/shop/credit-line';
-import { isOverdueLocked, overdueLockMessage } from '@/lib/shop/credit';
+import { isInGrace, isOverdueLocked, overdueGraceMessage, overdueLockMessage } from '@/lib/shop/credit';
 import { getWireTransferAccounts } from '@/lib/odoo/wire-transfer';
 import { billTotals, cashDiscountPerUnit, cashPercentOf, resolvePrice, uniformCashPercent, withCoupon } from '@/lib/shop/pricing';
 import { canSeeProduct, getDealerProfile } from '@/lib/shop/dealer';
 import { checkCartCoupon } from '@/lib/shop/cart-coupon';
+import { freightDiscountOf, freightRatesFor, freightUnitLabel } from '@/lib/shop/freight';
+import { listFreightDiscounts } from '@/lib/admin/store';
 import { getSessionId } from '@/lib/shop/session';
 import { getCart, getCartCoupon } from '@/lib/shop/store';
 import { Input } from '@/components/ui/input';
@@ -30,15 +32,18 @@ export const metadata: Metadata = { title: 'ตะกร้าและสั่
 export default async function CartPage({ searchParams }: { searchParams: Promise<{ error?: string }> }) {
   const { error } = await searchParams;
   const [profile, sid, catalog, user] = await Promise.all([getDealerProfile(), getSessionId(), getCatalog(), requireDealerAccess()]);
-  const delivery = await getDealerCarrier(profile.odooPartnerId);
+  const [delivery, freightDiscounts] = await Promise.all([getDealerCarrier(profile.odooPartnerId), listFreightDiscounts()]);
+  const freightRates = freightRatesFor(freightDiscounts, delivery?.carrier.id);
   const canSaveAddress = Boolean(user.dealer) && !isBackofficeRole(user.role as Role);
   const shipTo = checkoutAddress(profile);
   const lines = (await getCart(sid))
     .map((item) => ({ item, product: findProduct(catalog, item.productId) }))
     .filter((l): l is { item: typeof l.item; product: NonNullable<typeof l.product> } => Boolean(l.product))
     .map((l) => ({ ...l, unit: resolvePrice(catalog, l.product, profile, l.item.qty), sale: pickUnit(l.product.units, l.item.unitId) }))
-    .map((l) => ({ ...l, cashOff: cashDiscountPerUnit(catalog, l.product, profile, l.item.qty, l.unit), cashPercent: cashPercentOf(profile, l.product), allowed: canSeeProduct(profile, l.product) }));
-  const billLines = lines.map((l) => ({ qty: l.item.qty, unitPrice: l.unit, cashDiscountPerUnit: l.cashOff, vatRate: l.product.vatRate, vatIncluded: l.product.vatIncluded }));
+    .map((l) => ({ ...l, cashOff: cashDiscountPerUnit(catalog, l.product, profile, l.item.qty, l.unit), cashPercent: cashPercentOf(profile, l.product), allowed: canSeeProduct(profile, l.product) }))
+    // Same cap as checkout: the line after its cash discount, so both payment methods show the same freight discount.
+    .map((l) => ({ ...l, freightOff: freightDiscountOf(freightRates, l.product, l.item.qty, l.item.unitId, l.item.qty * (l.unit - l.cashOff)) }));
+  const billLines = lines.map((l) => ({ qty: l.item.qty, unitPrice: l.unit, cashDiscountPerUnit: l.cashOff, freightDiscount: l.freightOff, vatRate: l.product.vatRate, vatIncluded: l.product.vatIncluded }));
   const couponCode = await getCartCoupon(sid);
   const coupon = couponCode && lines.length
     ? await checkCartCoupon(couponCode, catalog, profile, lines.map((l) => ({ product: l.product, qty: l.item.qty, unitPrice: l.unit, cashDiscountPerUnit: l.cashOff })), profile.credit ? ['CREDIT', 'CASH'] : ['CASH'])
@@ -51,6 +56,7 @@ export default async function CartPage({ searchParams }: { searchParams: Promise
   // Live: the tighter of the web limit and Odoo's credit_limit; Odoo unreachable leaves only the web limit.
   const [{ line: creditLine, overdue }, bank] = await Promise.all([getCreditSummary(profile), getWireTransferAccounts()]);
   const creditLocked = isOverdueLocked(overdue) ? overdueLockMessage(overdue!) : null;
+  const creditWarning = isInGrace(overdue) ? overdueGraceMessage(overdue!) : null;
   const overStock = lines.find((l) => l.item.qty > l.product.qtyAvailable);
   const notAllowed = lines.find((l) => !l.allowed);
 
@@ -78,7 +84,7 @@ export default async function CartPage({ searchParams }: { searchParams: Promise
       {error && <p role="alert" className="rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-sm font-medium text-destructive">{error}</p>}
 
       <ul className="space-y-2">
-        {lines.map(({ item, product, unit, sale, allowed, cashOff, cashPercent }, index) => (
+        {lines.map(({ item, product, unit, sale, allowed, cashOff, cashPercent, freightOff }, index) => (
           <li key={`${product.id}-${item.unitId ?? 'base'}`} className="rounded-xl border border-border bg-card p-3">
             <div className="flex items-start gap-3">
               <Link href={`/shop/product/${product.id}`} className="shrink-0">
@@ -94,6 +100,7 @@ export default async function CartPage({ searchParams }: { searchParams: Promise
                 <p className="text-xs text-muted-foreground">{baht(unit)} /{product.baseUnit}{sale.factor > 1 && <> · {baht(unit * sale.factor)} /{sale.name}</>}</p>
                 <p className="text-xs font-medium">{describeQty(item.qty, product.baseUnit, sale, item.unitQty)}</p>
                 {cashOff > 0 && <p className="text-xs text-emerald-700 dark:text-emerald-400">จ่ายเงินสดลด{cashPercent !== null ? ` ${cashPercent}%` : ''} −{baht(cashOff * item.qty)}</p>}
+                {freightOff > 0 && <p className="text-xs text-emerald-700 dark:text-emerald-400">ส่วนลดค่าขนส่ง ฿{freightRates?.[product.dealerType]?.toLocaleString('th-TH')} /{freightUnitLabel(product.dealerType)} −{baht(freightOff)}</p>}
               </div>
               <p className="shrink-0 font-bold">{baht(unit * item.qty)}</p>
             </div>
@@ -157,7 +164,7 @@ export default async function CartPage({ searchParams }: { searchParams: Promise
         <div className="text-sm">
           <span className="text-xs text-muted-foreground">การจัดส่ง</span>
           {delivery ? (
-            <p className="mt-1 rounded-lg bg-muted/60 px-3 py-2">{delivery.carrier.name}<span className="block text-xs text-muted-foreground">{delivery.assigned ? 'ตามที่ฝ่ายขายกำหนดให้ร้าน' : 'ค่าเริ่มต้น'} · ต้องการเปลี่ยน ติดต่อฝ่ายขาย</span></p>
+            <p className="mt-1 rounded-lg bg-muted/60 px-3 py-2">{delivery.carrier.name}<span className="block text-xs text-muted-foreground">{delivery.assigned ? 'ตามที่ฝ่ายขายกำหนดให้ร้าน' : 'ค่าเริ่มต้น'} · ต้องการเปลี่ยน ติดต่อฝ่ายขาย</span>{creditBill.freightDiscount > 0 && <span className="block text-xs text-emerald-700 dark:text-emerald-400">ส่วนลดค่าขนส่งในบิล −{baht(creditBill.freightDiscount)} · ค่าขนส่งบริษัทเรียกเก็บแยกต่างหาก</span>}</p>
           ) : (
             <p className="mt-1 rounded-lg bg-amber-500/10 px-3 py-2 text-amber-800 dark:text-amber-300">ยังไม่ได้กำหนดการจัดส่งให้ร้าน ติดต่อฝ่ายขาย</p>
           )}
@@ -167,7 +174,7 @@ export default async function CartPage({ searchParams }: { searchParams: Promise
           <span className="text-xs text-muted-foreground">เลขที่ใบสั่งซื้อของร้าน (ไม่บังคับ)</span>
           <input name="poRef" maxLength={40} placeholder="เช่น PO-6811-023" className="mt-1 h-10 w-full rounded-lg border border-border bg-background px-3 text-sm" />
         </label>
-        <CheckoutSummary bank={bank} credit={profile.credit} creditLocked={creditLocked} creditBill={creditBill} cashBill={cashBill} cashPercent={cashPercent} creditLine={creditLine} lineCount={lines.length} blocked={!delivery ? 'ยังไม่มีการจัดส่ง' : notAllowed ? 'ลบสินค้าที่สั่งไม่ได้ก่อน' : overStock ? 'แก้จำนวนก่อน' : couponCode && !couponResult?.ok ? 'ลบโค้ดที่ใช้ไม่ได้ก่อน' : null} />
+        <CheckoutSummary bank={bank} credit={profile.credit} creditLocked={creditLocked} creditWarning={creditWarning} creditBill={creditBill} cashBill={cashBill} cashPercent={cashPercent} creditLine={creditLine} lineCount={lines.length} blocked={!delivery ? 'ยังไม่มีการจัดส่ง' : notAllowed ? 'ลบสินค้าที่สั่งไม่ได้ก่อน' : overStock ? 'แก้จำนวนก่อน' : couponCode && !couponResult?.ok ? 'ลบโค้ดที่ใช้ไม่ได้ก่อน' : null} />
        {/*  <p className="text-[11px] text-muted-foreground">ออเดอร์เข้า Odoo เมื่อฝ่ายขายยืนยัน</p> */}
       </form>
       </div>

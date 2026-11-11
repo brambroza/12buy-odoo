@@ -143,6 +143,8 @@ export type OrderLine = {
   cashDiscountPerUnit?: number;
   /** Cash discount % behind `cashDiscountPerUnit`; absent when it came from a credit/cash pricelist pair. */
   cashDiscountPercent?: number;
+  /** Freight discount for the whole line in baht (delivery method × family, see `freight.ts`), any payment method. */
+  freightDiscount?: number;
   /** Odoo sales tax ids of the product at order time, for the end-of-bill cash discount line. */
   taxIds?: number[];
   /** VAT of the product at order time (see CatalogProduct). Older orders have none = included. */
@@ -225,11 +227,13 @@ export type ProtoOrder = {
   subtotal: number;
   /** End-of-bill discount: credit dealer paying cash gets the credit→cash price difference. */
   cashDiscount: number;
+  /** Freight discount of the delivery method, sum of the lines' `freightDiscount` (absent/0 = none). */
+  freightDiscount?: number;
   /** Odoo Loyalty code used on this order and the discount the web computed for it. */
   coupon?: OrderCoupon | null;
   /** Discount from `coupon` (0 when none). */
   couponDiscount: number;
-  /** Amount due = subtotal − cashDiscount − couponDiscount. */
+  /** Amount due = subtotal − cashDiscount − freightDiscount − couponDiscount (+ VAT added on top). */
   total: number;
   /** Odoo pricelist of the published price book the dealer bought from; set on the SO so Odoo recomputes with web prices. */
   odooPricelistId?: number | null;

@@ -10,10 +10,14 @@ import { getOdooConnection, maskSecret } from '@/lib/odoo/connection';
 import { odooWritesEnabled } from '@/lib/odoo/rpc';
 import { hasDedicatedSecret } from '@/lib/settings/crypto';
 import { cn } from '@/lib/utils';
-import { clearLineConfigAction, clearOdooConnectionAction, saveLineConfigAction, saveOdooConnectionAction, testLinePushAction, testOdooConnectionAction } from '../settings-actions';
+import { clearLineConfigAction, clearMailConfigAction, clearOdooConnectionAction, saveLineConfigAction, saveMailConfigAction, saveOdooConnectionAction, testLinePushAction, testMailAction, testOdooConnectionAction } from '../settings-actions';
+import { getMailConfig, mailConfigured } from '@/lib/mail/config';
 import { getLineConfig, maskToken } from '@/lib/notify/line-config';
 import { lineCallbackUrl } from '@/lib/notify/line-login';
-import { MessageCircle } from 'lucide-react';
+import { Mail, MessageCircle, Wallet } from 'lucide-react';
+import { saveCreditPolicyAction } from '../settings-actions';
+import { MAX_OVERDUE_GRACE_DAYS, getCreditPolicy } from '@/lib/shop/credit-policy';
+import { addDays, thaiDate as thaiDayText } from '@/lib/shop/credit';
 
 type Search = { error?: string; saved?: string };
 
@@ -47,7 +51,10 @@ function expiryBadge(expiresAt: string | null) {
  */
 export default async function SettingsPage({ searchParams }: { searchParams: Promise<Search> }) {
   const [, params] = await Promise.all([requireAdmin(), searchParams]);
-  const [conn, line] = await Promise.all([getOdooConnection(), getLineConfig()]);
+  const [conn, line, mail, creditPolicy] = await Promise.all([getOdooConnection(), getLineConfig(), getMailConfig(), getCreditPolicy()]);
+  const policyUpdatedBy = creditPolicy.updatedById ? await findUserById(creditPolicy.updatedById) : null;
+  const exampleDue = '2026-11-05';
+  const mailOn = mailConfigured(mail);
   const configured = Boolean(conn.url && conn.db && conn.username && conn.apiKey);
   const [updatedBy, apiKeys] = await Promise.all([
     conn.updatedById ? findUserById(conn.updatedById) : null,
@@ -191,6 +198,86 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
               )}
             </div>
             {line.updatedAt && <p>บันทึกล่าสุด {fmt.format(new Date(line.updatedAt))}</p>}
+          </div>
+        </div>
+      </section>
+
+      <section id="mail" className="rounded-xl border border-border bg-card">
+        <h2 className="flex flex-wrap items-center justify-between gap-2 border-b border-border px-4 py-3 text-sm font-semibold">
+          <span className="flex items-center gap-2"><Mail className="size-4 text-primary" /> อีเมลขาออก (SMTP)</span>
+          <span className="flex items-center gap-2">
+            <Badge variant="outline" className={cn('border-transparent', mailOn ? 'bg-emerald-500/15 text-emerald-700' : 'bg-muted text-muted-foreground')}>{mailOn ? 'ส่งอีเมลได้' : 'ยังไม่ได้ตั้งค่า'}</Badge>
+            <Badge variant="outline" className={cn('border-transparent', mail.source === 'db' ? 'bg-primary/10 text-primary' : 'bg-muted text-muted-foreground')}>{mail.source === 'db' ? 'บันทึกจากหน้าเว็บ' : 'จาก .env'}</Badge>
+          </span>
+        </h2>
+        {mail.savedError && <p className="m-4 flex items-start gap-2 rounded-lg bg-amber-500/10 p-3 text-sm text-amber-800"><AlertTriangle className="mt-0.5 size-4 shrink-0" /> {mail.savedError}</p>}
+        <div className="grid gap-4 p-4 text-sm lg:grid-cols-[1fr_320px]">
+          <form action={saveMailConfigAction} className="grid gap-3 md:grid-cols-2">
+            <label className={label}>SMTP host<Input name="host" defaultValue={mail.host} placeholder="smtp.gmail.com" className={field} /></label>
+            <div className="grid grid-cols-2 gap-3">
+              <label className={label}>พอร์ต<Input name="port" inputMode="numeric" defaultValue={String(mail.port)} placeholder="587" className={field} /></label>
+              <label className={label}>การเข้ารหัส
+                <select name="secure" defaultValue={mail.secure ? 'true' : mail.port === 587 ? 'false' : 'auto'} className={field}>
+                  <option value="auto">อัตโนมัติ (465 = SSL)</option>
+                  <option value="false">STARTTLS (587)</option>
+                  <option value="true">SSL/TLS (465)</option>
+                </select>
+              </label>
+            </div>
+            <label className={label}>ชื่อผู้ใช้ SMTP <span className="font-normal text-muted-foreground">(เว้นว่างถ้า relay ไม่ต้อง login)</span><Input name="user" defaultValue={mail.user} placeholder="no-reply@company.com" autoComplete="off" className={field} /></label>
+            <label className={label}>รหัสผ่าน SMTP <span className="font-normal text-muted-foreground">(เว้นว่าง = ใช้ค่าเดิม)</span>
+              <Input name="pass" type="password" autoComplete="new-password" placeholder={mail.pass ? '••••••••' : 'app password'} className={field} />
+            </label>
+            <label className={cn(label, 'md:col-span-2')}>ผู้ส่ง (From)<Input name="from" defaultValue={mail.from} placeholder="12buy Dealer <no-reply@company.com>" className={field} /></label>
+            <p className="text-xs text-muted-foreground md:col-span-2">ระบบจะลองเชื่อมต่อและเข้าสู่ระบบ SMTP ก่อนบันทึก ถ้าไม่ผ่านจะไม่เปลี่ยนค่าเดิม · ใช้ส่งรหัสผ่านชั่วคราวตอนกด “รีเซ็ตรหัส” ให้ผู้ใช้</p>
+            <div className="md:col-span-2"><Button type="submit" size="sm"><Save /> ทดสอบและบันทึกอีเมล</Button></div>
+          </form>
+          <div className="space-y-3 rounded-lg border border-dashed border-border p-3 text-xs text-muted-foreground">
+            <p className="font-semibold text-foreground">ตัวอย่างค่าที่ใช้บ่อย</p>
+            <ul className="list-disc space-y-1 pl-4">
+              <li><b>Gmail / Google Workspace</b>: host smtp.gmail.com · พอร์ต 587 · ผู้ใช้ = อีเมล · รหัสผ่าน = <b>App password</b> (ต้องเปิด 2-step verification ก่อน)</li>
+              <li><b>Microsoft 365</b>: smtp.office365.com · 587 · เปิด SMTP AUTH ให้บัญชีนั้น</li>
+              <li><b>บริการส่งเมล</b> (Resend, Brevo, SendGrid, Mailgun): ใช้ค่า SMTP จาก dashboard · ผู้ส่งต้องเป็นโดเมนที่ยืนยันแล้ว</li>
+            </ul>
+            <p>ถ้าไม่ตั้งค่า ระบบยังรีเซ็ตรหัสได้ แต่จะแสดงรหัสชั่วคราวให้ทีมงานส่งต่อทาง LINE เอง</p>
+            <div className="flex flex-wrap items-center gap-2">
+              <form action={testMailAction}><Button type="submit" size="sm" variant="outline" disabled={!mailOn}><CheckCircle2 /> ส่งอีเมลทดสอบถึงฉัน</Button></form>
+              {mail.source === 'db' && (
+                <form action={clearMailConfigAction}>
+                  <IconSubmit label="ลบค่าอีเมลที่บันทึกไว้ แล้วกลับไปใช้ .env" tone="danger" confirm="ลบการตั้งค่าอีเมลที่บันทึกจากหน้าเว็บ แล้วกลับไปใช้ค่า SMTP_* ใน .env?" className="w-auto gap-1.5 px-2.5"><RotateCcw /> ใช้ค่าจาก .env</IconSubmit>
+                </form>
+              )}
+            </div>
+            {mail.updatedAt && <p>บันทึกล่าสุด {fmt.format(new Date(mail.updatedAt))}</p>}
+          </div>
+        </div>
+      </section>
+
+      <section id="credit" className="rounded-xl border border-border bg-card">
+        <h2 className="flex flex-wrap items-center justify-between gap-2 border-b border-border px-4 py-3 text-sm font-semibold">
+          <span className="flex items-center gap-2"><Wallet className="size-4 text-primary" /> นโยบายเครดิต · ล็อกวงเงินเมื่อค้างชำระ</span>
+          <Badge variant="outline" className={cn('border-transparent', creditPolicy.source === 'db' ? 'bg-primary/10 text-primary' : 'bg-muted text-muted-foreground')}>{creditPolicy.source === 'db' ? 'บันทึกจากหน้าเว็บ' : 'ค่าเริ่มต้น'}</Badge>
+        </h2>
+        <div className="grid gap-4 p-4 text-sm lg:grid-cols-[1fr_320px]">
+          <form action={saveCreditPolicyAction} className="grid gap-3 md:grid-cols-2">
+            <label className={label}>ผ่อนผันหลังครบกำหนด (วัน)
+              <Input name="graceDays" inputMode="numeric" defaultValue={String(creditPolicy.overdueGraceDays)} min={0} max={MAX_OVERDUE_GRACE_DAYS} type="number" className={field} />
+            </label>
+            <p className="text-xs text-muted-foreground md:col-span-2">
+              ใบแจ้งหนี้ที่เลยกำหนดชำระและยังค้างอยู่ จะปิดการสั่งซื้อแบบเครดิตของร้านนั้นเมื่อเลยกำหนดมาแล้วเกินจำนวนวันนี้ (ใส่ 0 = ปิดตั้งแต่วันถัดจากวันครบกำหนด)
+              ระหว่างช่วงผ่อนผันร้านยังสั่งเครดิตได้ แต่จะเห็นคำเตือนและได้รับแจ้งเตือน · สั่งเงินสดได้เสมอ · ใช้ค่าเดียวกันทุกร้าน
+            </p>
+            <div className="md:col-span-2"><Button type="submit" size="sm"><Save /> บันทึกนโยบายเครดิต</Button></div>
+          </form>
+          <div className="space-y-3 rounded-lg border border-dashed border-border p-3 text-xs text-muted-foreground">
+            <p className="font-semibold text-foreground">ตัวอย่างกับค่าปัจจุบัน ({creditPolicy.overdueGraceDays} วัน)</p>
+            <ul className="list-disc space-y-1 pl-4">
+              <li>บิลครบกำหนด <b>{thaiDayText(exampleDue)}</b> ยังไม่จ่าย</li>
+              <li>ตั้งแต่ {thaiDayText(addDays(exampleDue, 1))}: ยังสั่งเครดิตได้ มีคำเตือนในตะกร้าและหน้าข้อมูลร้าน + แจ้งเตือน LINE</li>
+              <li>ตั้งแต่ <b>{thaiDayText(addDays(exampleDue, creditPolicy.overdueGraceDays + 1))}</b>: ปิดสั่งเครดิต สั่งได้เฉพาะเงินสด จนกว่าบัญชีจะลงรับชำระใน Odoo</li>
+            </ul>
+            <p>แจ้งเตือนอัตโนมัติทุกเช้า (cron): วันแรกที่เลยกำหนด, ก่อนล็อก 3 วัน, ก่อนล็อก 1 วัน และวันที่ล็อก · ทีมงานได้สรุปในกลุ่ม LINE และกระดิ่งหลังบ้าน</p>
+            {creditPolicy.updatedAt && <p>บันทึกล่าสุด {fmt.format(new Date(creditPolicy.updatedAt))}{policyUpdatedBy ? ` โดย ${policyUpdatedBy.name}` : ''}</p>}
           </div>
         </div>
       </section>

@@ -14,7 +14,7 @@ const schema = z.object({
 });
 
 /** Same message whether or not the email exists, so the form cannot be used to probe accounts. */
-const DONE = 'รับคำขอแล้ว หากอีเมลนี้มีบัญชีในระบบ ทีมงานจะส่งรหัสผ่านชั่วคราวให้ทาง LINE หรือโทรภายใน 1 วันทำการ';
+const DONE = 'รับคำขอแล้ว หากอีเมลนี้มีบัญชีในระบบ ทีมงานจะตรวจสอบและส่งรหัสผ่านชั่วคราวไปที่อีเมลนี้ภายใน 1 วันทำการ (หรือทาง LINE/โทร ตามช่องทางที่ให้ไว้)';
 
 /** Public "forgot password" form: validate, rate-limit by IP, record the request for an admin to handle. */
 export async function forgotPasswordAction(_prev: ForgotPasswordResult, formData: FormData): Promise<ForgotPasswordResult> {
@@ -30,6 +30,6 @@ export async function forgotPasswordAction(_prev: ForgotPasswordResult, formData
     console.error('[password-reset] save failed', error instanceof Error ? error.message : error);
     return { ok: false, message: 'ส่งคำขอไม่สำเร็จ กรุณาลองใหม่ หรือทัก LINE ได้เลย' };
   }
-  await flash('ส่งคำขอรีเซ็ตรหัสผ่านแล้ว', { icon: 'mail', description: 'ทีมงานจะติดต่อกลับภายใน 1 วันทำการ' });
+  await flash('ส่งคำขอรีเซ็ตรหัสผ่านแล้ว', { icon: 'mail', description: 'รหัสผ่านชั่วคราวจะส่งไปที่อีเมลของคุณภายใน 1 วันทำการ' });
   return { ok: true, message: DONE };
 }

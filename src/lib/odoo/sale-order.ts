@@ -35,8 +35,17 @@ export function cashDiscountProductId(): number | null {
   return Number.isInteger(id) && id > 0 ? id : null;
 }
 
+/** Odoo product used for the end-of-bill freight discount line (`ODOO_FREIGHT_DISCOUNT_PRODUCT_ID`); null = not set up. */
+export function freightDiscountProductId(): number | null {
+  const id = Number(process.env.ODOO_FREIGHT_DISCOUNT_PRODUCT_ID);
+  return Number.isInteger(id) && id > 0 ? id : null;
+}
+
 /** How the cash discount goes to Odoo: as separate end-of-bill lines (product + tax field name), or folded into prices. */
 export type CashDiscountLine = { productId: number; taxField: string } | null;
+
+/** Same choice for the freight discount (its own Odoo product). */
+export type FreightDiscountLine = CashDiscountLine;
 
 /**
  * The cash discount can go as its own lines only when every discounted line knows its taxes
@@ -47,25 +56,37 @@ export function canSendCashDiscountLine(order: Pick<ProtoOrder, 'lines' | 'payme
   return discounted.length > 0 && discounted.every((l) => Array.isArray(l.taxIds));
 }
 
+/** Like `canSendCashDiscountLine`, for the freight discount (any payment method). */
+export function canSendFreightDiscountLine(order: Pick<ProtoOrder, 'lines'>): boolean {
+  const discounted = order.lines.filter((l) => (l.freightDiscount ?? 0) > 0);
+  return discounted.length > 0 && discounted.every((l) => Array.isArray(l.taxIds));
+}
+
+/** One negative line per set of taxes for `amountOf` each line, so VAT drops with the discount as on the web bill. */
+function discountLinesByTax(lines: ProtoOrder['lines'], amountOf: (line: ProtoOrder['lines'][number]) => number): { taxIds: number[]; amount: number; lines: ProtoOrder['lines'] }[] {
+  const groups = new Map<string, { taxIds: number[]; amount: number; lines: ProtoOrder['lines'] }>();
+  for (const line of lines) {
+    const off = amountOf(line);
+    if (off <= 0) continue;
+    const taxIds = [...(line.taxIds ?? [])].sort((a, b) => a - b);
+    const key = taxIds.join(',');
+    const group = groups.get(key) ?? { taxIds, amount: 0, lines: [] };
+    group.amount += off;
+    group.lines.push(line);
+    groups.set(key, group);
+  }
+  return [...groups.values()];
+}
+
 /**
  * End-of-bill cash discount lines: one negative line per set of taxes, so VAT drops with the discount
  * exactly as on the web bill. The label shows the % when every line of the set has the same one.
  */
 function cashDiscountLines(order: Pick<ProtoOrder, 'lines' | 'ref'>, discount: NonNullable<CashDiscountLine>): Record<string, unknown>[] {
-  const groups = new Map<string, { taxIds: number[]; amount: number; percents: Set<number | undefined> }>();
-  for (const line of order.lines) {
-    const off = line.qty * (line.cashDiscountPerUnit ?? 0);
-    if (off <= 0) continue;
-    const taxIds = [...(line.taxIds ?? [])].sort((a, b) => a - b);
-    const key = taxIds.join(',');
-    const group = groups.get(key) ?? { taxIds, amount: 0, percents: new Set() };
-    group.amount += off;
-    group.percents.add(line.cashDiscountPercent);
-    groups.set(key, group);
-  }
-  return [...groups.values()].map((g) => {
-    const [percent] = g.percents;
-    const label = g.percents.size === 1 && percent !== undefined ? `ส่วนลดเงินสด ${percent}%` : 'ส่วนลดเงินสด';
+  return discountLinesByTax(order.lines, (line) => line.qty * (line.cashDiscountPerUnit ?? 0)).map((g) => {
+    const percents = new Set(g.lines.map((l) => l.cashDiscountPercent));
+    const [percent] = percents;
+    const label = percents.size === 1 && percent !== undefined ? `ส่วนลดเงินสด ${percent}%` : 'ส่วนลดเงินสด';
     return {
       product_id: discount.productId,
       name: `${label} (ออเดอร์เว็บ ${order.ref})`,
@@ -76,17 +97,31 @@ function cashDiscountLines(order: Pick<ProtoOrder, 'lines' | 'ref'>, discount: N
   });
 }
 
+/** End-of-bill freight discount lines of the delivery method, one per set of taxes. */
+function freightDiscountLines(order: Pick<ProtoOrder, 'lines' | 'ref'> & { carrier?: string }, freight: NonNullable<FreightDiscountLine>): Record<string, unknown>[] {
+  return discountLinesByTax(order.lines, (line) => line.freightDiscount ?? 0).map((g) => ({
+    product_id: freight.productId,
+    name: `ส่วนลดค่าขนส่ง${order.carrier ? ` ${order.carrier}` : ''} (ออเดอร์เว็บ ${order.ref})`,
+    product_uom_qty: 1,
+    price_unit: -round2(g.amount),
+    [freight.taxField]: [[6, 0, g.taxIds]],
+  }));
+}
+
 /**
  * Maps web order lines to `sale.order.line` values.
  * A line bought in packs (e.g. "มัด 10 เส้น" × 2) goes out in that pack unit with the
  * pack price, so the warehouse sees packs; otherwise base units. The cash discount goes as
  * end-of-bill lines when `discount` is given, otherwise it is folded into the unit price;
- * either way the Odoo total equals what the dealer paid.
+ * the freight discount likewise with `freight`. Either way the Odoo total equals what the dealer paid
+ * (folding may differ by a few satang from rounding, which then shows as MISMATCH).
  */
-export function buildOrderLines(order: Pick<ProtoOrder, 'lines' | 'paymentMethod'> & { ref?: string }, discount: CashDiscountLine = null): Record<string, unknown>[] {
+export function buildOrderLines(order: Pick<ProtoOrder, 'lines' | 'paymentMethod'> & { ref?: string; carrier?: string }, discount: CashDiscountLine = null, freight: FreightDiscountLine = null): Record<string, unknown>[] {
   const asLines = Boolean(discount) && canSendCashDiscountLine(order);
+  const freightAsLines = Boolean(freight) && canSendFreightDiscountLine(order);
   const products = order.lines.map((line) => {
-    const net = line.unitPrice - (order.paymentMethod === 'CASH' && !asLines ? line.cashDiscountPerUnit ?? 0 : 0);
+    const freightPerUnit = !freightAsLines && line.qty > 0 ? (line.freightDiscount ?? 0) / line.qty : 0;
+    const net = line.unitPrice - (order.paymentMethod === 'CASH' && !asLines ? line.cashDiscountPerUnit ?? 0 : 0) - freightPerUnit;
     const inPacks = Boolean(line.unitId && line.unitQty && line.qty % line.unitQty === 0);
     const factor = inPacks ? line.qty / line.unitQty! : 1;
     return {
@@ -96,7 +131,11 @@ export function buildOrderLines(order: Pick<ProtoOrder, 'lines' | 'paymentMethod
       price_unit: round2(net * factor),
     };
   });
-  return asLines ? [...products, ...cashDiscountLines({ lines: order.lines, ref: order.ref ?? '' }, discount!)] : products;
+  return [
+    ...products,
+    ...(asLines ? cashDiscountLines({ lines: order.lines, ref: order.ref ?? '' }, discount!) : []),
+    ...(freightAsLines ? freightDiscountLines({ lines: order.lines, ref: order.ref ?? '', carrier: order.carrier }, freight!) : []),
+  ];
 }
 
 let taxFieldCache: string | null = null;
@@ -116,6 +155,13 @@ async function cashDiscountLineFor(order: ProtoOrder): Promise<CashDiscountLine>
   return { productId, taxField: await saleLineTaxField() };
 }
 
+/** Freight discount mode for this order: end-of-bill lines when its Odoo product is set up and the order allows it. */
+async function freightDiscountLineFor(order: ProtoOrder): Promise<FreightDiscountLine> {
+  const productId = freightDiscountProductId();
+  if (!productId || !canSendFreightDiscountLine(order)) return null;
+  return { productId, taxField: await saleLineTaxField() };
+}
+
 /** Free-text note on the SO: web order ref, coupon, dealer PO, delivery method, delivery address and the dealer's remark. */
 export function buildOrderNote(order: ProtoOrder): string {
   return [
@@ -123,6 +169,7 @@ export function buildOrderNote(order: ProtoOrder): string {
     order.coupon ? `คูปอง: ${order.coupon.code} (${order.coupon.programName}) เว็บคำนวณส่วนลด ${formatAmount(order.couponDiscount)} บาท` : '',
     order.poRef ? `เลขที่ใบสั่งซื้อของร้าน: ${order.poRef}` : '',
     `การจัดส่ง: ${order.carrier}`,
+    (order.freightDiscount ?? 0) > 0 ? `ส่วนลดค่าขนส่ง ${formatAmount(order.freightDiscount!)} บาท (ค่าขนส่งเรียกเก็บแยก)` : '',
     `ส่งที่: ${order.address}`,
     order.note ? `หมายเหตุ: ${order.note}` : '',
   ].filter(Boolean).join('\n');
@@ -189,6 +236,7 @@ export async function pushOrderToOdoo(order: ProtoOrder, partnerId: number): Pro
     const salesperson = await salespersonFor(partnerId);
     const carrierId = await carrierIdFor(order);
     const discount = await cashDiscountLineFor(order);
+    const freight = await freightDiscountLineFor(order);
     const created = await odooWrite<number | number[]>('sale.order', 'create', [[{
       partner_id: partnerId,
       user_id: salesperson,
@@ -197,7 +245,7 @@ export async function pushOrderToOdoo(order: ProtoOrder, partnerId: number): Pro
       ...(order.odooPricelistId ? { pricelist_id: order.odooPricelistId } : {}),
       ...(carrierId ? { carrier_id: carrierId } : {}),
       note: buildOrderNote(order),
-      order_line: buildOrderLines(order, discount).map((values) => [0, 0, values]),
+      order_line: buildOrderLines(order, discount, freight).map((values) => [0, 0, values]),
     }]]);
     so = await readById(Array.isArray(created) ? created[0] : created);
   }

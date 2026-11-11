@@ -11,8 +11,11 @@ import { requireAdmin } from '@/lib/auth/session';
 import { listHref, matchesSearch, paginate, searchText } from '@/lib/admin/list';
 import { deliveryProducts, listAllCarriers, type DeliveryCarrier } from '@/lib/odoo/delivery-carrier';
 import { odooWritesEnabled } from '@/lib/odoo/rpc';
+import { listFreightDiscounts } from '@/lib/admin/store';
+import { FREIGHT_TYPES, formatFreightRates, freightRatesFor, freightUnitLabel } from '@/lib/shop/freight';
+import { DEALER_TYPE_LABELS } from '@/lib/shop/types';
 import { cn } from '@/lib/utils';
-import { saveCarrierAction, setCarrierActiveAction, setCarrierPublishedAction } from '../delivery-actions';
+import { saveCarrierAction, saveFreightRatesAction, setCarrierActiveAction, setCarrierPublishedAction } from '../delivery-actions';
 
 type Show = 'web' | 'all' | 'archived';
 type Params = { show?: string; q?: string; page?: string; edit?: string; new?: string; error?: string };
@@ -30,7 +33,10 @@ function matches(carrier: DeliveryCarrier, show: Show, q: string): boolean {
   return matchesSearch(q, carrier.name);
 }
 
-/** Odoo delivery methods (`delivery.carrier`): add, rename, reorder, publish (the first published is the default), archive — written to Odoo. */
+/**
+ * Odoo delivery methods (`delivery.carrier`): add, rename, reorder, publish (the first published is the default), archive — written to Odoo.
+ * Each method also has a freight discount per product family, kept on the web (editable with Odoo read-only).
+ */
 export default async function DeliveryPage({ searchParams }: { searchParams: Promise<Params> }) {
   await requireAdmin();
   const params = await searchParams;
@@ -40,6 +46,7 @@ export default async function DeliveryPage({ searchParams }: { searchParams: Pro
 
   let carriers: DeliveryCarrier[] = [];
   let loadError: string | null = null;
+  const freightDiscounts = await listFreightDiscounts();
   try {
     carriers = await listAllCarriers();
   } catch (e) {
@@ -53,7 +60,9 @@ export default async function DeliveryPage({ searchParams }: { searchParams: Pro
     archived: carriers.filter((c) => !c.active).length,
   };
   const editing = params.edit ? carriers.find((c) => c.id === Number(params.edit)) ?? null : null;
-  const formOpen = writable && Boolean(editing || params.new);
+  // Freight discounts are web settings, so an existing method opens even when Odoo is read-only.
+  const formOpen = Boolean(editing) || (writable && Boolean(params.new));
+  const editingRates = editing ? freightRatesFor(freightDiscounts, editing.id) : null;
   const products = deliveryProducts(carriers);
   const defaultCarrier = carriers.find((c) => c.active && c.published);
 
@@ -78,12 +87,13 @@ export default async function DeliveryPage({ searchParams }: { searchParams: Pro
         <div>
           <h1 className="text-2xl font-bold">การจัดส่ง</h1>
           <p className="text-sm text-muted-foreground">วิธีจัดส่งจาก Odoo (Sales → Delivery Methods) · แก้ที่นี่แล้วเขียนเข้า Odoo ทันที</p>
+          <p className="text-xs text-muted-foreground">ส่วนลดค่าขนส่ง: ตั้งยอดลดต่อเส้น / วง / มัด แยกตามวิธีจัดส่งและกลุ่มสินค้า หักในบิลทุกวิธีชำระ · ค่าขนส่งจริงบริษัทเรียกเก็บแยกต่างหาก ไม่อยู่ในบิลเว็บ</p>
           <p className="text-xs text-muted-foreground">ดีลเลอร์เลือกเองไม่ได้: ออเดอร์ใช้การจัดส่งที่กำหนดให้ลูกค้าที่หน้า <Link href="/admin/dealers" className="text-primary underline">ดีลเลอร์ / ลูกค้า Odoo</Link> · ลูกค้าที่ยังไม่กำหนด ใช้ตัวแรก (ลำดับน้อยสุด) ที่เปิดบนเว็บ{defaultCarrier ? ` ตอนนี้คือ “${defaultCarrier.name}”` : ' (ตอนนี้ไม่มี ลูกค้าที่ยังไม่กำหนดจะสั่งซื้อไม่ได้)'} · ใบสั่งขายใน Odoo จะตั้ง Delivery Method ให้</p>
         </div>
         {writable && <Button size="sm" nativeButton={false} render={<Link href={href({ new: '1', edit: undefined, error: undefined })} scroll={false} />}><Plus /> เพิ่มการจัดส่ง</Button>}
       </div>
 
-      {!writable && <p className="rounded-lg bg-amber-500/15 px-3 py-2 text-sm text-amber-800">Odoo อยู่ในโหมดอ่านอย่างเดียว (ODOO_READ_ONLY) · ดูรายการได้ แต่เพิ่ม/แก้/เปิดแสดงจากเว็บไม่ได้จนกว่าจะเปิดการเขียน</p>}
+      {!writable && <p className="rounded-lg bg-amber-500/15 px-3 py-2 text-sm text-amber-800">Odoo อยู่ในโหมดอ่านอย่างเดียว (ODOO_READ_ONLY) · ดูรายการได้ แต่เพิ่ม/แก้/เปิดแสดงจากเว็บไม่ได้จนกว่าจะเปิดการเขียน · ส่วนลดค่าขนส่งยังแก้ได้ (กดชื่อวิธีจัดส่ง)</p>}
       {loadError && <p className="rounded-lg bg-destructive/10 px-3 py-2 text-sm text-destructive">{loadError}</p>}
       {!formOpen && errorBanner}
 
@@ -105,12 +115,13 @@ export default async function DeliveryPage({ searchParams }: { searchParams: Pro
               <TableHead className="w-16">ลำดับ</TableHead>
               <TableHead>ชื่อ</TableHead>
               <TableHead>สถานะ</TableHead>
+              <TableHead>ส่วนลดค่าขนส่ง</TableHead>
               {writable && <TableHead><span className="sr-only">จัดการ</span></TableHead>}
             </TableRow>
           </TableHeader>
           <TableBody>
             {visible.length === 0 && (
-              <EmptyRow colSpan={writable ? 4 : 3}>
+              <EmptyRow colSpan={writable ? 5 : 4}>
                 {show === 'web' && !q ? 'ยังไม่มีวิธีจัดส่งที่เปิดบนเว็บ ลูกค้าที่ยังไม่กำหนดการจัดส่งจะสั่งซื้อไม่ได้ · ไปที่ “ใช้งานอยู่ทั้งหมด” แล้วกด “เปิดบนเว็บ”' : 'ไม่พบรายการ'}
               </EmptyRow>
             )}
@@ -118,7 +129,7 @@ export default async function DeliveryPage({ searchParams }: { searchParams: Pro
               <TableRow key={c.id} data-state={editing?.id === c.id ? 'selected' : undefined}>
                 <TableCell data-label="ลำดับ" className="text-xs text-muted-foreground tabular-nums">#{c.sequence}</TableCell>
                 <TableCell data-label="ชื่อ" className="whitespace-normal">
-                  {writable ? <Link href={href({ edit: String(c.id), new: undefined, error: undefined })} scroll={false} className="font-medium hover:underline">{c.name}</Link> : <span className="font-medium">{c.name}</span>}
+                  <Link href={href({ edit: String(c.id), new: undefined, error: undefined })} scroll={false} className="font-medium hover:underline">{c.name}</Link>
                 </TableCell>
                 <TableCell data-label="สถานะ">
                   <span className="flex flex-wrap gap-1">
@@ -126,6 +137,9 @@ export default async function DeliveryPage({ searchParams }: { searchParams: Pro
                     {c.published && c.active && <Badge variant="outline" className="border-transparent bg-emerald-500/15 text-emerald-700">เปิดบนเว็บ</Badge>}
                     {!c.active && <Badge variant="outline">ปิดใช้งาน</Badge>}
                   </span>
+                </TableCell>
+                <TableCell data-label="ส่วนลดค่าขนส่ง" className="whitespace-normal text-xs">
+                  {formatFreightRates(freightRatesFor(freightDiscounts, c.id)) || <span className="text-muted-foreground">ไม่มี</span>}
                 </TableCell>
                 {writable && (
                   <TableCell data-label="">
@@ -162,31 +176,56 @@ export default async function DeliveryPage({ searchParams }: { searchParams: Pro
       {formOpen && (
         <UrlDrawer key={editing ? `edit-${editing.id}` : 'new'} title={editing ? `แก้ไข: ${editing.name}` : 'เพิ่มการจัดส่ง'} description={editing ? `Odoo delivery.carrier #${editing.id}` : 'เขียนเข้า Odoo ทันทีเมื่อกดเพิ่ม'} closeHref={closeHref}>
           {errorBanner}
-          <form action={saveCarrierAction} className="grid gap-3 sm:grid-cols-2">
-            {keep}
-            {editing && <input type="hidden" name="id" value={editing.id} />}
-            <label className={cn(labelClass, 'sm:col-span-2')}>ชื่อ
-              <Input name="name" required maxLength={120} defaultValue={editing?.name ?? ''} placeholder="เช่น สหนำโชค สาย 4" className="mt-1" />
-            </label>
-            <label className={labelClass}>ลำดับ (น้อยขึ้นก่อน)
-              <Input name="sequence" type="number" min={0} max={10000} defaultValue={editing?.sequence ?? 10} className="mt-1" />
-            </label>
-            {!editing && (
-              <label className={labelClass}>สินค้าค่าขนส่ง (Odoo บังคับ)
-                <select name="productId" required defaultValue={products[0]?.id} className={selectClass}>
-                  {products.map((p) => <option key={p.id} value={p.id}>{p.name} ({p.count} วิธี)</option>)}
-                </select>
+          {writable ? (
+            <form action={saveCarrierAction} className="grid gap-3 sm:grid-cols-2">
+              {keep}
+              {editing && <input type="hidden" name="id" value={editing.id} />}
+              <label className={cn(labelClass, 'sm:col-span-2')}>ชื่อ
+                <Input name="name" required maxLength={120} defaultValue={editing?.name ?? ''} placeholder="เช่น สหนำโชค สาย 4" className="mt-1" />
               </label>
-            )}
-            <label className="flex items-center gap-2 text-sm sm:col-span-2">
-              <input type="checkbox" name="published" defaultChecked={editing ? editing.published : false} className="size-4" /> เปิดบนเว็บ (ใช้เป็นค่าเริ่มต้นได้เมื่อลำดับน้อยสุด)
-            </label>
-            {!editing && <p className="text-xs text-muted-foreground sm:col-span-2">สร้างเป็นราคาคงที่ 0 บาท (ไม่คิดค่าส่งในบิล) เหมือนวิธีจัดส่งที่มีอยู่</p>}
-            <div className="flex gap-2 sm:col-span-2">
-              <Button type="submit">{editing ? 'บันทึก' : 'เพิ่ม'}</Button>
-              <Button variant="ghost" nativeButton={false} render={<Link href={closeHref} scroll={false} />}>ยกเลิก</Button>
-            </div>
-          </form>
+              <label className={labelClass}>ลำดับ (น้อยขึ้นก่อน)
+                <Input name="sequence" type="number" min={0} max={10000} defaultValue={editing?.sequence ?? 10} className="mt-1" />
+              </label>
+              {!editing && (
+                <label className={labelClass}>สินค้าค่าขนส่ง (Odoo บังคับ)
+                  <select name="productId" required defaultValue={products[0]?.id} className={selectClass}>
+                    {products.map((p) => <option key={p.id} value={p.id}>{p.name} ({p.count} วิธี)</option>)}
+                  </select>
+                </label>
+              )}
+              <label className="flex items-center gap-2 text-sm sm:col-span-2">
+                <input type="checkbox" name="published" defaultChecked={editing ? editing.published : false} className="size-4" /> เปิดบนเว็บ (ใช้เป็นค่าเริ่มต้นได้เมื่อลำดับน้อยสุด)
+              </label>
+              {!editing && <p className="text-xs text-muted-foreground sm:col-span-2">สร้างเป็นราคาคงที่ 0 บาท (ไม่คิดค่าส่งในบิล) เหมือนวิธีจัดส่งที่มีอยู่</p>}
+              <div className="flex gap-2 sm:col-span-2">
+                <Button type="submit">{editing ? 'บันทึก' : 'เพิ่ม'}</Button>
+                <Button variant="ghost" nativeButton={false} render={<Link href={closeHref} scroll={false} />}>ยกเลิก</Button>
+              </div>
+            </form>
+          ) : (
+            <p className="text-xs text-muted-foreground">ชื่อ ลำดับ และการเปิดบนเว็บแก้ได้เมื่อเปิดการเขียน Odoo (ODOO_READ_ONLY=false)</p>
+          )}
+          {editing && (
+            <form action={saveFreightRatesAction} className="mt-5 space-y-3 border-t border-border pt-4">
+              {keep}
+              <input type="hidden" name="id" value={editing.id} />
+              <div>
+                <h3 className="text-sm font-semibold">ส่วนลดค่าขนส่งในบิล</h3>
+                <p className="text-xs text-muted-foreground">บาทต่อหน่วย หักในบิลทุกวิธีชำระเมื่อลูกค้าใช้ “{editing.name}” · เว้นว่างหรือ 0 = ไม่ลด · มอเตอร์ไซค์นับเป็นมัดเต็มตาม packaging ใน Odoo (เศษไม่ครบมัดไม่ลด) · บันทึกบนเว็บ ไม่เขียน Odoo</p>
+              </div>
+              <div className="grid gap-3 sm:grid-cols-2">
+                {FREIGHT_TYPES.map((type) => (
+                  <label key={type} className={labelClass}>{DEALER_TYPE_LABELS[type]} (บาท /{freightUnitLabel(type)})
+                    <Input name={`freight_${type}`} type="number" inputMode="decimal" min={0} max={100000} step="0.01" defaultValue={editingRates?.[type] ?? ''} placeholder="0" className="mt-1" />
+                  </label>
+                ))}
+              </div>
+              <div className="flex gap-2">
+                <Button type="submit">บันทึกส่วนลดค่าขนส่ง</Button>
+                <Button variant="ghost" nativeButton={false} render={<Link href={closeHref} scroll={false} />}>ปิด</Button>
+              </div>
+            </form>
+          )}
         </UrlDrawer>
       )}
     </div>

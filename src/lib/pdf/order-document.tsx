@@ -101,6 +101,7 @@ export function OrderDocument({ order, dealer }: { order: ProtoOrder; dealer: { 
         <View style={s.totals}>
           <View style={s.tRow}><Text>รวมราคาสินค้า ({pieces} หน่วย)</Text><Text>{money(order.subtotal)}</Text></View>
           {order.cashDiscount > 0 && <View style={s.tRow}><Text>ส่วนลดเงินสด{cashPercent !== null ? ` ${cashPercent}%` : ''}</Text><Text>−{money(order.cashDiscount)}</Text></View>}
+          {(order.freightDiscount ?? 0) > 0 && <View style={s.tRow}><Text>ส่วนลดค่าขนส่ง ({order.carrier})</Text><Text>−{money(order.freightDiscount!)}</Text></View>}
           {order.couponDiscount > 0 && order.coupon && <View style={s.tRow}><Text>คูปอง {order.coupon.code}</Text><Text>−{money(order.couponDiscount)}</Text></View>}
           {bill.vatAdded > 0 && <View style={s.tRow}><Text>VAT 7% (สินค้าที่ราคายังไม่รวม VAT)</Text><Text>+{money(bill.vatAdded)}</Text></View>}
           <View style={s.tGrand}><Text style={s.grand}>ยอดสุทธิ (รวม VAT)</Text><Text style={s.grand}>{money(order.total)} บาท</Text></View>

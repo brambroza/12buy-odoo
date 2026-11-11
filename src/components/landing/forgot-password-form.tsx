@@ -40,7 +40,7 @@ export function ForgotPasswordForm() {
       <button type="submit" disabled={pending} className="mt-5 w-full rounded-full bg-[var(--lp-accent)] py-3.5 text-base font-bold text-[var(--lp-accent-fg)] transition hover:brightness-110 active:scale-[0.98] disabled:opacity-60">
         {pending ? 'กำลังส่งคำขอ...' : 'ขอรีเซ็ตรหัสผ่าน'}
       </button>
-      <p className="mt-4 text-center text-[11px] text-[var(--lp-muted)]">ทีมงานจะตรวจสอบตัวตนแล้วส่งรหัสผ่านชั่วคราวให้ เข้าระบบแล้วระบบจะให้ตั้งรหัสใหม่</p>
+      <p className="mt-4 text-center text-[11px] text-[var(--lp-muted)]">ทีมงานจะตรวจสอบตัวตนแล้วส่งรหัสผ่านชั่วคราวไปที่อีเมลนี้ เข้าระบบแล้วระบบจะให้ตั้งรหัสใหม่</p>
     </form>
   );
 }

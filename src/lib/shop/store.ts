@@ -38,6 +38,8 @@ function toOrder(row: OrderRow): ProtoOrder {
     lines: row.lines,
     subtotal: money(row.subtotal),
     cashDiscount: money(row.cashDiscount),
+    // Not a column: kept on each line, so older orders simply have none.
+    freightDiscount: Math.round((row.lines ?? []).reduce((sum, l) => sum + (l.freightDiscount ?? 0), 0) * 100) / 100,
     coupon: row.coupon ?? null,
     couponDiscount: money(row.couponDiscount),
     total: money(row.total),

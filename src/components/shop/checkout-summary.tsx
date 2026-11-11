@@ -13,7 +13,7 @@ import { creditAfterOrder } from '@/lib/shop/credit';
 import type { PaymentMethod } from '@/lib/shop/types';
 import { cn } from '@/lib/utils';
 
-type Bill = { subtotal: number; cashDiscount: number; couponDiscount: number; vatAdded: number; vat: number; total: number };
+type Bill = { subtotal: number; cashDiscount: number; freightDiscount: number; couponDiscount: number; vatAdded: number; vat: number; total: number };
 
 /**
  * Payment choice + total + submit for the checkout form.
@@ -21,11 +21,13 @@ type Bill = { subtotal: number; cashDiscount: number; couponDiscount: number; va
  * Below `lg` the total and the submit button sit in a bar fixed above the bottom navigation.
  * `blocked` (e.g. a line over stock) disables ordering with that reason on the button.
  * `creditLocked` (overdue invoices) disables the credit option with that message; cash stays available.
+ * `creditWarning` (past due inside the grace days) keeps credit open and shows the lock date.
  * `cashPercent` labels the cash discount when every discounted line has the same %.
+ * The freight discount of the delivery method is already in both totals (it does not depend on the method).
  * Cash: the dealer transfers to the accounts from Odoo's Wire Transfer provider (`bank`) and attaches the slip here first; the order is sent with it (`slip` field).
  */
-export function CheckoutSummary({ credit, creditLocked = null, creditBill, cashBill, cashPercent, creditLine, lineCount, blocked, bank }: {
-  bank: WireTransferInfo; credit: boolean; creditLocked?: string | null; creditBill: Bill; cashBill: Bill; cashPercent: number | null; creditLine: { limit: number | null; used: number } | null; lineCount: number; blocked: string | null;
+export function CheckoutSummary({ credit, creditLocked = null, creditWarning = null, creditBill, cashBill, cashPercent, creditLine, lineCount, blocked, bank }: {
+  bank: WireTransferInfo; credit: boolean; creditLocked?: string | null; creditWarning?: string | null; creditBill: Bill; cashBill: Bill; cashPercent: number | null; creditLine: { limit: number | null; used: number } | null; lineCount: number; blocked: string | null;
 }) {
   const [method, setMethod] = useState<PaymentMethod>(credit && !creditLocked ? 'CREDIT' : 'CASH');
   // Reset on switching to credit: the slip picker unmounts and drops its file.
@@ -47,6 +49,7 @@ export function CheckoutSummary({ credit, creditLocked = null, creditBill, cashB
             <span className="font-bold">{baht(creditBill.total)}</span>
           </label>
           {creditLocked && <p role="alert" className="rounded-lg bg-destructive/10 px-3 py-2 text-xs text-destructive">{creditLocked} <Link href="/shop/account" className="font-semibold underline">ดูใบแจ้งหนี้</Link></p>}
+          {!creditLocked && creditWarning && <p role="status" className="rounded-lg bg-amber-500/10 px-3 py-2 text-xs text-amber-800">{creditWarning} <Link href="/shop/account" className="font-semibold underline">ดูใบแจ้งหนี้</Link></p>}
           {method === 'CREDIT' && afterCredit.remaining !== null && (
             <div className="space-y-1 px-1 text-xs text-muted-foreground">
               <div className="h-1.5 overflow-hidden rounded-full bg-muted">
@@ -70,8 +73,8 @@ export function CheckoutSummary({ credit, creditLocked = null, creditBill, cashB
         <div className="min-w-0">
           <p className="text-xs text-muted-foreground">ยอดที่ต้องชำระ (รวม VAT แล้ว){credit && ` · ${method === 'CASH' ? 'เงินสด' : 'เครดิต'}`}</p>
           <p className="text-2xl font-black leading-tight">{baht(bill.total)}</p>
-          {(method === 'CASH' && bill.cashDiscount > 0) || bill.couponDiscount > 0
-            ? <p className="text-xs text-emerald-700 dark:text-emerald-400">{[method === 'CASH' && bill.cashDiscount > 0 ? `หักส่วนลดเงินสด${cashPercent !== null ? ` ${cashPercent}%` : ''} ${baht(bill.cashDiscount)}` : '', bill.couponDiscount > 0 ? `คูปอง ${baht(bill.couponDiscount)}` : ''].filter(Boolean).join(' · ')}</p>
+          {(method === 'CASH' && bill.cashDiscount > 0) || bill.freightDiscount > 0 || bill.couponDiscount > 0
+            ? <p className="text-xs text-emerald-700 dark:text-emerald-400">{[method === 'CASH' && bill.cashDiscount > 0 ? `หักส่วนลดเงินสด${cashPercent !== null ? ` ${cashPercent}%` : ''} ${baht(bill.cashDiscount)}` : '', bill.freightDiscount > 0 ? `ส่วนลดค่าขนส่ง ${baht(bill.freightDiscount)}` : '', bill.couponDiscount > 0 ? `คูปอง ${baht(bill.couponDiscount)}` : ''].filter(Boolean).join(' · ')}</p>
             : <p className="text-xs text-muted-foreground">{lineCount} รายการ · VAT {baht(bill.vat)}{bill.vatAdded > 0 ? ` (บวกเพิ่ม ${baht(bill.vatAdded)})` : ''}</p>}
         </div>
         <SubmitOrderButton reason={reason} />

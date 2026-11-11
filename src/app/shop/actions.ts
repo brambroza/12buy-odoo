@@ -8,6 +8,8 @@ import { baht, defaultQty, findProduct, getCatalog, getDealerCarrier, searchProd
 import { flash } from '@/lib/flash';
 import { billTotals, cashDiscountPerUnit, cashPercentOf, orderPricelistId, resolvePrice, withCoupon } from '@/lib/shop/pricing';
 import { checkCartCoupon } from '@/lib/shop/cart-coupon';
+import { freightDiscountOf, freightRatesFor } from '@/lib/shop/freight';
+import { listFreightDiscounts } from '@/lib/admin/store';
 import { normalizeCode } from '@/lib/shop/coupon';
 import { creditAfterOrder, isOverdueLocked, overdueLockMessage } from '@/lib/shop/credit';
 import { getCreditSummary } from '@/lib/shop/credit-line';
@@ -185,6 +187,12 @@ async function placeOrder(sid: string, input: CheckoutInput, shipTo: string, sli
   const qtyByProduct = new Map<number, number>();
   for (const item of cart) qtyByProduct.set(item.productId, (qtyByProduct.get(item.productId) ?? 0) + item.qty);
 
+  // The admin sets the delivery method per customer; the dealer does not choose. Its freight discount applies to every line.
+  const carrier = (await getDealerCarrier(profile.odooPartnerId))?.carrier;
+  if (!carrier) redirect('/shop/cart?error=' + encodeURIComponent('ยังไม่ได้กำหนดการจัดส่งให้ร้าน ติดต่อฝ่ายขาย'));
+  const freightRates = freightRatesFor(await listFreightDiscounts(), carrier.id);
+  const paymentMethod = profile.credit ? input.paymentMethod ?? 'CREDIT' : 'CASH';
+
   const lines: OrderLine[] = [];
   const priced: Parameters<typeof checkCartCoupon>[3] = [];
   for (const item of cart) {
@@ -195,13 +203,10 @@ async function placeOrder(sid: string, input: CheckoutInput, shipTo: string, sli
     const unitPrice = resolvePrice(catalog, product, profile, item.qty);
     const cashOff = cashDiscountPerUnit(catalog, product, profile, item.qty, unitPrice);
     const cashPercent = cashOff > 0 ? cashPercentOf(profile, product) : null;
-    lines.push({ productId: product.id, name: product.name, code: product.code, size: product.size?.label ?? null, qty: item.qty, unitPrice, cashDiscountPerUnit: cashOff, ...(cashPercent !== null ? { cashDiscountPercent: cashPercent } : {}), unitId: item.unitId ?? null, unitName: item.unitName ?? null, unitQty: item.unitQty ?? null, vatRate: product.vatRate, vatIncluded: product.vatIncluded, taxIds: product.taxIds ?? [] });
+    const freightOff = freightDiscountOf(freightRates, product, item.qty, item.unitId, item.qty * (unitPrice - cashOff));
+    lines.push({ productId: product.id, name: product.name, code: product.code, size: product.size?.label ?? null, qty: item.qty, unitPrice, cashDiscountPerUnit: cashOff, ...(cashPercent !== null ? { cashDiscountPercent: cashPercent } : {}), ...(freightOff > 0 ? { freightDiscount: freightOff } : {}), unitId: item.unitId ?? null, unitName: item.unitName ?? null, unitQty: item.unitQty ?? null, vatRate: product.vatRate, vatIncluded: product.vatIncluded, taxIds: product.taxIds ?? [] });
     priced.push({ product, qty: item.qty, unitPrice, cashDiscountPerUnit: cashOff });
   }
-  const paymentMethod = profile.credit ? input.paymentMethod ?? 'CREDIT' : 'CASH';
-  // The admin sets the delivery method per customer; the dealer does not choose.
-  const carrier = (await getDealerCarrier(profile.odooPartnerId))?.carrier;
-  if (!carrier) redirect('/shop/cart?error=' + encodeURIComponent('ยังไม่ได้กำหนดการจัดส่งให้ร้าน ติดต่อฝ่ายขาย'));
   // The coupon is re-checked against Odoo here: the cart preview may be stale.
   const code = await store.getCartCoupon(sid);
   let coupon: OrderCoupon | null = null;

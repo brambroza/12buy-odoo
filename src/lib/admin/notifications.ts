@@ -8,6 +8,7 @@ import { listPendingResetRequests } from '@/lib/auth/reset-requests';
 import { isAdminRole, type Role } from '@/lib/auth/roles';
 import { listDealers } from '@/lib/dealers/repo';
 import { listLeads } from '@/lib/leads/repo';
+import { getOverdueGraceDays } from '@/lib/shop/credit-policy';
 import { listAllOrders } from '@/lib/shop/store';
 
 export type BellItem = Pick<DashboardTask, 'id' | 'priority' | 'title' | 'detail' | 'count' | 'href'>;
@@ -34,20 +35,21 @@ async function safe<T>(promise: Promise<T>, fallback: T): Promise<T> {
 /** Loads what is waiting for `role` (admin-only items are hidden from sales/warehouse). */
 export async function loadBell(role: Role, now = Date.now()): Promise<BellData> {
   const isAdmin = isAdminRole(role);
-  const [orders, leads, pendingDealers, books, zones, resets] = await Promise.all([
+  const [orders, leads, pendingDealers, books, zones, resets, creditGraceDays] = await Promise.all([
     safe(listAllOrders(), []),
     safe(listLeads('NEW'), []),
     safe(listDealers({ status: 'PENDING' }), []),
     isAdmin ? safe(admin.listBooks(), []) : Promise.resolve([]),
     isAdmin ? safe(admin.listZones(), []) : Promise.resolve([]),
     isAdmin ? safe(listPendingResetRequests(), []) : Promise.resolve([]),
+    safe(getOverdueGraceDays(), 0),
   ]);
   const booksPending = books.filter((b) => b.status === 'PENDING_APPROVAL')
     .map((b) => ({ id: b.id, label: `${zones.find((z) => z.id === b.zoneId)?.name ?? 'โซน'} · ${b.tier}` }));
   const oldest = leads.at(-1)?.createdAt;
   const items = buildTasks({
     orders, now, newLeads: leads.length, oldestNewLeadAt: oldest ? new Date(oldest).toISOString() : null,
-    pendingDealers: pendingDealers.length, booksPending, resetRequests: resets.length, publishedCarriers: null,
+    pendingDealers: pendingDealers.length, booksPending, resetRequests: resets.length, publishedCarriers: null, creditGraceDays,
   }).filter((t) => isAdmin || !t.adminOnly)
     .map(({ id, priority, title, detail, count, href }) => ({ id, priority, title, detail, count, href }));
   return { items, badge: bellBadge(items) };

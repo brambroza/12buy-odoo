@@ -3,7 +3,7 @@ import Link from 'next/link';
 import { FileText, KeyRound, Store, Truck, Wallet } from 'lucide-react';
 import { baht } from '@/lib/shop/catalog';
 import { getCreditSummary } from '@/lib/shop/credit-line';
-import { overdueLockMessage } from '@/lib/shop/credit';
+import { isInGrace, overdueGraceMessage, overdueLockMessage } from '@/lib/shop/credit';
 import { currentTime, thaiDay } from '@/lib/admin/dashboard';
 import { getSessionId } from '@/lib/shop/session';
 import { listOrders } from '@/lib/shop/store';
@@ -109,6 +109,11 @@ export default async function AccountPage({ searchParams }: { searchParams: Prom
             {overdue && overdue.count > 0 && (
               <p role="alert" className="mt-3 rounded-lg bg-destructive/10 px-3 py-2 text-xs text-destructive">
                 {overdueLockMessage(overdue)}{overdue.source === 'web' && ' · นับจากออเดอร์บนเว็บ (ยังอ่านข้อมูลจาก Odoo ไม่ได้)'}
+              </p>
+            )}
+            {isInGrace(overdue) && (
+              <p role="status" className="mt-3 rounded-lg bg-amber-500/10 px-3 py-2 text-xs text-amber-800">
+                {overdueGraceMessage(overdue!)}{overdue!.source === 'web' && ' · นับจากออเดอร์บนเว็บ (ยังอ่านข้อมูลจาก Odoo ไม่ได้)'}
               </p>
             )}
             <p className="mt-3 border-t border-border pt-3 text-xs text-muted-foreground">ยอดค้างชำระรวม <span className="font-semibold text-foreground">{baht(outstandingTotal)}</span> · {openInvoices.length} ใบแจ้งหนี้{unapplied > 0 ? ` · มีรับชำระ/ลดหนี้ ${baht(unapplied)} ที่บัญชียังไม่ตัดกับใบแจ้งหนี้` : ''} · ยอดที่โอนแล้วรอตรวจจะหักเมื่อบัญชีลงรับใน Odoo</p>

@@ -2,6 +2,7 @@ import { findDealerByPartnerId, getDealer } from '@/lib/dealers/repo';
 import { thaiDay } from '@/lib/admin/dashboard';
 import { readOpenInvoices, type OdooOpenInvoice } from '@/lib/odoo/partner-receivables';
 import { getPartnerCredit } from './catalog';
+import { getOverdueGraceDays } from './credit-policy';
 import { orderCreditView, overdueFromInvoices, overdueFromWebOrders, parseOrderScope, tightestCredit, webCreditLine, type CreditLine, type OrderCreditView, type OverdueSummary } from './credit';
 import { listOpenCreditOrders } from './store';
 import type { DealerProfile } from './types';
@@ -15,12 +16,14 @@ export type CreditSummary = { line: CreditLine | null; odooReceivable: number | 
 /**
  * Overdue of a customer: from Odoo's open invoices when they could be read, else from the dealer's own web
  * credit orders (last status sync). Null when neither source exists (no Odoo link and no dealer row).
+ * Grace days come from the system credit policy (/admin/settings).
  */
 async function overdueOf(dealer: { id: string; odooPartnerId: number | null } | null, openInvoices: OdooOpenInvoice[] | null, orders?: Awaited<ReturnType<typeof listOpenCreditOrders>> | null): Promise<OverdueSummary | null> {
   const today = thaiDay(Date.now());
-  if (openInvoices) return overdueFromInvoices(openInvoices, today);
+  const graceDays = await getOverdueGraceDays();
+  if (openInvoices) return overdueFromInvoices(openInvoices, today, graceDays);
   if (!dealer) return null;
-  return overdueFromWebOrders(dealer, orders ?? await listOpenCreditOrders(dealer), today);
+  return overdueFromWebOrders(dealer, orders ?? await listOpenCreditOrders(dealer), today, graceDays);
 }
 
 /** Odoo credit and open invoices of a partner; either is null when Odoo could not be read. */

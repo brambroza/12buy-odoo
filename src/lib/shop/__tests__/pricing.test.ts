@@ -143,7 +143,7 @@ describe('orderPricelistId', () => {
 describe('VAT', () => {
   it('keeps VAT-included prices as the amount due and reports the VAT inside', () => {
     const bill = billTotals([{ qty: 4, unitPrice: 2140, vatRate: 7, vatIncluded: true }], 'CREDIT');
-    expect(bill).toEqual({ subtotal: 8560, cashDiscount: 0, vatAdded: 0, vat: 560, total: 8560 });
+    expect(bill).toEqual({ subtotal: 8560, cashDiscount: 0, freightDiscount: 0, vatAdded: 0, vat: 560, total: 8560 });
   });
 
   it('adds VAT on top of products whose Odoo tax is not price-included, after the cash discount', () => {
@@ -151,8 +151,17 @@ describe('VAT', () => {
       { qty: 4, unitPrice: 2140, vatRate: 7, vatIncluded: true },
       { qty: 2, unitPrice: 1000, cashDiscountPerUnit: 100, vatRate: 7, vatIncluded: false },
     ];
-    expect(billTotals(lines, 'CASH')).toEqual({ subtotal: 10560, cashDiscount: 200, vatAdded: 126, vat: 686, total: 10486 });
+    expect(billTotals(lines, 'CASH')).toEqual({ subtotal: 10560, cashDiscount: 200, freightDiscount: 0, vatAdded: 126, vat: 686, total: 10486 });
     expect(billTotals(lines, 'CREDIT')).toMatchObject({ vatAdded: 140, total: 10700 });
+  });
+
+  it('takes the freight discount off with either payment method, before VAT added on top', () => {
+    const lines = [
+      { qty: 4, unitPrice: 2140, freightDiscount: 320, vatRate: 7, vatIncluded: true },
+      { qty: 2, unitPrice: 1000, cashDiscountPerUnit: 100, freightDiscount: 200, vatRate: 7, vatIncluded: false },
+    ];
+    expect(billTotals(lines, 'CREDIT')).toEqual({ subtotal: 10560, cashDiscount: 0, freightDiscount: 520, vatAdded: 126, vat: 665.07, total: 10166 });
+    expect(billTotals(lines, 'CASH')).toMatchObject({ cashDiscount: 200, freightDiscount: 520, vatAdded: 112, total: 9952 });
   });
 
   it('shrinks the VAT inside in proportion to a coupon', () => {

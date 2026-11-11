@@ -54,6 +54,7 @@ export const ORDER_COLUMNS: Column<ProtoOrder>[] = [
   { header: 'จำนวนหน่วย', value: (o) => o.lines.reduce((s, l) => s + l.qty, 0) },
   { header: 'รวมสินค้า', value: (o) => o.subtotal },
   { header: 'ส่วนลดเงินสด', value: (o) => o.cashDiscount },
+  { header: 'ส่วนลดค่าขนส่ง', value: (o) => o.freightDiscount ?? 0 },
   { header: 'คูปอง', value: (o) => o.coupon?.code ?? '' },
   { header: 'ส่วนลดคูปอง', value: (o) => o.couponDiscount },
   { header: 'ยอดสุทธิ', value: (o) => o.total },
@@ -82,6 +83,7 @@ export const ORDER_LINE_COLUMNS: Column<OrderLineRow>[] = [
   { header: 'หน่วยขาย', value: (r) => r.line.unitName && r.line.unitQty ? `${r.line.unitQty} ${r.line.unitName}` : '' },
   { header: 'ราคา/หน่วย', value: (r) => r.line.unitPrice },
   { header: 'ส่วนลดเงินสด/หน่วย', value: (r) => r.line.cashDiscountPerUnit ?? 0 },
+  { header: 'ส่วนลดค่าขนส่ง', value: (r) => r.line.freightDiscount ?? 0 },
   { header: 'รวม', value: (r) => Math.round(r.line.qty * r.line.unitPrice * 100) / 100 },
 ];
 

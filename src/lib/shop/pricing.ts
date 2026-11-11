@@ -102,19 +102,21 @@ export function vatLabel(product: { vatRate: number; vatIncluded: boolean }): st
   return product.vatIncluded ? 'รวม VAT' : `+VAT ${product.vatRate}%`;
 }
 
-type BillLine = { qty: number; unitPrice: number; cashDiscountPerUnit?: number; vatRate?: number; vatIncluded?: boolean };
-export type Bill = { subtotal: number; cashDiscount: number; vatAdded: number; vat: number; total: number };
+type BillLine = { qty: number; unitPrice: number; cashDiscountPerUnit?: number; freightDiscount?: number; vatRate?: number; vatIncluded?: boolean };
+export type Bill = { subtotal: number; cashDiscount: number; freightDiscount: number; vatAdded: number; vat: number; total: number };
 
 /**
  * Bill totals. The cash discount is applied once at the end of the bill, only when paying cash.
- * Prices of VAT-included products already contain VAT; products whose Odoo tax is not included
- * get VAT added on top (`vatAdded`), exactly as Odoo will, so `total` is what the dealer pays
- * and matches the sale order's `amount_total`. `vat` is the VAT inside `total`.
+ * The freight discount (`freightDiscount`, baht for the whole line, see `freight.ts`) applies with
+ * either payment method. Prices of VAT-included products already contain VAT; products whose Odoo tax
+ * is not included get VAT added on top (`vatAdded`), exactly as Odoo will, so `total` is what the
+ * dealer pays and matches the sale order's `amount_total`. `vat` is the VAT inside `total`.
  */
 export function billTotals(lines: BillLine[], method: PaymentMethod): Bill {
-  const net = (l: BillLine) => l.qty * (l.unitPrice - (method === 'CASH' ? l.cashDiscountPerUnit ?? 0 : 0));
+  const net = (l: BillLine) => l.qty * (l.unitPrice - (method === 'CASH' ? l.cashDiscountPerUnit ?? 0 : 0)) - (l.freightDiscount ?? 0);
   const subtotal = round2(lines.reduce((sum, l) => sum + l.qty * l.unitPrice, 0));
   const cashDiscount = method === 'CASH' ? round2(lines.reduce((sum, l) => sum + l.qty * (l.cashDiscountPerUnit ?? 0), 0)) : 0;
+  const freightDiscount = round2(lines.reduce((sum, l) => sum + (l.freightDiscount ?? 0), 0));
   let vatInside = 0;
   let vatAdded = 0;
   for (const line of lines) {
@@ -124,7 +126,7 @@ export function billTotals(lines: BillLine[], method: PaymentMethod): Bill {
     else vatInside += net(line) * rate / (100 + rate);
   }
   vatAdded = round2(vatAdded);
-  return { subtotal, cashDiscount, vatAdded, vat: round2(vatInside + vatAdded), total: round2(subtotal - cashDiscount + vatAdded) };
+  return { subtotal, cashDiscount, freightDiscount, vatAdded, vat: round2(vatInside + vatAdded), total: round2(subtotal - cashDiscount - freightDiscount + vatAdded) };
 }
 
 /** Takes a coupon discount off a bill's total (never below zero); the VAT inside shrinks in proportion. */

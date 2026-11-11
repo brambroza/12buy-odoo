@@ -40,8 +40,12 @@ export default async function ProductPage({ params }: { params: Promise<{ id: st
   const cashRule = cashRuleOf(profile, product);
   const cashNote = cashOff > 0 ? `จ่ายเงินสดลด${cashRule?.kind === 'PERCENT' ? ` ${cashRule.value}%` : ''} −${baht(cashOff)} /${product.baseUnit} (หักท้ายบิล)` : '';
   const qty = defaultQty(product.dealerType);
+  // Same size, other products: priced for this dealer and listed cheapest first.
   const sameSize = product.size
-    ? catalog.products.filter((p) => p.id !== product.id && p.size?.label === product.size!.label && canSeeProduct(profile, p))
+    ? catalog.products
+        .filter((p) => p.id !== product.id && p.size?.label === product.size!.label && canSeeProduct(profile, p))
+        .map((p) => ({ product: p, price: resolvePrice(catalog, p, profile) }))
+        .sort((a, b) => a.price - b.price || a.product.brand.localeCompare(b.product.brand, 'th'))
     : [];
 
   return (
@@ -69,10 +73,10 @@ export default async function ProductPage({ params }: { params: Promise<{ id: st
       {sameSize.length > 0 && (
         <section className="space-y-2">
           <h2 className="text-sm font-semibold">ขนาดเดียวกัน ยี่ห้ออื่น</h2>
-          {sameSize.map((p) => (
+          {sameSize.map(({ product: p, price }) => (
             <Link key={p.id} href={`/shop/product/${p.id}`} className="flex items-center justify-between rounded-lg border border-border bg-card p-3 text-sm">
               <span className="truncate">{p.brand} · {p.name}</span>
-              <span className="font-semibold">{baht(resolvePrice(catalog, p, profile))}</span>
+              <span className="font-semibold">{baht(price)}</span>
             </Link>
           ))}
         </section>

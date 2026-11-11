@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { creditAfterOrder, isDealerScope, isOverdueLocked, orderCreditView, overdueFromInvoices, overdueFromWebOrders, overdueLockMessage, parseOrderScope, tightestCredit, webCreditLine, webCreditUsed } from '../credit';
+import { addDays, creditAfterOrder, daysBetween, isDealerScope, isInGrace, isOverdueLocked, orderCreditView, overdueFromInvoices, overdueFromWebOrders, overdueGraceMessage, overdueLockMessage, parseOrderScope, thaiDate, tightestCredit, webCreditLine, webCreditUsed } from '../credit';
 
 describe('creditAfterOrder', () => {
   it('is the limit minus what is owed minus this order', () => {
@@ -115,36 +115,80 @@ describe('overdueFromInvoices', () => {
       { residual: 5_000, dueDate: null },
       { residual: -3_000, dueDate: '2026-10-01', refund: true },
     ], today);
-    expect(result).toEqual({ amount: 12_500.5, count: 2, oldestDueDate: '2026-10-31', source: 'odoo' });
+    expect(result).toEqual({ amount: 12_500.5, count: 2, oldestDueDate: '2026-10-31', source: 'odoo', graceDays: 0, grace: null });
     expect(isOverdueLocked(result)).toBe(true);
+    expect(isInGrace(result)).toBe(false);
   });
   it('does not lock when nothing is past due', () => {
     const result = overdueFromInvoices([{ residual: 1_000, dueDate: '2026-12-01' }], today);
     expect(result.count).toBe(0);
+    expect(result.grace).toBeNull();
     expect(isOverdueLocked(result)).toBe(false);
     expect(isOverdueLocked(null)).toBe(false);
+    expect(isInGrace(null)).toBe(false);
+  });
+  it('keeps credit open inside the grace days and reports the lock date', () => {
+    // Client example: due 5 Nov, 10 grace days, ordering on 11 Nov → still open, locks from 16 Nov.
+    const result = overdueFromInvoices([{ residual: 8_000, dueDate: '2026-11-05' }, { residual: 500, dueDate: '2026-11-10' }], '2026-11-11', 10);
+    expect(result).toEqual({ amount: 0, count: 0, oldestDueDate: null, source: 'odoo', graceDays: 10, grace: { amount: 8_500, count: 2, lockDate: '2026-11-16' } });
+    expect(isOverdueLocked(result)).toBe(false);
+    expect(isInGrace(result)).toBe(true);
+  });
+  it('locks on the day after the grace days run out and keeps newer past-due invoices as grace', () => {
+    const open = overdueFromInvoices([{ residual: 8_000, dueDate: '2026-11-05' }], '2026-11-15', 10);
+    expect(open.count).toBe(0);
+    expect(open.grace?.lockDate).toBe('2026-11-16');
+    const locked = overdueFromInvoices([{ residual: 8_000, dueDate: '2026-11-05' }, { residual: 300, dueDate: '2026-11-12' }], '2026-11-16', 10);
+    expect(locked).toMatchObject({ amount: 8_000, count: 1, oldestDueDate: '2026-11-05', graceDays: 10, grace: { amount: 300, count: 1, lockDate: '2026-11-23' } });
+    expect(isOverdueLocked(locked)).toBe(true);
+    expect(isInGrace(locked)).toBe(false);
+  });
+});
+
+describe('addDays / daysBetween / thaiDate', () => {
+  it('does whole-day arithmetic on YYYY-MM-DD across month ends', () => {
+    expect(addDays('2026-11-05', 11)).toBe('2026-11-16');
+    expect(addDays('2026-11-30', 1)).toBe('2026-12-01');
+    expect(addDays('2026-03-01', -1)).toBe('2026-02-28');
+    expect(daysBetween('2026-11-11', '2026-11-16')).toBe(5);
+    expect(daysBetween('2026-11-16', '2026-11-11')).toBe(-5);
+  });
+  it('formats a day in Thai with the Buddhist year', () => {
+    expect(thaiDate('2026-11-16')).toMatch(/16 พ\.ย\. 2569/);
+    expect(thaiDate('not-a-date')).toBe('not-a-date');
   });
 });
 
 describe('overdueFromWebOrders', () => {
   const dealer = { id: 'd1', odooPartnerId: 42 };
   const inv = (amountResidual: number, dueDate: string | null, paymentState = 'not_paid') => ({ amountResidual, dueDate, paymentState });
+  const orders = [
+    { scope: 'dealer:d1', paymentMethod: 'CREDIT', status: 'INVOICED', odoo: { progress: { invoices: [inv(4_000, '2026-10-20'), inv(1_000, '2026-12-01')] } } },
+    { scope: 'staff:u9:42', paymentMethod: 'CREDIT', status: 'INVOICED', odoo: { progress: { invoices: [inv(2_000, '2026-11-01T00:00:00')] } } },
+    { scope: 'dealer:d1', paymentMethod: 'CREDIT', status: 'INVOICED', odoo: { progress: { invoices: [inv(7_000, '2026-10-01', 'in_payment')] } } },
+    { scope: 'dealer:d1', paymentMethod: 'CREDIT', status: 'PAID', odoo: { progress: { invoices: [inv(7_000, '2026-10-01')] } } },
+    { scope: 'dealer:d2', paymentMethod: 'CREDIT', status: 'INVOICED', odoo: { progress: { invoices: [inv(7_000, '2026-10-01')] } } },
+    { scope: 'dealer:d1', paymentMethod: 'CASH', status: 'INVOICED', odoo: { progress: { invoices: [inv(7_000, '2026-10-01')] } } },
+    { scope: 'dealer:d1', paymentMethod: 'CREDIT', status: 'PREPARING', odoo: null },
+  ];
   it("counts unpaid past-due invoices of the dealer's open credit orders only", () => {
-    const result = overdueFromWebOrders(dealer, [
-      { scope: 'dealer:d1', paymentMethod: 'CREDIT', status: 'INVOICED', odoo: { progress: { invoices: [inv(4_000, '2026-10-20'), inv(1_000, '2026-12-01')] } } },
-      { scope: 'staff:u9:42', paymentMethod: 'CREDIT', status: 'INVOICED', odoo: { progress: { invoices: [inv(2_000, '2026-11-01T00:00:00')] } } },
-      { scope: 'dealer:d1', paymentMethod: 'CREDIT', status: 'INVOICED', odoo: { progress: { invoices: [inv(7_000, '2026-10-01', 'in_payment')] } } },
-      { scope: 'dealer:d1', paymentMethod: 'CREDIT', status: 'PAID', odoo: { progress: { invoices: [inv(7_000, '2026-10-01')] } } },
-      { scope: 'dealer:d2', paymentMethod: 'CREDIT', status: 'INVOICED', odoo: { progress: { invoices: [inv(7_000, '2026-10-01')] } } },
-      { scope: 'dealer:d1', paymentMethod: 'CASH', status: 'INVOICED', odoo: { progress: { invoices: [inv(7_000, '2026-10-01')] } } },
-      { scope: 'dealer:d1', paymentMethod: 'CREDIT', status: 'PREPARING', odoo: null },
-    ], '2026-11-06');
-    expect(result).toEqual({ amount: 6_000, count: 2, oldestDueDate: '2026-10-20', source: 'web' });
+    expect(overdueFromWebOrders(dealer, orders, '2026-11-06')).toEqual({ amount: 6_000, count: 2, oldestDueDate: '2026-10-20', source: 'web', graceDays: 0, grace: null });
+  });
+  it('applies the grace days the same way as the Odoo path', () => {
+    expect(overdueFromWebOrders(dealer, orders, '2026-11-06', 10)).toEqual({ amount: 4_000, count: 1, oldestDueDate: '2026-10-20', source: 'web', graceDays: 10, grace: { amount: 2_000, count: 1, lockDate: '2026-11-12' } });
   });
 });
 
-describe('overdueLockMessage', () => {
+describe('overdueLockMessage / overdueGraceMessage', () => {
   it('states count and amount and that cash still works', () => {
-    expect(overdueLockMessage({ amount: 12_500.5, count: 2, oldestDueDate: '2026-10-31', source: 'odoo' })).toBe('มียอดเลยกำหนดชำระ 2 ใบ รวม 12,500.50 บาท · ชำระก่อนจึงจะสั่งแบบเครดิตได้ (สั่งเงินสดได้ตามปกติ)');
+    expect(overdueLockMessage({ amount: 12_500.5, count: 2, oldestDueDate: '2026-10-31', source: 'odoo', graceDays: 0, grace: null })).toBe('มียอดเลยกำหนดชำระ 2 ใบ รวม 12,500.50 บาท · ชำระก่อนจึงจะสั่งแบบเครดิตได้ (สั่งเงินสดได้ตามปกติ)');
+    expect(overdueLockMessage({ amount: 8_000, count: 1, oldestDueDate: '2026-11-05', source: 'odoo', graceDays: 10, grace: null })).toContain('เลยกำหนดชำระเกิน 10 วัน 1 ใบ รวม 8,000.00 บาท');
+  });
+  it('tells the dealer the last day to pay and the lock date', () => {
+    const text = overdueGraceMessage({ amount: 0, count: 0, oldestDueDate: null, source: 'odoo', graceDays: 10, grace: { amount: 8_500, count: 2, lockDate: '2026-11-16' } });
+    expect(text).toContain('2 ใบ รวม 8,500.00 บาท');
+    expect(text).toContain('ชำระภายใน 15 พ.ย. 2569');
+    expect(text).toContain('ปิดสั่งแบบเครดิตตั้งแต่ 16 พ.ย. 2569');
+    expect(text).toContain('สั่งเงินสดได้ตามปกติ');
   });
 });

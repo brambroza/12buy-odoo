@@ -85,3 +85,24 @@ export function readAvatar(name: string) {
 export function deleteAvatar(name: string): Promise<void> {
   return deleteImage(AVATAR_BUCKET, name);
 }
+
+const LANDING_BUCKET = 'landing';
+/** Landing artwork can be large (wide banners); stays under the 6 MB server-action body limit. */
+export const MAX_LANDING_BYTES = 4 * 1024 * 1024;
+
+/** Validates and stores an image uploaded from `/admin/landing`. Names look like `landing-<time>.webp`. */
+export function saveLandingImage(file: File): Promise<SaveResult> {
+  return saveImage(LANDING_BUCKET, 'landing', file, MAX_LANDING_BYTES, 'อัปโหลดรูปไม่สำเร็จ กรุณาลองใหม่');
+}
+
+/** Reads a stored landing image by its file name. */
+export function readLandingImage(name: string) {
+  return readImage(LANDING_BUCKET, name);
+}
+
+/** Uploaded landing images, newest first (for the picker in the back office). Empty when storage fails. */
+export async function listLandingImages(limit = 60): Promise<string[]> {
+  const { data, error } = await db().storage.from(LANDING_BUCKET).list('', { limit, sortBy: { column: 'created_at', order: 'desc' } });
+  if (error || !data) return [];
+  return data.map((f) => f.name).filter((n) => NAME_PATTERN.test(n));
+}

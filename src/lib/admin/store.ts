@@ -10,14 +10,16 @@ import { randomUUID } from 'node:crypto';
  */
 import { db } from '@/lib/db/client';
 import { unwrap } from '@/lib/db/rows';
+import { cleanFreightRates, type FreightDiscounts, type FreightRates } from '@/lib/shop/freight';
 import type { DealerTier } from '@/lib/shop/types';
 import type { AdminPromotion, CashPair, CashPercent, CustomerGroup, ProductCashDiscount, DealerAssignment, PriceBook, PriceZone } from './types';
 
 /**
  * `groupMembers` maps a dealer id (DB) to its customer group id; a dealer is in at most one group.
  * `productCashDiscounts` is keyed by Odoo product template id.
+ * `freightDiscounts` is keyed by Odoo `delivery.carrier` id.
  */
-export type AdminShape = { zones: PriceZone[]; books: PriceBook[]; dealers: DealerAssignment[]; cashPairs: CashPair[]; cashPercents: CashPercent[]; productCashDiscounts: Record<string, ProductCashDiscount>; groups: CustomerGroup[]; groupMembers: Record<string, string>; promotions: AdminPromotion[] };
+export type AdminShape = { zones: PriceZone[]; books: PriceBook[]; dealers: DealerAssignment[]; cashPairs: CashPair[]; cashPercents: CashPercent[]; productCashDiscounts: Record<string, ProductCashDiscount>; groups: CustomerGroup[]; groupMembers: Record<string, string>; promotions: AdminPromotion[]; freightDiscounts: FreightDiscounts };
 
 const ROW_ID = 'main';
 const MAX_ATTEMPTS = 5;
@@ -35,6 +37,7 @@ export function normalizeAdmin(input: Partial<AdminShape> | null | undefined): A
     groups: input?.groups ?? [],
     groupMembers: input?.groupMembers ?? {},
     promotions: input?.promotions ?? [],
+    freightDiscounts: input?.freightDiscounts ?? {},
   };
   if (!data.zones.some((z) => z.isDefault)) data.zones.unshift({ ...DEFAULT_ZONE });
   return data;
@@ -347,6 +350,25 @@ export function setProductCashDiscounts(changes: Record<string, ProductCashDisco
     }
     data.productCashDiscounts = next;
     return Object.keys(next).length;
+  });
+}
+
+// ---------- freight discounts ----------
+
+/** Freight discount rates of every delivery method. */
+export async function listFreightDiscounts(): Promise<FreightDiscounts> {
+  return (await getAdminSnapshot()).freightDiscounts;
+}
+
+/** Replaces the freight discount rates of one delivery method; no valid rate left removes it. Returns what was saved. */
+export function setFreightRates(carrierId: number, rates: FreightRates): Promise<FreightRates> {
+  return mutate((data) => {
+    const clean = cleanFreightRates(rates);
+    const next = { ...data.freightDiscounts };
+    if (Object.keys(clean).length) next[String(carrierId)] = clean;
+    else delete next[String(carrierId)];
+    data.freightDiscounts = next;
+    return clean;
   });
 }
 

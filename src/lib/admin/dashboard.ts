@@ -166,6 +166,8 @@ export type TaskInput = {
   publishedCarriers: number | null;
   /** Days until the Odoo API key in use expires (negative = expired); null when unknown. */
   apiKeyDaysLeft?: number | null;
+  /** Credit policy grace days: past-due invoices inside them are a follow-up, beyond them the shop locks credit. Default 0. */
+  creditGraceDays?: number;
   now?: number;
 };
 
@@ -214,15 +216,21 @@ export function buildTasks(input: TaskInput): DashboardTask[] {
     detail: `${refs(creditPays)} · รวม ${bahtText.format(creditPayTotal)} · ตรวจเงินเข้าแล้วกด “ตรวจแล้ว” และลงรับชำระใน Odoo`, href: one(creditPays, '/admin/orders?pay=pending'), action: 'ตรวจสลิป',
   });
   const dues = creditDues(input.orders, now);
-  const overdue = dues.filter((d) => d.daysLeft < 0);
+  const graceDays = Math.max(0, input.creditGraceDays ?? 0);
+  const overdue = dues.filter((d) => d.daysLeft < -graceDays);
+  const inGrace = dues.filter((d) => d.daysLeft < 0 && d.daysLeft >= -graceDays);
   const dueSoon = dues.filter((d) => d.daysLeft >= 0);
   /** "SO1 ร้าน A (เลยกำหนด 2 วัน), …" for the first three invoices. */
   const dueRefs = (list: CreditDue[]) => list.slice(0, 3).map((d) => `${d.invoice} ${d.dealerName} (${dueLabel(d.daysLeft)})`).join(', ') + (list.length > 3 ? ` และอีก ${list.length - 3}` : '');
   const dueTotal = (list: CreditDue[]) => bahtText.format(list.reduce((sum, d) => sum + d.residual, 0));
   const dueHref = (list: CreditDue[], filter: string) => (new Set(list.map((d) => d.orderId)).size === 1 ? `/admin/orders?open=${encodeURIComponent(list[0].orderId)}` : `/admin/orders?due=${filter}`);
   if (overdue.length) tasks.push({
-    id: 'credit-overdue', priority: 'urgent', count: overdue.length, title: 'ลูกค้าเครดิตเลยกำหนดชำระ',
+    id: 'credit-overdue', priority: 'urgent', count: overdue.length, title: graceDays > 0 ? `ลูกค้าเครดิตเลยกำหนดชำระเกิน ${graceDays} วัน · ปิดสั่งเครดิตแล้ว` : 'ลูกค้าเครดิตเลยกำหนดชำระ',
     detail: `${dueRefs(overdue)} · ค้างรวม ${dueTotal(overdue)} · โทรติดตามเก็บเงิน`, href: dueHref(overdue, 'overdue'), action: 'ติดตาม',
+  });
+  if (inGrace.length) tasks.push({
+    id: 'credit-grace', priority: 'today', count: inGrace.length, title: `ลูกค้าเครดิตเลยกำหนดชำระ · ช่วงผ่อนผัน ${graceDays} วัน`,
+    detail: `${dueRefs(inGrace)} · ค้างรวม ${dueTotal(inGrace)} · เตือนร้านให้ชำระก่อนระบบปิดสั่งเครดิต`, href: dueHref(inGrace, 'overdue'), action: 'ติดตาม',
   });
   if (dueSoon.length) tasks.push({
     id: 'credit-due-soon', priority: dueSoon.some((d) => d.daysLeft <= DUE_URGENT_DAYS) ? 'today' : 'soon', count: dueSoon.length,

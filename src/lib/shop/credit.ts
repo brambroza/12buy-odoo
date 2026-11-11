@@ -99,7 +99,17 @@ export function orderCreditView(line: CreditLine | null, orderTotal: number, cou
  * Unpaid credit past its due date. `source` says where it was counted: Odoo's open invoices of the customer,
  * or (Odoo unreachable) the invoices of the dealer's web orders from the last status sync.
  */
-export type OverdueSummary = { amount: number; count: number; oldestDueDate: string | null; source: 'odoo' | 'web' };
+export type OverdueSummary = {
+  /** Invoices past due by more than the grace days: these lock credit ordering. */
+  amount: number;
+  count: number;
+  oldestDueDate: string | null;
+  source: 'odoo' | 'web';
+  /** Grace days the summary was built with (0 = lock the day after the due date). */
+  graceDays: number;
+  /** Invoices past due but still inside the grace days; `lockDate` is the first day credit will be locked. Null when none. */
+  grace: { amount: number; count: number; lockDate: string } | null;
+};
 
 /** Invoice payment states that no longer owe anything. */
 const SETTLED = new Set(['paid', 'in_payment', 'reversed']);
@@ -107,48 +117,96 @@ const SETTLED = new Set(['paid', 'in_payment', 'reversed']);
 /** Below this (rounding left on a partly paid invoice) an invoice does not count as overdue. */
 const OVERDUE_TOLERANCE = 1;
 
-function summarize(rows: { residual: number; dueDate: string }[], source: OverdueSummary['source']): OverdueSummary {
-  const oldest = rows.reduce<string | null>((min, r) => (min === null || r.dueDate < min ? r.dueDate : min), null);
-  return { amount: round2(rows.reduce((sum, r) => sum + r.residual, 0)), count: rows.length, oldestDueDate: oldest, source };
+/** `YYYY-MM-DD` plus `days` (negative allowed), computed in UTC so no DST shift. */
+export function addDays(day: string, days: number): string {
+  return new Date(Date.parse(`${day}T00:00:00Z`) + days * 86_400_000).toISOString().slice(0, 10);
+}
+
+/** Whole days from `from` to `to` (both `YYYY-MM-DD`); negative when `to` is earlier. */
+export function daysBetween(from: string, to: string): number {
+  return Math.round((Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / 86_400_000);
+}
+
+/**
+ * Splits past-due invoices into locked (due date + grace days before `today`) and in grace (past due, not
+ * yet locked). `today` and due dates are `YYYY-MM-DD`.
+ */
+function summarize(rows: readonly { residual: number; dueDate: string }[], today: string, graceDays: number, source: OverdueSummary['source']): OverdueSummary {
+  const locked = rows.filter((r) => addDays(r.dueDate, graceDays) < today);
+  const inGrace = rows.filter((r) => r.dueDate < today && addDays(r.dueDate, graceDays) >= today);
+  const oldest = locked.reduce<string | null>((min, r) => (min === null || r.dueDate < min ? r.dueDate : min), null);
+  const graceOldest = inGrace.reduce<string | null>((min, r) => (min === null || r.dueDate < min ? r.dueDate : min), null);
+  return {
+    amount: round2(locked.reduce((sum, r) => sum + r.residual, 0)),
+    count: locked.length,
+    oldestDueDate: oldest,
+    source,
+    graceDays,
+    grace: graceOldest ? { amount: round2(inGrace.reduce((sum, r) => sum + r.residual, 0)), count: inGrace.length, lockDate: addDays(graceOldest, graceDays + 1) } : null,
+  };
 }
 
 /**
  * Overdue from Odoo's open invoices: each invoice still owing more than the tolerance whose due date is before
- * `today` (`YYYY-MM-DD`, Thai day). Credit notes are not netted: accounting applies them to an invoice in Odoo.
+ * `today` (`YYYY-MM-DD`, Thai day); it locks credit once `graceDays` more days have passed. Credit notes are
+ * not netted: accounting applies them to an invoice in Odoo.
  */
-export function overdueFromInvoices(invoices: readonly { residual: number; dueDate: string | null; refund?: boolean }[], today: string): OverdueSummary {
+export function overdueFromInvoices(invoices: readonly { residual: number; dueDate: string | null; refund?: boolean }[], today: string, graceDays = 0): OverdueSummary {
   const rows = invoices
-    .filter((inv) => !inv.refund && inv.residual > OVERDUE_TOLERANCE && inv.dueDate && inv.dueDate.slice(0, 10) < today)
+    .filter((inv) => !inv.refund && inv.residual > OVERDUE_TOLERANCE && inv.dueDate)
     .map((inv) => ({ residual: inv.residual, dueDate: inv.dueDate!.slice(0, 10) }));
-  return summarize(rows, 'odoo');
+  return summarize(rows, today, graceDays, 'odoo');
 }
 
 /**
  * Overdue counted from the dealer's own web credit orders (fallback when Odoo cannot be read): invoices from the
- * last status sync that are past due and unpaid. Orders not invoiced yet have no due date and never count.
+ * last status sync that are unpaid, split by due date and grace days like {@link overdueFromInvoices}.
+ * Orders not invoiced yet have no due date and never count.
  */
 export function overdueFromWebOrders(
   dealer: { id: string; odooPartnerId: number | null },
   orders: readonly { scope: string; paymentMethod: string; status: string; odoo?: { progress?: { invoices: { amountResidual: number; dueDate: string | null; paymentState: string }[] } } | null }[],
   today: string,
+  graceDays = 0,
 ): OverdueSummary {
   const rows: { residual: number; dueDate: string }[] = [];
   for (const order of orders) {
     if (order.paymentMethod !== 'CREDIT' || RELEASED.has(order.status) || !isDealerScope(order.scope, dealer.id, dealer.odooPartnerId)) continue;
     for (const inv of order.odoo?.progress?.invoices ?? []) {
-      if (SETTLED.has(inv.paymentState) || inv.amountResidual <= OVERDUE_TOLERANCE || !inv.dueDate || inv.dueDate.slice(0, 10) >= today) continue;
+      if (SETTLED.has(inv.paymentState) || inv.amountResidual <= OVERDUE_TOLERANCE || !inv.dueDate) continue;
       rows.push({ residual: inv.amountResidual, dueDate: inv.dueDate.slice(0, 10) });
     }
   }
-  return summarize(rows, 'web');
+  return summarize(rows, today, graceDays, 'web');
 }
 
-/** Credit ordering is locked while anything is overdue; cash orders stay open. */
+/** Credit ordering is locked while anything is past due beyond the grace days; cash orders stay open. */
 export function isOverdueLocked(overdue: OverdueSummary | null): boolean {
   return Boolean(overdue && overdue.count > 0);
 }
 
+/** Past due but still inside the grace days: credit still works, the dealer is warned. */
+export function isInGrace(overdue: OverdueSummary | null): boolean {
+  return Boolean(overdue && overdue.count === 0 && overdue.grace && overdue.grace.count > 0);
+}
+
+const bahtText = new Intl.NumberFormat('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const thaiDateText = new Intl.DateTimeFormat('th-TH', { timeZone: 'UTC', day: 'numeric', month: 'short', year: 'numeric' });
+
+/** `2026-11-16` → `16 พ.ย. 2569` (Thai Buddhist year). */
+export function thaiDate(day: string): string {
+  const at = new Date(`${day}T00:00:00Z`);
+  return Number.isNaN(at.getTime()) ? day : thaiDateText.format(at);
+}
+
 /** Message shown at checkout and on the account page while credit is locked. */
 export function overdueLockMessage(overdue: OverdueSummary): string {
-  return `มียอดเลยกำหนดชำระ ${overdue.count} ใบ รวม ${new Intl.NumberFormat('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(overdue.amount)} บาท · ชำระก่อนจึงจะสั่งแบบเครดิตได้ (สั่งเงินสดได้ตามปกติ)`;
+  const past = overdue.graceDays > 0 ? `เลยกำหนดชำระเกิน ${overdue.graceDays} วัน` : 'เลยกำหนดชำระ';
+  return `มียอด${past} ${overdue.count} ใบ รวม ${bahtText.format(overdue.amount)} บาท · ชำระก่อนจึงจะสั่งแบบเครดิตได้ (สั่งเงินสดได้ตามปกติ)`;
+}
+
+/** Warning while past-due invoices are inside the grace days: credit still open until `lockDate`. */
+export function overdueGraceMessage(overdue: OverdueSummary): string {
+  const g = overdue.grace!;
+  return `มีใบแจ้งหนี้เลยกำหนดชำระ ${g.count} ใบ รวม ${bahtText.format(g.amount)} บาท · ชำระภายใน ${thaiDate(addDays(g.lockDate, -1))} ไม่เช่นนั้นระบบจะปิดสั่งแบบเครดิตตั้งแต่ ${thaiDate(g.lockDate)} (สั่งเงินสดได้ตามปกติ)`;
 }
