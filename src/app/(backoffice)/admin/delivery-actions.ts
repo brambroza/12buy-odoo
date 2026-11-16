@@ -6,10 +6,10 @@ import { z } from 'zod';
 import { audit } from '@/lib/auth/audit';
 import { requireAdmin } from '@/lib/auth/session';
 import { flash } from '@/lib/flash';
-import { createCarrier, setCarrierActive, updateCarrier } from '@/lib/odoo/delivery-carrier';
+import { createCarrier, listAllCarriers, setCarrierActive, updateCarrier } from '@/lib/odoo/delivery-carrier';
 import { odooWritesEnabled } from '@/lib/odoo/rpc';
 import { clearReferenceCache } from '@/lib/shop/catalog';
-import { setFreightRates } from '@/lib/admin/store';
+import { setFreightRates, setFreightRatesForAll } from '@/lib/admin/store';
 import { FREIGHT_TYPES, formatFreightRates, parseFreightRate, type FreightRates } from '@/lib/shop/freight';
 import { DEALER_TYPE_LABELS } from '@/lib/shop/types';
 
@@ -121,16 +121,23 @@ export async function setCarrierActiveAction(formData: FormData) {
  * Saves the freight discount of one delivery method (baht per tyre / wheel / pack for each family, field
  * `freight_<TYPE>`; blank or 0 = none). Stored on the web, not in Odoo, so it works with Odoo read-only.
  */
+/** Reads the drawer's freight rate fields; an error names the family with the bad value. */
+function readFreightRates(formData: FormData): FreightRates | { error: string } {
+  const rates: FreightRates = {};
+  for (const type of FREIGHT_TYPES) {
+    const parsed = parseFreightRate(field(formData, `freight_${type}`));
+    if (parsed && typeof parsed === 'object') return { error: `${DEALER_TYPE_LABELS[type]}: ${parsed.error}` };
+    if (parsed) rates[type] = parsed;
+  }
+  return rates;
+}
+
 export async function saveFreightRatesAction(formData: FormData) {
   const actor = await requireAdmin();
   const id = idSchema.safeParse(field(formData, 'id')).data;
   if (!id) redirect(backTo(formData));
-  const rates: FreightRates = {};
-  for (const type of FREIGHT_TYPES) {
-    const parsed = parseFreightRate(field(formData, `freight_${type}`));
-    if (parsed && typeof parsed === 'object') return fail(formData, 'บันทึกไม่สำเร็จ', `${DEALER_TYPE_LABELS[type]}: ${parsed.error}`, { edit: String(id) });
-    if (parsed) rates[type] = parsed;
-  }
+  const rates = readFreightRates(formData);
+  if ('error' in rates) return fail(formData, 'บันทึกไม่สำเร็จ', String(rates.error), { edit: String(id) });
   let saved: FreightRates;
   try {
     saved = await setFreightRates(id, rates);
@@ -141,5 +148,33 @@ export async function saveFreightRatesAction(formData: FormData) {
   revalidatePath(PAGE);
   revalidatePath('/shop/cart');
   await flash('บันทึกส่วนลดค่าขนส่งแล้ว', { icon: 'truck', description: formatFreightRates(saved) || 'ไม่มีส่วนลด' });
+  redirect(backTo(formData));
+}
+
+/**
+ * "ใช้อัตรานี้กับทุกขนส่ง": saves the rates typed in the drawer onto every Odoo delivery method
+ * (archived ones too, so they are ready when re-enabled), replacing their own rates, in one write.
+ * Empty rates are refused so one click cannot wipe every method.
+ */
+export async function applyFreightRatesToAllAction(formData: FormData) {
+  const actor = await requireAdmin();
+  const id = idSchema.safeParse(field(formData, 'id')).data;
+  if (!id) redirect(backTo(formData));
+  const rates = readFreightRates(formData);
+  if ('error' in rates) return fail(formData, 'ใช้กับทุกขนส่งไม่สำเร็จ', String(rates.error), { edit: String(id) });
+  if (!Object.keys(rates).length) return fail(formData, 'ใช้กับทุกขนส่งไม่สำเร็จ', 'ใส่ส่วนลดอย่างน้อย 1 กลุ่มก่อน', { edit: String(id) });
+  let carrierIds: number[];
+  let saved: FreightRates;
+  try {
+    carrierIds = (await listAllCarriers()).map((c) => c.id);
+    if (!carrierIds.includes(id)) carrierIds.push(id);
+    saved = await setFreightRatesForAll(carrierIds, rates);
+  } catch (e) {
+    return fail(formData, 'ใช้กับทุกขนส่งไม่สำเร็จ', e instanceof Error ? e.message : 'บันทึกไม่ได้', { edit: String(id) });
+  }
+  await audit(actor.id, 'delivery.freight.apply_all', 'delivery.carrier', String(id), { rates: saved, carrierIds });
+  revalidatePath(PAGE);
+  revalidatePath('/shop/cart');
+  await flash(`ใช้ส่วนลดค่าขนส่งกับทุกขนส่งแล้ว (${carrierIds.length} วิธี)`, { icon: 'truck', description: formatFreightRates(saved) });
   redirect(backTo(formData));
 }

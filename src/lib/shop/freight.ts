@@ -84,6 +84,21 @@ export function formatFreightRates(rates: FreightRates | null | undefined): stri
     .join(' · ');
 }
 
+/**
+ * Copies one set of rates onto every listed delivery method (e.g. "use รถบริษัท's rates for all"),
+ * replacing what each had. Methods not listed keep their rates; empty rates remove the listed methods.
+ */
+export function withRatesForAll(discounts: FreightDiscounts | null | undefined, carrierIds: readonly number[], rates: FreightRates): FreightDiscounts {
+  const clean = cleanFreightRates(rates);
+  const next: FreightDiscounts = { ...(discounts ?? {}) };
+  for (const id of carrierIds) {
+    if (!Number.isInteger(id) || id <= 0) continue;
+    if (Object.keys(clean).length) next[String(id)] = { ...clean };
+    else delete next[String(id)];
+  }
+  return next;
+}
+
 function round2(value: number): number {
   return Math.round(value * 100) / 100;
 }

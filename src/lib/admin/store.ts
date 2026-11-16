@@ -10,7 +10,7 @@ import { randomUUID } from 'node:crypto';
  */
 import { db } from '@/lib/db/client';
 import { unwrap } from '@/lib/db/rows';
-import { cleanFreightRates, type FreightDiscounts, type FreightRates } from '@/lib/shop/freight';
+import { cleanFreightRates, withRatesForAll, type FreightDiscounts, type FreightRates } from '@/lib/shop/freight';
 import type { DealerTier } from '@/lib/shop/types';
 import type { AdminPromotion, CashPair, CashPercent, CustomerGroup, ProductCashDiscount, DealerAssignment, PriceBook, PriceZone } from './types';
 
@@ -369,6 +369,14 @@ export function setFreightRates(carrierId: number, rates: FreightRates): Promise
     else delete next[String(carrierId)];
     data.freightDiscounts = next;
     return clean;
+  });
+}
+
+/** Gives every listed delivery method the same freight rates in one write. Returns what was saved. */
+export function setFreightRatesForAll(carrierIds: readonly number[], rates: FreightRates): Promise<FreightRates> {
+  return mutate((data) => {
+    data.freightDiscounts = withRatesForAll(data.freightDiscounts, carrierIds, rates);
+    return cleanFreightRates(rates);
   });
 }
 

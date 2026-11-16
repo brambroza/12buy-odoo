@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { cleanFreightRates, formatFreightRates, freightCount, freightDiscountOf, freightRatesFor, freightUnitLabel, parseFreightRate } from '../freight';
+import { cleanFreightRates, formatFreightRates, freightCount, freightDiscountOf, freightRatesFor, freightUnitLabel, parseFreightRate, withRatesForAll } from '../freight';
 import type { CatalogProduct } from '../types';
 
 const tbr = { dealerType: 'TRUCK', units: [{ id: 1, name: 'เส้น', factor: 1 }] } as Pick<CatalogProduct, 'dealerType' | 'units'>;
@@ -59,5 +59,26 @@ describe('rates storage and form', () => {
     expect(freightUnitLabel('WHEEL')).toBe('วง');
     expect(formatFreightRates({ CAR: 80, TRUCK: 150 })).toBe('ยางรถบรรทุก ฿150 /เส้น · ยางรถยนต์ ฿80 /เส้น');
     expect(formatFreightRates(null)).toBe('');
+  });
+});
+
+describe('withRatesForAll', () => {
+  it('copies the rates onto every listed method, replacing their own', () => {
+    const before = { '1': { TRUCK: 150, CAR: 80 }, '2': { TRUCK: 50 }, '9': { WHEEL: 20 } };
+    const after = withRatesForAll(before, [1, 2, 3], { TRUCK: 150, CAR: 80, MOTORCYCLE: 70 });
+    expect(after['1']).toEqual({ TRUCK: 150, CAR: 80, MOTORCYCLE: 70 });
+    expect(after['2']).toEqual({ TRUCK: 150, CAR: 80, MOTORCYCLE: 70 });
+    expect(after['3']).toEqual({ TRUCK: 150, CAR: 80, MOTORCYCLE: 70 });
+    expect(after['9']).toEqual({ WHEEL: 20 });
+    expect(before['2']).toEqual({ TRUCK: 50 });
+  });
+  it('gives each method its own copy and drops invalid rates and ids', () => {
+    const after = withRatesForAll({}, [4, 5, 0, -1], { TRUCK: 100, CAR: -5 } as never);
+    expect(Object.keys(after)).toEqual(['4', '5']);
+    expect(after['4']).toEqual({ TRUCK: 100 });
+    expect(after['4']).not.toBe(after['5']);
+  });
+  it('removes the listed methods when no valid rate is given', () => {
+    expect(withRatesForAll({ '1': { TRUCK: 150 }, '2': { CAR: 80 } }, [1], {})).toEqual({ '2': { CAR: 80 } });
   });
 });

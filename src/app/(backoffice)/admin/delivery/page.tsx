@@ -1,10 +1,11 @@
 import Link from 'next/link';
-import { Archive, ArchiveRestore, Globe, GlobeLock, Pencil, Plus } from 'lucide-react';
+import { Archive, ArchiveRestore, CopyCheck, Globe, GlobeLock, Pencil, Plus } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { EmptyRow, FilterChip, IconLink, ListPagination, ListSearch, TableCard } from '@/components/admin/list-kit';
+import { ConfirmSubmit } from '@/components/admin/confirm-submit';
 import { IconSubmit } from '@/components/admin/icon-submit';
 import { UrlDrawer } from '@/components/admin/url-drawer';
 import { requireAdmin } from '@/lib/auth/session';
@@ -15,7 +16,7 @@ import { listFreightDiscounts } from '@/lib/admin/store';
 import { FREIGHT_TYPES, formatFreightRates, freightRatesFor, freightUnitLabel } from '@/lib/shop/freight';
 import { DEALER_TYPE_LABELS } from '@/lib/shop/types';
 import { cn } from '@/lib/utils';
-import { saveCarrierAction, saveFreightRatesAction, setCarrierActiveAction, setCarrierPublishedAction } from '../delivery-actions';
+import { applyFreightRatesToAllAction, saveCarrierAction, saveFreightRatesAction, setCarrierActiveAction, setCarrierPublishedAction } from '../delivery-actions';
 
 type Show = 'web' | 'all' | 'archived';
 type Params = { show?: string; q?: string; page?: string; edit?: string; new?: string; error?: string };
@@ -220,10 +221,12 @@ export default async function DeliveryPage({ searchParams }: { searchParams: Pro
                   </label>
                 ))}
               </div>
-              <div className="flex gap-2">
+              <div className="flex flex-wrap gap-2">
                 <Button type="submit">บันทึกส่วนลดค่าขนส่ง</Button>
+                <ConfirmSubmit formAction={applyFreightRatesToAllAction} icon={<CopyCheck />} confirm={`ใช้อัตราที่กรอกอยู่นี้กับทุกวิธีจัดส่ง (${carriers.length} วิธี รวมที่ปิดใช้งาน)? อัตราเดิมของวิธีอื่นจะถูกแทนที่`}>ใช้อัตรานี้กับทุกขนส่ง</ConfirmSubmit>
                 <Button variant="ghost" nativeButton={false} render={<Link href={closeHref} scroll={false} />}>ปิด</Button>
               </div>
+              <p className="text-xs text-muted-foreground">“ใช้อัตรานี้กับทุกขนส่ง” บันทึกค่าในช่องด้านบนให้ทุกวิธีจัดส่งในครั้งเดียว แล้วแก้รายวิธีทีหลังได้</p>
             </form>
           )}
         </UrlDrawer>
