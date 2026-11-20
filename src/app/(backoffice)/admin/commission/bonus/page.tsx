@@ -10,6 +10,7 @@ import { commissionContext } from '@/lib/commission/context';
 import { monthName, thaiDay } from '@/lib/commission/period';
 import { periodNewCustomers } from '@/lib/commission/service';
 import { saveBonusAction } from '../actions';
+import { DatePicker } from '@/components/ui/date-picker';
 
 const PATH = '/admin/commission/bonus';
 const input = 'h-9 w-full rounded-lg border border-border bg-background px-2 text-right text-sm tabular-nums';
@@ -114,7 +115,7 @@ export default async function CommissionBonusPage({ searchParams }: { searchPara
               <input name="newCustomerBonus" defaultValue={source.newCustomerBonus ? baht.format(source.newCustomerBonus) : ''} placeholder="300" inputMode="decimal" disabled={!canManage} className={`mt-1 ${input}`} />
             </label>
             <label className="block text-xs font-medium">นับลูกค้าที่สร้างใน Odoo ตั้งแต่วันที่
-              <input type="date" name="newCustomerFrom" defaultValue={source.newCustomerFrom ?? ''} disabled={!canManage} className="mt-1 h-9 w-full rounded-lg border border-border bg-background px-2 text-sm" />
+              <DatePicker name="newCustomerFrom" defaultValue={source.newCustomerFrom ?? ''} disabled={!canManage} placeholder="ไม่จ่ายลูกค้าใหม่" className="mt-1" />
             </label>
           </div>
           <p className="text-xs text-amber-800">

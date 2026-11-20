@@ -26,6 +26,7 @@ import { BONUS_BASE_LABELS, BONUS_DOC_LABELS, EXCLUDED_LABELS, isSalesBase, OWNE
 import { baht } from '@/lib/shop/catalog';
 import { cn } from '@/lib/utils';
 import { addAdjustmentAction, calculateAction, deleteAdjustmentAction, runStepAction, savePeriodDatesAction, syncPeriodAction } from '../../actions';
+import { DatePicker } from '@/components/ui/date-picker';
 
 type Search = { source?: string; rep?: string; show?: string; view?: string; inv?: string; fx?: string; so?: string; saved?: string; error?: string };
 const fmt = new Intl.DateTimeFormat('th-TH', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'Asia/Bangkok' });
@@ -518,14 +519,14 @@ function PeriodDatesCard({ calendar, period, hidden, canEdit, endLocked }: { cal
       <form action={savePeriodDatesAction} className="mt-3 flex flex-wrap items-end gap-3">
         {hidden}
         <label className="grid gap-1 text-xs font-medium">วันเริ่ม{tag(dates.customStart)}
-          <input type="date" value={dates.start} disabled className={cn(input, 'bg-muted')} aria-describedby="start-hint" />
+          <DatePicker value={dates.start} disabled aria-describedby="start-hint" className="w-40" />
         </label>
         <label className="grid gap-1 text-xs font-medium">วันสิ้นสุด{tag(dates.customEnd)}
-          <input type="date" name="endDate" defaultValue={dates.end} required disabled={!canEdit || endLocked} className={input} />
+          <DatePicker name="endDate" defaultValue={dates.end} required disabled={!canEdit || endLocked} className="w-40" />
           {endLocked && <input type="hidden" name="endDate" value={dates.end} />}
         </label>
         <label className="grid gap-1 text-xs font-medium">วันจ่าย{tag(dates.customPay)}
-          <input type="date" name="payDate" defaultValue={dates.payDate} required disabled={!canEdit} className={input} />
+          <DatePicker name="payDate" defaultValue={dates.payDate} required disabled={!canEdit} className="w-40" />
         </label>
         <label className="grid min-w-48 flex-1 gap-1 text-xs font-medium">หมายเหตุ
           <input name="note" defaultValue={dates.note ?? ''} maxLength={200} placeholder="เช่น เลื่อนเพราะหยุดปีใหม่" disabled={!canEdit} className={input} />

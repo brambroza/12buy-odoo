@@ -18,6 +18,7 @@ import { Mail, MessageCircle, Wallet } from 'lucide-react';
 import { saveCreditPolicyAction } from '../settings-actions';
 import { MAX_OVERDUE_GRACE_DAYS, getCreditPolicy } from '@/lib/shop/credit-policy';
 import { addDays, thaiDate as thaiDayText } from '@/lib/shop/credit';
+import { DatePicker } from '@/components/ui/date-picker';
 
 type Search = { error?: string; saved?: string };
 
@@ -151,7 +152,7 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
             <Input name="apiKey" type="password" autoComplete="new-password" placeholder={conn.apiKey ? maskSecret(conn.apiKey) : 'วาง API key จาก Odoo'} className={field} />
           </label>
           <label className={label}>วันหมดอายุของ API key <span className="font-normal text-muted-foreground">(ตามที่ Odoo แสดงตอนสร้าง key)</span>
-            <Input name="apiKeyExpiresAt" type="date" defaultValue={conn.apiKeyExpiresAt ?? ''} className={field} />
+            <DatePicker name="apiKeyExpiresAt" defaultValue={conn.apiKeyExpiresAt ?? ''} className="mt-1" />
           </label>
           <p className="text-xs text-muted-foreground md:col-span-2">ระบบจะลองเชื่อมต่อ (อ่านรุ่น Odoo + เข้าสู่ระบบ) ก่อนบันทึก ถ้าไม่ผ่านจะไม่เปลี่ยนค่าเดิม · เปลี่ยนแล้วมีผลกับทุกหน้าทันที (ล้างแคชสินค้า/ลูกค้า)</p>
           {!hasDedicatedSecret() && <p className="text-xs text-amber-800 md:col-span-2">แนะนำตั้ง <code>SETTINGS_SECRET</code> ใน .env (ข้อความสุ่มยาว 32 ตัวขึ้นไป) ตอนนี้ใช้คีย์ที่สร้างจาก SUPABASE_SERVICE_ROLE_KEY ในการเข้ารหัส API key ถ้าเปลี่ยน key นั้นจะต้องบันทึก API key ใหม่</p>}

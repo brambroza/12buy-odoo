@@ -17,6 +17,7 @@ import { isLocked } from '@/lib/commission/service';
 import { RUN_STATUS_LABELS, RUN_STATUS_TONE, type CommissionRun } from '@/lib/commission/types';
 import { cn } from '@/lib/utils';
 import { savePeriodDatesAction, savePeriodRuleAction } from '../actions';
+import { DatePicker } from '@/components/ui/date-picker';
 
 const PATH = '/admin/commission/periods';
 const select = 'mt-1 h-9 w-full rounded-lg border border-border bg-background px-2 text-sm';
@@ -152,17 +153,17 @@ function PeriodDrawer({ period, ctx, run, nextRun, hidden, closeHref }: {
       <form action={savePeriodDatesAction} className="grid max-w-md gap-3">
         {hidden}
         <label className="block text-xs font-medium">วันเริ่ม (ตามวันสิ้นสุดของรอบก่อน)
-          <input type="date" value={d.start} disabled className={cn(input, 'bg-muted')} />
+          <DatePicker value={d.start} disabled className="mt-1" />
         </label>
         <label className="block text-xs font-medium">วันสิ้นสุด
-          <input type="date" name="endDate" defaultValue={d.end} required disabled={endLocked} className={input} />
+          <DatePicker name="endDate" defaultValue={d.end} required disabled={endLocked} className="mt-1" />
           {endLocked && <input type="hidden" name="endDate" value={d.end} />}
           <span className="mt-1 block font-normal text-muted-foreground">
             {endLocked ? 'รอบนี้หรือรอบถัดไปอนุมัติแล้ว แก้วันสิ้นสุดไม่ได้' : `รอบถัดไป (${monthName(shiftPeriod(period, 1))}) จะเริ่มวันถัดจากวันนี้ ตอนนี้สิ้นสุด ${thaiDay(next.end)}`}
           </span>
         </label>
         <label className="block text-xs font-medium">วันจ่าย
-          <input type="date" name="payDate" defaultValue={d.payDate} required className={input} />
+          <DatePicker name="payDate" defaultValue={d.payDate} required className="mt-1" />
         </label>
         <label className="block text-xs font-medium">หมายเหตุ
           <input name="note" defaultValue={d.note ?? ''} maxLength={200} placeholder="เช่น เลื่อนเพราะหยุดปีใหม่" className={input} />

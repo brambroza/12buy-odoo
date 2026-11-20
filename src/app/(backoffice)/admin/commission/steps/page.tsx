@@ -10,6 +10,7 @@ import { commissionContext } from '@/lib/commission/context';
 import { periodDates, thaiDay, todayBangkok } from '@/lib/commission/period';
 import { listSteps } from '@/lib/commission/repo';
 import { createStepAction, endOrDeleteStepAction } from '../actions';
+import { DatePicker } from '@/components/ui/date-picker';
 
 const PATH = '/admin/commission/steps';
 const label = 'block text-xs font-medium';
@@ -68,7 +69,7 @@ export default async function CommissionStepsPage({ searchParams }: { searchPara
                         {!s.validTo && (
                           <form action={endOrDeleteStepAction} className="flex items-center gap-1">
                             {hidden}<input type="hidden" name="id" value={s.id} />
-                            <input name="validTo" type="date" defaultValue={today} aria-label="สิ้นสุดวันที่" className="h-8 w-36 rounded-lg border border-border bg-background px-1 text-xs" />
+                            <DatePicker name="validTo" defaultValue={today} required aria-label="สิ้นสุดวันที่" className="h-8 w-36" />
                             <IconSubmit label="สิ้นสุดขั้นนี้ในวันที่เลือก"><CalendarX2 /></IconSubmit>
                           </form>
                         )}
@@ -90,8 +91,8 @@ export default async function CommissionStepsPage({ searchParams }: { searchPara
             <label className={label}>ตั้งแต่ (วัน)<input name="minDays" type="number" min={0} step={1} required className={input} /></label>
             <label className={label}>ถึง (ว่าง = ไม่จำกัด)<input name="maxDays" type="number" min={0} step={1} className={input} /></label>
             <label className={label}>จ่าย %<input name="percent" type="number" min={0} max={500} step="0.01" required placeholder="100" className={input} /></label>
-            <label className={label}>เริ่มใช้<input name="validFrom" type="date" required defaultValue={periodStart} className={input} /></label>
-            <label className={label}>สิ้นสุด<input name="validTo" type="date" className={input} /></label>
+            <label className={label}>เริ่มใช้<DatePicker name="validFrom" required defaultValue={periodStart} className="mt-1" /></label>
+            <label className={label}>สิ้นสุด<DatePicker name="validTo" placeholder="ไม่กำหนด" className="mt-1" /></label>
             <div className="flex items-end"><Button type="submit" size="sm">เพิ่มขั้น</Button></div>
           </form>
         </>

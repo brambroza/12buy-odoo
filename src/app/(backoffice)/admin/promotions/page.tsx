@@ -15,6 +15,7 @@ import { requireAdmin } from '@/lib/auth/session';
 import { PROMOTIONS } from '@/lib/landing-content';
 import { cn } from '@/lib/utils';
 import { deletePromotionAction, savePromotionAction } from '../promotion-actions';
+import { DatePicker } from '@/components/ui/date-picker';
 
 const PATH = '/admin/promotions';
 /** Banner images shipped with the site (public/landing). */
@@ -107,8 +108,8 @@ export default async function PromotionsPage({ searchParams }: { searchParams: P
               <p className="text-[11px] text-muted-foreground">ต้องการรูปอื่น ส่งไฟล์ให้ทีม dev วางใน /public/landing แล้วเลือกได้ที่นี่</p>
             </fieldset>
             <div className="grid grid-cols-2 gap-3">
-              <label className="block text-xs font-medium">เริ่ม<Input name="from" type="date" required defaultValue={editing?.from ?? today()} className="mt-1" /></label>
-              <label className="block text-xs font-medium">สิ้นสุด<Input name="to" type="date" required defaultValue={editing?.to ?? today()} className="mt-1" /></label>
+              <label className="block text-xs font-medium">เริ่ม<DatePicker name="from" required defaultValue={editing?.from ?? today()} className="mt-1" /></label>
+              <label className="block text-xs font-medium">สิ้นสุด<DatePicker name="to" required defaultValue={editing?.to ?? today()} className="mt-1" /></label>
             </div>
             <label className="block text-xs font-medium">ลิงก์เมื่อกด<Input name="href" required defaultValue={editing?.href ?? '/tires?type=CAR'} placeholder="/tires?type=CAR" className="mt-1 font-mono" /></label>
             <div className="flex items-center gap-4">

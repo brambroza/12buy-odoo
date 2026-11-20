@@ -16,6 +16,7 @@ import { listDealers } from '@/lib/dealers/repo';
 import { getCatalog } from '@/lib/shop/catalog';
 import { cn } from '@/lib/utils';
 import { createCouponProgramAction, generateCouponsAction, setCouponProgramActiveAction } from '../coupon-actions';
+import { DatePicker } from '@/components/ui/date-picker';
 
 const TYPE_LABELS: Record<string, string> = {
   coupons: 'คูปอง (โค้ดใช้ครั้งเดียว)',
@@ -221,7 +222,7 @@ export default async function CouponsPage({ searchParams }: { searchParams: Prom
                 <input type="hidden" name="programId" value={selected.program.id} />
                 <p className="text-sm font-semibold sm:col-span-2">สร้างคูปองเพิ่ม</p>
                 <label className={labelClass}>จำนวน (ใบ)<Input name="count" type="number" min={1} max={500} defaultValue={10} required className="mt-1" /></label>
-                <label className={labelClass}>หมดอายุ<Input name="expirationDate" type="date" className="mt-1" /></label>
+                <label className={labelClass}>หมดอายุ<DatePicker name="expirationDate" placeholder="ไม่หมดอายุ" className="mt-1" /></label>
                 <div className="sm:col-span-2">{dealerSelect}</div>
                 <Button type="submit" variant="outline" className="sm:col-span-2">สร้างคูปองเพิ่ม</Button>
               </form>
@@ -287,8 +288,8 @@ export default async function CouponsPage({ searchParams }: { searchParams: Prom
                   <label className={labelClass}>จำนวนขั้นต่ำ (ชิ้น)<Input name="minimumQty" type="number" min={0} step="1" placeholder="ไม่มี" className="mt-1" /></label>
                 </>
               )}
-              <label className={labelClass}>เริ่ม<Input name="dateFrom" type="date" className="mt-1" /></label>
-              <label className={labelClass}>สิ้นสุด{kind === 'coupons' && ' (= วันหมดอายุคูปอง)'}<Input name="dateTo" type="date" className="mt-1" /></label>
+              <label className={labelClass}>เริ่ม<DatePicker name="dateFrom" placeholder="ไม่กำหนด" className="mt-1" /></label>
+              <label className={labelClass}>สิ้นสุด{kind === 'coupons' && ' (= วันหมดอายุคูปอง)'}<DatePicker name="dateTo" placeholder="ไม่กำหนด" className="mt-1" /></label>
               <label className={labelClass}>ใช้ได้ทั้งหมด (ครั้ง)<Input name="maxUsage" type="number" min={0} step="1" placeholder="ไม่จำกัด" className="mt-1" /></label>
             </fieldset>
 

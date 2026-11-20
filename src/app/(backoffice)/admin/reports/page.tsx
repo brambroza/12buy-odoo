@@ -2,7 +2,6 @@ import Link from 'next/link';
 import { BarChart3, CalendarRange } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { EmptyRow, FilterChip, TableCard } from '@/components/admin/list-kit';
 import { ExportMenu } from '@/components/admin/export-menu';
@@ -16,6 +15,7 @@ import { dealerIdFromSession } from '@/lib/shop/odoo-sync';
 import { listAllOrders } from '@/lib/shop/store';
 import { DEALER_TYPE_LABELS } from '@/lib/shop/types';
 import { cn } from '@/lib/utils';
+import { DatePicker } from '@/components/ui/date-picker';
 
 const PATH = '/admin/reports';
 const GROUPS = { dealer: 'ตามดีลเลอร์', product: 'ตามสินค้า', family: 'ตามประเภทสินค้า', zone: 'ตามโซนราคา', province: 'ตามจังหวัด', month: 'ตามเดือน' } as const;
@@ -70,9 +70,9 @@ export default async function ReportsPage({ searchParams }: { searchParams: Prom
         {QUICK.map((k) => <FilterChip key={k} href={href({ range: k, from: undefined, to: undefined })} active={key === k}>{RANGE_LABELS[k]}</FilterChip>)}
         <form action={PATH} className="ml-auto flex flex-wrap items-center gap-1 text-xs">
           <input type="hidden" name="group" value={group} />
-          <Input name="from" type="date" defaultValue={range.from} aria-label="จากวันที่" className="h-8 w-36" />
+          <DatePicker name="from" defaultValue={range.from} placeholder="จากวันที่" aria-label="จากวันที่" className="h-8 w-40" />
           <span>–</span>
-          <Input name="to" type="date" defaultValue={range.to} aria-label="ถึงวันที่" className="h-8 w-36" />
+          <DatePicker name="to" defaultValue={range.to} placeholder="ถึงวันที่" aria-label="ถึงวันที่" className="h-8 w-40" />
           <Button type="submit" size="sm" variant={key === 'custom' ? 'default' : 'outline'} className="h-8">ใช้ช่วงนี้</Button>
         </form>
       </section>
