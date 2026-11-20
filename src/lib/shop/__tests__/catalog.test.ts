@@ -31,6 +31,14 @@ describe('classifyCategory', () => {
     expect(classifyCategory('Deliveries')).toBeNull();
     expect(classifyCategory('Food')).toBeNull();
   });
+
+  it('reads nested family / brand categories', () => {
+    expect(classifyCategory('PCR / YK')).toEqual({ brand: 'YK', dealerType: 'CAR' });
+    expect(classifyCategory('TBR / AN')).toEqual({ brand: 'AN', dealerType: 'TRUCK' });
+    expect(classifyCategory('Battery / GS')).toEqual({ brand: 'GS', dealerType: 'BATTERY' });
+    expect(classifyCategory('Wheel / TM')).toEqual({ brand: 'TM', dealerType: 'WHEEL' });
+    expect(classifyCategory('OIL / PTT')).toBeNull();
+  });
 });
 
 describe('searchProducts', () => {

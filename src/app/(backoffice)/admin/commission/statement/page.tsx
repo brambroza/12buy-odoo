@@ -7,6 +7,7 @@ import { requirePermission } from '@/lib/auth/session';
 import { commissionContext } from '@/lib/commission/context';
 import { isValidOn, rateLabel } from '@/lib/commission/calc';
 import { fetchCategories, fetchPricelists } from '@/lib/commission/odoo';
+import { splitCategory } from '@/lib/commission/ledger';
 import { todayBangkok } from '@/lib/commission/period';
 import { listPricelists, listRates } from '@/lib/commission/repo';
 import { tryClientFor } from '@/lib/commission/service';
@@ -41,7 +42,7 @@ export default async function CommissionStatementSettingsPage({ searchParams }: 
       listPricelists(source.id), listRates(source.id),
     ])
     : [[], [], [], []];
-  const families = [...new Set(categories.map((c) => c.split('-').at(-1)!.toUpperCase()))].sort();
+  const families = [...new Set(categories.map((c) => splitCategory(c).family).filter(Boolean))].sort();
   // Same choices as the rates tab: Odoo's live pricelists (else the saved copy), with the rates set on each today.
   const today = todayBangkok();
   const pricelists = odooPricelists.length > 0 ? odooPricelists : mapped.map((p) => ({ id: p.odooPricelistId, name: p.name }));

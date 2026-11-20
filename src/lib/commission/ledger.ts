@@ -4,6 +4,7 @@
  * the share of cash before and after VAT, the rep, the pricelist and the days paid after the due date.
  * Pure so every allocation rule is unit-tested; `odoo.ts` does the reading.
  */
+import { canonicalCategory } from '@/lib/odoo/category';
 import { overdueDays } from './period';
 import type { LedgerLine, OwnerFrom, PaymentKind, PricelistFrom } from './types';
 
@@ -61,9 +62,9 @@ const round = (value: number, digits: number) => {
   return Math.round((value + Number.EPSILON * Math.sign(value)) * f) / f;
 };
 
-/** `All / Saleable / YK-PCR` → `YK-PCR`. */
+/** Flat category key: `All / Saleable / YK-PCR` → `YK-PCR`, nested `PCR / YK` → `YK-PCR`. */
 export function lastCategorySegment(name: string): string {
-  return name.split('/').map((s) => s.trim()).filter(Boolean).at(-1) ?? '';
+  return canonicalCategory(name);
 }
 
 /** Brand and family from a category name: `YK-PCR` → YK / PCR; no dash → the name is the brand. */

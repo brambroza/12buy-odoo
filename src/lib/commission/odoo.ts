@@ -396,8 +396,9 @@ export async function searchProducts(client: OdooReadClient, text: string): Prom
 
 /** Distinct product categories (brand + family) to pick from when adding a rate. */
 export async function fetchCategories(client: OdooReadClient): Promise<string[]> {
-  const rows = await client.searchRead<{ id: number; name: string }>('product.category', [], ['id', 'name'], { limit: 1000 });
-  return [...new Set(rows.map((r) => lastCategorySegment(r.name)).filter(Boolean))].sort();
+  const rows = await client.searchRead<{ id: number; name: string; complete_name?: string }>('product.category', [], ['id', 'name', 'complete_name'], { limit: 1000 });
+  // complete_name keeps the family parent of nested categories (`PCR / YK`); `name` alone is just `YK`.
+  return [...new Set(rows.map((r) => lastCategorySegment(r.complete_name || r.name)).filter(Boolean))].sort();
 }
 
 /** Bangkok day `day` 00:00 (or 23:59:59 with `end`) as Odoo's UTC datetime text ("YYYY-MM-DD HH:MM:SS"). */

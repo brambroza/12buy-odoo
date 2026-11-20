@@ -1,4 +1,5 @@
 import { odooBaseUrl, odooSearchRead } from '@/lib/odoo/rpc';
+import { canonicalCategory } from '@/lib/odoo/category';
 import { CUSTOMER_MATCH } from '@/lib/odoo/customer-pricing';
 import { getCarrier, pickDealerCarrier, listPublishedCarriers, type DeliveryCarrier } from '@/lib/odoo/delivery-carrier';
 import { computePrice, fromOdooItem, type PriceContext, type PricelistItem } from './price-engine';
@@ -46,9 +47,9 @@ type ReferenceData = { carriers: DeliveryCarrier[]; provinces: Province[] };
 let referenceCache: (ReferenceData & { expiresAt: number }) | null = null;
 let referenceInFlight: Promise<ReferenceData> | null = null;
 
-/** Splits an Odoo category name like `YK-PCR` into brand code and dealer type. */
+/** Splits an Odoo category name like `YK-PCR` (or nested `PCR / YK`) into brand code and dealer type. */
 export function classifyCategory(categoryName: string): { brand: string; dealerType: DealerType } | null {
-  const [brand, suffix] = categoryName.toUpperCase().split('-');
+  const [brand, suffix] = canonicalCategory(categoryName).toUpperCase().split('-');
   const dealerType = suffix ? SUFFIX_TO_TYPE[suffix] : undefined;
   return dealerType ? { brand, dealerType } : null;
 }
