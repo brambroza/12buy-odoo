@@ -1,3 +1,4 @@
+import { cache } from 'react';
 import { deleteSetting, getSetting, putSetting } from '@/lib/settings/repo';
 import { DEFAULT_LANDING, resolveLanding, type LandingContent, type SectionKey } from './cms';
 
@@ -11,15 +12,18 @@ async function readStored(): Promise<{ value: Stored; updatedAt: string | null; 
   return { value: row?.value && typeof row.value === 'object' ? row.value : {}, updatedAt: row?.updatedAt ?? null, updatedById: row?.updatedById ?? null };
 }
 
-/** Landing content for `/`: saved overrides on top of the defaults. Never throws (DB down → defaults). */
-export async function getLandingContent(): Promise<LandingContent> {
+/**
+ * Landing content for public pages: saved overrides on top of the defaults. Never throws (DB down → defaults).
+ * Memoised per request, so the page, header, footer and JSON-LD share one read.
+ */
+export const getLandingContent = cache(async (): Promise<LandingContent> => {
   try {
     return resolveLanding((await readStored()).value);
   } catch (error) {
     console.error('[landing] content load failed, using defaults', error);
     return DEFAULT_LANDING;
   }
-}
+});
 
 /** Content plus which sections an admin has customised (for the back office). */
 export async function getLandingAdminState(): Promise<{ content: LandingContent; customised: SectionKey[]; updatedAt: string | null; updatedById: string | null }> {

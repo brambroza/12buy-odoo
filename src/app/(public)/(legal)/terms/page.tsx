@@ -1,6 +1,7 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import { SITE, absoluteUrl } from '@/lib/seo';
+import { getLandingContent } from '@/lib/landing/repo';
 import { Bullets, LegalTitle, Section } from '../legal-ui';
 
 export const metadata: Metadata = {
@@ -12,13 +13,14 @@ export const metadata: Metadata = {
 const UPDATED = '30 ตุลาคม 2569';
 
 /** Terms of use for the dealer ordering platform (B2B, Thai law). */
-export default function TermsPage() {
+export default async function TermsPage() {
+  const { contact } = await getLandingContent();
   return (
     <>
       <LegalTitle
         title="เงื่อนไขการใช้งานระบบสั่งซื้อดีลเลอร์"
         updated={UPDATED}
-        lead={`เงื่อนไขฉบับนี้ใช้บังคับระหว่าง ${SITE.legalName} ("บริษัท") กับร้านค้าที่ได้รับอนุมัติเป็นดีลเลอร์และผู้ใช้งานในร้าน ("ดีลเลอร์") ในการใช้เว็บไซต์ ${SITE.name} การสมัครหรือเข้าสู่ระบบถือว่าท่านได้อ่านและยอมรับเงื่อนไขนี้แล้ว`}
+        lead={`เงื่อนไขฉบับนี้ใช้บังคับระหว่าง ${contact.legalName} ("บริษัท") กับร้านค้าที่ได้รับอนุมัติเป็นดีลเลอร์และผู้ใช้งานในร้าน ("ดีลเลอร์") ในการใช้เว็บไซต์ ${SITE.name} การสมัครหรือเข้าสู่ระบบถือว่าท่านได้อ่านและยอมรับเงื่อนไขนี้แล้ว`}
       />
 
       <Section n={1} title="การสมัครและบัญชีผู้ใช้">
@@ -64,7 +66,7 @@ export default function TermsPage() {
       </Section>
 
       <Section n={6} title="การรับประกันและการเคลม">
-        <p>สินค้าอยู่ภายใต้เงื่อนไขการรับประกันของผู้ผลิตแต่ละแบรนด์ บริษัทช่วยประสานงานการเคลมกับผู้ผลิตให้ โดยผลการพิจารณาเป็นไปตามเงื่อนไขของผู้ผลิต แจ้งเคลมได้ทาง LINE {SITE.lineId} พร้อมเลขออเดอร์และรูปถ่าย</p>
+        <p>สินค้าอยู่ภายใต้เงื่อนไขการรับประกันของผู้ผลิตแต่ละแบรนด์ บริษัทช่วยประสานงานการเคลมกับผู้ผลิตให้ โดยผลการพิจารณาเป็นไปตามเงื่อนไขของผู้ผลิต แจ้งเคลมได้ทาง LINE {contact.lineId} พร้อมเลขออเดอร์และรูปถ่าย</p>
       </Section>
 
       <Section n={7} title="ข้อจำกัดความรับผิด">
@@ -80,7 +82,7 @@ export default function TermsPage() {
       </Section>
 
       <Section n={10} title="การเปลี่ยนแปลงเงื่อนไขและกฎหมายที่ใช้บังคับ">
-        <p>บริษัทอาจปรับปรุงเงื่อนไขนี้โดยประกาศบนหน้านี้พร้อมวันที่ปรับปรุง การใช้งานต่อหลังการประกาศถือว่ายอมรับเงื่อนไขใหม่ เงื่อนไขนี้อยู่ภายใต้กฎหมายไทย และศาลไทยมีเขตอำนาจในการพิจารณาข้อพิพาท ติดต่อบริษัทได้ที่ {SITE.emails[0]} โทร {SITE.phone}</p>
+        <p>บริษัทอาจปรับปรุงเงื่อนไขนี้โดยประกาศบนหน้านี้พร้อมวันที่ปรับปรุง การใช้งานต่อหลังการประกาศถือว่ายอมรับเงื่อนไขใหม่ เงื่อนไขนี้อยู่ภายใต้กฎหมายไทย และศาลไทยมีเขตอำนาจในการพิจารณาข้อพิพาท ติดต่อบริษัทได้ที่ {contact.items[0]?.email ?? SITE.emails[0]} โทร {contact.phone}</p>
       </Section>
     </>
   );

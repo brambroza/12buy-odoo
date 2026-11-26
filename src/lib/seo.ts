@@ -80,19 +80,30 @@ export function breadcrumbJsonLd(crumbs: readonly { name: string; path: string }
   };
 }
 
-/** schema.org Organization + WebSite graph for the landing page, plus FAQ and brand list when supplied. */
-export function landingJsonLd(extras: { faq?: readonly { q: string; a: string }[]; brands?: readonly string[] } = {}): Record<string, unknown> {
+/** Editable company contact (landing CMS `contact` section); `SITE` values when not supplied. */
+export type ContactInfo = { legalName: string; address: string; phone: string; items: readonly { email: string }[] };
+
+/**
+ * schema.org Organization + WebSite graph for the landing page, plus FAQ and brand list when supplied.
+ * The structured postal address is coded; once an admin edits the address it is sent as one street line.
+ */
+export function landingJsonLd(extras: { faq?: readonly { q: string; a: string }[]; brands?: readonly string[]; contact?: ContactInfo } = {}): Record<string, unknown> {
   const url = absoluteUrl('/');
+  const contact = extras.contact;
+  const legalName = contact?.legalName ?? SITE.legalName;
+  const phone = contact?.phone ?? SITE.phone;
+  const email = contact ? contact.items[0]?.email : SITE.emails[0];
+  const address = !contact || contact.address === SITE.address ? SITE.postalAddress : { streetAddress: contact.address, addressCountry: 'TH' };
   const graph: Record<string, unknown>[] = [
       {
         '@type': 'Organization',
         '@id': `${url}#organization`,
-        name: SITE.legalName,
+        name: legalName,
         url,
         logo: absoluteUrl('/opengraph-image'),
-        address: { '@type': 'PostalAddress', ...SITE.postalAddress },
-        email: SITE.emails[0],
-        contactPoint: [{ '@type': 'ContactPoint', contactType: 'sales', telephone: SITE.phone, email: SITE.emails[0], availableLanguage: ['th'] }],
+        address: { '@type': 'PostalAddress', ...address },
+        email,
+        contactPoint: [{ '@type': 'ContactPoint', contactType: 'sales', telephone: phone, email, availableLanguage: ['th'] }],
       },
       {
         '@type': 'WebSite',

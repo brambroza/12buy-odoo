@@ -23,8 +23,9 @@ const NAV: { href: string; label: string; children?: { href: string; label: stri
  * Two-tier header modelled on retail tyre sites: a white utility row
  * (logo, size search, phone, sign-up, login) over a red navigation bar with a
  * product dropdown. Collapses to logo + actions + drawer on mobile.
+ * `phone` comes from the landing CMS contact section (server parents pass it).
  */
-export function LandingHeader() {
+export function LandingHeader({ phone = SITE.phone }: { phone?: string }) {
   const [open, setOpen] = useState(false);
   const pathname = usePathname();
   const [lastPath, setLastPath] = useState(pathname);
@@ -39,7 +40,7 @@ export function LandingHeader() {
     return () => { document.body.style.overflow = ''; };
   }, [open]);
 
-  const telHref = `tel:${SITE.phone.replace(/-/g, '')}`;
+  const telHref = `tel:${phone.replace(/[^0-9+]/g, '')}`;
 
   return (
     <header className="sticky top-0 z-30 shadow-sm">
@@ -55,9 +56,9 @@ export function LandingHeader() {
 
           <div className="ml-auto flex items-center gap-1.5 sm:gap-3">
             <a href={telHref} className="hidden items-center gap-1.5 text-sm font-bold text-[var(--lp-fg)] hover:text-[var(--lp-accent)] lg:inline-flex">
-              <Phone className="size-4 text-[var(--lp-accent)]" aria-hidden="true" /> โทร {SITE.phone}
+              <Phone className="size-4 text-[var(--lp-accent)]" aria-hidden="true" /> โทร {phone}
             </a>
-            <a href={telHref} aria-label={`โทร ${SITE.phone}`} className="flex size-10 items-center justify-center rounded-full border border-[var(--lp-line)] text-[var(--lp-accent)] lg:hidden">
+            <a href={telHref} aria-label={`โทร ${phone}`} className="flex size-10 items-center justify-center rounded-full border border-[var(--lp-line)] text-[var(--lp-accent)] lg:hidden">
               <Phone className="size-4" aria-hidden="true" />
             </a>
             <Link href="/#register" className="hidden text-sm font-semibold text-[var(--lp-muted)] hover:text-[var(--lp-accent)] md:inline">สมัครดีลเลอร์</Link>
@@ -121,7 +122,7 @@ export function LandingHeader() {
             <div className="space-y-2 border-t border-[var(--lp-line)] p-4">
               <Link href="/login" onClick={() => setOpen(false)} className="flex h-11 items-center justify-center gap-2 rounded-full bg-[var(--lp-accent)] font-bold text-[var(--lp-accent-fg)]"><LogIn className="size-4" aria-hidden="true" /> เข้าสู่ระบบดีลเลอร์</Link>
               <Link href="/#register" onClick={() => setOpen(false)} className="flex h-11 items-center justify-center rounded-full border border-[var(--lp-line)] font-semibold">สมัครดีลเลอร์</Link>
-              <a href={telHref} className="flex items-center justify-center gap-2 pt-1 text-sm text-[var(--lp-muted)]"><Phone className="size-4 text-[var(--lp-accent)]" aria-hidden="true" /> {SITE.phone}</a>
+              <a href={telHref} className="flex items-center justify-center gap-2 pt-1 text-sm text-[var(--lp-muted)]"><Phone className="size-4 text-[var(--lp-accent)]" aria-hidden="true" /> {phone}</a>
             </div>
           </div>
         </div>

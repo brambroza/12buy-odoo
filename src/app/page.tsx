@@ -14,7 +14,7 @@ import { Faq } from '@/components/landing/faq';
 import { RegisterForm } from '@/components/landing/register-form';
 import { StickyCta } from '@/components/landing/sticky-cta';
 import { BRANDS, PROMOTIONS } from '@/lib/landing-content';
-import { isUploadedImage } from '@/lib/landing/cms';
+import { isUploadedImage, lineHref, telHref } from '@/lib/landing/cms';
 import { getLandingContent } from '@/lib/landing/repo';
 import { listBrands, loadPublicCatalog } from '@/lib/shop/public-catalog';
 import { listPromotions } from '@/lib/admin/store';
@@ -53,13 +53,13 @@ export default async function LandingPage() {
   const saved = await listPromotions().catch(() => []);
   const promotions = saved.length ? saved.filter((p) => p.active).map(({ title, body, image, from, to, href }) => ({ title, body, image, from, to, href })) : PROMOTIONS;
   const [catalog, content] = await Promise.all([loadPublicCatalog(), getLandingContent()]);
-  const { hero, trust, brands, categories, banners, demo, features, steps, testimonials, faq, register } = content;
+  const { hero, trust, brands, categories, banners, demo, features, steps, testimonials, faq, register, contact } = content;
   const sizeOptions = catalog ? buildSizeOptions(catalog.products) : [];
   const brandOptions = catalog ? listBrands(catalog) : [];
   return (
     <LandingMotion>
-      <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(landingJsonLd({ faq: faq.show ? faq.items : [], brands: BRANDS.map((b) => b.name) })) }} />
-      <LandingHeader />
+      <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(landingJsonLd({ faq: faq.show ? faq.items : [], brands: BRANDS.map((b) => b.name), contact })) }} />
+      <LandingHeader phone={contact.phone} />
 
       <main id="main" tabIndex={-1} className="pb-20 outline-none md:pb-0">
         {/* Hero */}
@@ -292,11 +292,11 @@ export default async function LandingPage() {
                 <h2 className="text-2xl font-extrabold tracking-tight sm:text-3xl">{register.heading}</h2>
                 <p className="mt-3 text-[var(--lp-muted)]">{register.body}</p>
                 <div className="mt-6 flex flex-col gap-3">
-                  <a href={`https://line.me/R/ti/p/${encodeURIComponent(SITE.lineId)}`} target="_blank" rel="noopener noreferrer" className="inline-flex items-center justify-center gap-2 rounded-full bg-[#06C755] px-6 py-3.5 text-base font-bold text-white transition hover:brightness-110">
-                    <MessageCircle className="size-5" aria-hidden="true" /> ทัก LINE {SITE.lineId}
+                  <a href={lineHref(contact.lineId)} target="_blank" rel="noopener noreferrer" className="inline-flex items-center justify-center gap-2 rounded-full bg-[#06C755] px-6 py-3.5 text-base font-bold text-white transition hover:brightness-110">
+                    <MessageCircle className="size-5" aria-hidden="true" /> ทัก LINE {contact.lineId}
                   </a>
-                  <a href={`tel:${SITE.phone.replace(/-/g, '')}`} className="inline-flex items-center justify-center gap-2 rounded-full border border-[var(--lp-line)] bg-white px-6 py-3.5 text-base font-semibold transition hover:border-[var(--lp-accent)]">
-                    โทร {SITE.phone}
+                  <a href={telHref(contact.phone)} className="inline-flex items-center justify-center gap-2 rounded-full border border-[var(--lp-line)] bg-white px-6 py-3.5 text-base font-semibold transition hover:border-[var(--lp-accent)]">
+                    โทร {contact.phone}
                   </a>
                 </div>
                 <p className="mt-4 text-xs text-[var(--lp-muted)]">มีบัญชีแล้ว? <Link href="/login" className="text-[var(--lp-accent)] underline-offset-2 hover:underline">เข้าสู่ระบบ</Link></p>
@@ -311,7 +311,7 @@ export default async function LandingPage() {
       </main>
 
       <LandingFooter />
-      <StickyCta />
+      <StickyCta lineId={contact.lineId} />
     </LandingMotion>
   );
 }

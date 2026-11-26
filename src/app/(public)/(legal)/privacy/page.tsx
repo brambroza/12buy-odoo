@@ -1,6 +1,7 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import { SITE, absoluteUrl } from '@/lib/seo';
+import { getLandingContent } from '@/lib/landing/repo';
 import { Bullets, LegalTitle, Section } from '../legal-ui';
 
 export const metadata: Metadata = {
@@ -12,14 +13,15 @@ export const metadata: Metadata = {
 const UPDATED = '30 ตุลาคม 2569';
 
 /** PDPA privacy notice for dealers and visitors (B.E. 2562 Personal Data Protection Act). */
-export default function PrivacyPage() {
-  const email = SITE.emails[0];
+export default async function PrivacyPage() {
+  const { contact } = await getLandingContent();
+  const email = contact.items[0]?.email ?? SITE.emails[0];
   return (
     <>
       <LegalTitle
         title="นโยบายความเป็นส่วนตัว"
         updated={UPDATED}
-        lead={`${SITE.legalName} ("บริษัท", "เรา") ในฐานะผู้ควบคุมข้อมูลส่วนบุคคล ให้ความสำคัญกับการคุ้มครองข้อมูลส่วนบุคคลของร้านดีลเลอร์ ผู้ใช้งาน และผู้เยี่ยมชมเว็บไซต์ ${SITE.name} ตามพระราชบัญญัติคุ้มครองข้อมูลส่วนบุคคล พ.ศ. 2562 (PDPA) นโยบายฉบับนี้อธิบายว่าเราเก็บข้อมูลอะไร ใช้เพื่ออะไร เก็บนานแค่ไหน และท่านมีสิทธิ์อย่างไร`}
+        lead={`${contact.legalName} ("บริษัท", "เรา") ในฐานะผู้ควบคุมข้อมูลส่วนบุคคล ให้ความสำคัญกับการคุ้มครองข้อมูลส่วนบุคคลของร้านดีลเลอร์ ผู้ใช้งาน และผู้เยี่ยมชมเว็บไซต์ ${SITE.name} ตามพระราชบัญญัติคุ้มครองข้อมูลส่วนบุคคล พ.ศ. 2562 (PDPA) นโยบายฉบับนี้อธิบายว่าเราเก็บข้อมูลอะไร ใช้เพื่ออะไร เก็บนานแค่ไหน และท่านมีสิทธิ์อย่างไร`}
       />
 
       <Section n={1} title="ข้อมูลส่วนบุคคลที่เราเก็บรวบรวม">
@@ -76,7 +78,7 @@ export default function PrivacyPage() {
       </Section>
 
       <Section n={8} title="ติดต่อเรา">
-        <p>{SITE.legalName}<br />{SITE.address}<br />อีเมล <a href={`mailto:${email}`} className="text-[var(--lp-accent)] underline">{email}</a> · โทร {SITE.phone} · LINE {SITE.lineId} ({SITE.businessHours})</p>
+        <p>{contact.legalName}<br />{contact.address}<br />อีเมล <a href={`mailto:${email}`} className="text-[var(--lp-accent)] underline">{email}</a> · โทร {contact.phone} · LINE {contact.lineId} ({contact.businessHours})</p>
         <p>เมื่อมีการเปลี่ยนแปลงนโยบาย เราจะประกาศบนหน้านี้พร้อมวันที่ปรับปรุง อ่าน <Link href="/terms" className="text-[var(--lp-accent)] underline">เงื่อนไขการใช้งาน</Link> ประกอบ</p>
       </Section>
     </>

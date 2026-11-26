@@ -2,41 +2,42 @@ import Link from 'next/link';
 import { Building2, Clock, Mail, MessageCircle, Phone } from 'lucide-react';
 import { SITE } from '@/lib/seo';
 import { BrandLogo } from '@/components/landing/brand-logo';
+import { copyrightLine, isExternalLink, lineHref, telHref } from '@/lib/landing/cms';
+import { getLandingContent } from '@/lib/landing/repo';
 
-/** Footer with company identity, full contact channels and secondary links. */
-export function LandingFooter() {
-  const lineHref = `https://line.me/R/ti/p/${encodeURIComponent(SITE.lineId)}`;
-  const telHref = `tel:${SITE.phone.replace(/-/g, '')}`;
+/** Footer with company identity, full contact channels and secondary links; text from the landing CMS (contact + footer). */
+export async function LandingFooter() {
+  const { contact, footer } = await getLandingContent();
   return (
     <footer id="contact" className="scroll-mt-28 border-t border-[var(--lp-line)] bg-white/60 px-4 py-12">
       <div className="mx-auto grid max-w-5xl gap-10 md:grid-cols-[1.3fr_1fr_0.7fr]">
         <div>
           <p className="flex items-center gap-2 text-lg font-extrabold"><BrandLogo size={36} /> {SITE.name}</p>
-          <p className="mt-3 text-sm text-[var(--lp-muted)]">ระบบสั่งซื้อยางสำหรับดีลเลอร์ เชื่อมต่อกับระบบบัญชีและสต็อกของบริษัทโดยตรง</p>
+          <p className="mt-3 whitespace-pre-line text-sm text-[var(--lp-muted)]">{footer.tagline}</p>
           <address className="mt-5 flex items-start gap-2.5 text-sm not-italic text-[var(--lp-muted)]">
             <Building2 className="mt-0.5 size-4 shrink-0 text-[var(--lp-accent)]" aria-hidden="true" />
             <span>
-              <span className="block font-semibold text-[var(--lp-fg)]">{SITE.legalName}</span>
-              <span className="block font-semibold text-[var(--lp-fg)]">{SITE.legalNameEn}</span>
-              {SITE.address}
+              <span className="block font-semibold text-[var(--lp-fg)]">{contact.legalName}</span>
+              {contact.legalNameEn && <span className="block font-semibold text-[var(--lp-fg)]">{contact.legalNameEn}</span>}
+              <span className="whitespace-pre-line">{contact.address}</span>
             </span>
           </address>
         </div>
 
         <div>
-          <p className="text-sm font-semibold">ติดต่อเรา</p>
+          <p className="text-sm font-semibold">{footer.contactHeading}</p>
           <ul className="mt-3 space-y-2.5 text-sm">
             <li>
-              <a href={telHref} className="inline-flex items-center gap-2.5 hover:text-[var(--lp-accent)]">
-                <Phone className="size-4 shrink-0 text-[var(--lp-accent)]" aria-hidden="true" /> {SITE.phone}
+              <a href={telHref(contact.phone)} className="inline-flex items-center gap-2.5 hover:text-[var(--lp-accent)]">
+                <Phone className="size-4 shrink-0 text-[var(--lp-accent)]" aria-hidden="true" /> {contact.phone}
               </a>
             </li>
             <li>
-              <a href={lineHref} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-2.5 hover:text-[var(--lp-accent)]">
-                <MessageCircle className="size-4 shrink-0 text-[#06C755]" aria-hidden="true" /> LINE {SITE.lineId}
+              <a href={lineHref(contact.lineId)} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-2.5 hover:text-[var(--lp-accent)]">
+                <MessageCircle className="size-4 shrink-0 text-[#06C755]" aria-hidden="true" /> LINE {contact.lineId}
               </a>
             </li>
-            {SITE.emails.map((email) => (
+            {contact.items.map(({ email }) => (
               <li key={email}>
                 <a href={`mailto:${email}`} className="inline-flex items-center gap-2.5 break-all hover:text-[var(--lp-accent)]">
                   <Mail className="size-4 shrink-0 text-[var(--lp-accent)]" aria-hidden="true" /> {email}
@@ -44,24 +45,27 @@ export function LandingFooter() {
               </li>
             ))}
             <li className="inline-flex items-center gap-2.5 text-[var(--lp-muted)]">
-              <Clock className="size-4 shrink-0 text-[var(--lp-accent)]" aria-hidden="true" /> {SITE.businessHours}
+              <Clock className="size-4 shrink-0 text-[var(--lp-accent)]" aria-hidden="true" /> {contact.businessHours}
             </li>
           </ul>
         </div>
 
         <div>
-          <p className="text-sm font-semibold">ลิงก์</p>
+          {footer.items.length > 0 && <>
+          <p className="text-sm font-semibold">{footer.linksHeading}</p>
           <ul className="mt-3 space-y-2 text-sm text-[var(--lp-muted)]">
-            <li><Link href="/tires" className="hover:text-[var(--lp-fg)]">แคตตาล็อกสินค้า</Link></li>
-            <li><Link href="/login" className="hover:text-[var(--lp-fg)]">เข้าสู่ระบบดีลเลอร์</Link></li>
-            <li><Link href="/#register" className="hover:text-[var(--lp-fg)]">สมัครเป็นดีลเลอร์</Link></li>
-            <li><Link href="/#features" className="hover:text-[var(--lp-fg)]">ฟีเจอร์</Link></li>
-            <li><Link href="/privacy" className="hover:text-[var(--lp-fg)]">นโยบายความเป็นส่วนตัว</Link></li>
-            <li><Link href="/terms" className="hover:text-[var(--lp-fg)]">เงื่อนไขการใช้งาน</Link></li>
+            {footer.items.map((link, i) => (
+              <li key={`${i}-${link.href}`}>
+                {isExternalLink(link.href)
+                  ? <a href={link.href} target="_blank" rel="noopener noreferrer" className="hover:text-[var(--lp-fg)]">{link.label}</a>
+                  : <Link href={link.href} className="hover:text-[var(--lp-fg)]">{link.label}</Link>}
+              </li>
+            ))}
           </ul>
+          </>}
         </div>
       </div>
-      <p className="mx-auto mt-10 max-w-5xl border-t border-[var(--lp-line)] pt-6 text-xs text-[var(--lp-muted)]">© {new Date().getFullYear()} {SITE.legalName} สงวนลิขสิทธิ์</p>
+      <p className="mx-auto mt-10 max-w-5xl border-t border-[var(--lp-line)] pt-6 text-xs text-[var(--lp-muted)]">{copyrightLine(footer, contact)}</p>
     </footer>
   );
 }

@@ -8,9 +8,9 @@ import { SITE } from '@/lib/seo';
 /**
  * Mobile bottom bar (LINE + login) that appears once the hero scrolls away,
  * plus a floating LINE button on desktop. `sentinelId` is the element whose
- * exit from the viewport reveals the bar.
+ * exit from the viewport reveals the bar. `lineId` comes from the landing CMS contact section.
  */
-export function StickyCta({ sentinelId = 'hero' }: { sentinelId?: string }) {
+export function StickyCta({ sentinelId = 'hero', lineId = SITE.lineId }: { sentinelId?: string; lineId?: string }) {
   const [visible, setVisible] = useState(false);
 
   useEffect(() => {
@@ -25,7 +25,7 @@ export function StickyCta({ sentinelId = 'hero' }: { sentinelId?: string }) {
     return () => observer.disconnect();
   }, [sentinelId]);
 
-  const lineHref = `https://line.me/R/ti/p/${encodeURIComponent(SITE.lineId)}`;
+  const lineHref = `https://line.me/R/ti/p/${encodeURIComponent(lineId)}`;
 
   return (
     <>
@@ -47,7 +47,7 @@ export function StickyCta({ sentinelId = 'hero' }: { sentinelId?: string }) {
         href={lineHref}
         target="_blank"
         rel="noopener noreferrer"
-        aria-label={`ทัก LINE ${SITE.lineId}`}
+        aria-label={`ทัก LINE ${lineId}`}
         className="fixed bottom-6 right-6 z-40 hidden size-14 items-center justify-center rounded-full bg-[#06C755] text-white shadow-xl shadow-black/20 transition hover:scale-105 md:flex"
       >
         <MessageCircle className="size-7" aria-hidden="true" />

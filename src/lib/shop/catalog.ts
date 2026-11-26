@@ -226,7 +226,7 @@ let partnerCache: { value: Partner[]; expiresAt: number } | null = null;
 /** Odoo customers (read-only, cached 2 minutes) for the admin dealer list. */
 export async function getPartners(): Promise<Partner[]> {
   if (partnerCache && partnerCache.expiresAt > Date.now()) return partnerCache.value;
-  // Same customers as the admin list (ranked, portal users, companies made in Contacts without a sale yet).
+  // Same customers as the admin list (ranked, portal users, top-level contacts made or imported in Contacts without a sale yet).
   const value = await odooSearchRead<Partner>('res.partner', CUSTOMER_MATCH,
     ['id', 'name', 'state_id', 'property_product_pricelist', 'street', 'street2', 'city', 'zip', 'phone', 'user_id', 'property_delivery_carrier_id'], { limit: 2000, order: 'name asc' });
   partnerCache = { value, expiresAt: Date.now() + 2 * 60 * 1000 };

@@ -49,12 +49,15 @@ type RawCustomer = {
 
 const CUSTOMER_FIELDS = ['id', 'name', 'vat', 'phone', 'email', 'state_id', 'property_product_pricelist', 'credit_limit', 'use_partner_credit_limit', 'credit', 'user_id', 'property_delivery_carrier_id', 'category_id'];
 /**
- * Who counts as a customer: a customer rank, a portal user, or a company made in Odoo Contacts that has no
- * sale yet (rank 0) and is neither a vendor nor one of our own companies (`ref_company_ids`).
+ * Who counts as a customer: a customer rank, a portal user, or a top-level contact made or imported in Odoo
+ * Contacts that has no sale yet (rank 0) and is neither a vendor nor one of our own companies (`ref_company_ids`).
+ * That last group takes companies and individuals alike (shops are often imported as Individual), but an
+ * individual only when no user is linked, so internal staff never show up as customers.
  */
 export const CUSTOMER_MATCH = [
   '|', '|', ['customer_rank', '>', 0], ['user_ids.share', '=', true],
-  '&', '&', ['is_company', '=', true], ['supplier_rank', '=', 0], ['ref_company_ids', '=', false],
+  '&', '&', '&', ['parent_id', '=', false], ['supplier_rank', '=', 0], ['ref_company_ids', '=', false],
+  '|', ['is_company', '=', true], ['user_ids', '=', false],
 ];
 
 /** Company-level customers only: contacts under a company (parent_id set) share the company's settings. */

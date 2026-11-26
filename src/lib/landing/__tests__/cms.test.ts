@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { DEFAULT_LANDING, SECTIONS, isSafeHref, isSafeImage, parseSectionForm, resolveLanding, sectionDef, sectionSchema } from '../cms';
+import { DEFAULT_LANDING, SECTIONS, copyrightLine, isSafeHref, isSafeImage, isSafeLink, lineHref, parseSectionForm, resolveLanding, sectionDef, sectionSchema, telHref } from '../cms';
 
 function form(entries: Record<string, string>): FormData {
   const fd = new FormData();
@@ -104,5 +104,40 @@ describe('parseSectionForm', () => {
     const ok = parseSectionForm(hero, form({ ...fields, ...stats }));
     expect(ok.ok && (ok.value as { items: { value: number }[] }).items.map((i) => i.value)).toEqual([60, 3, 77]);
     expect(parseSectionForm(hero, form({ ...fields, ...stats, 'i:1:value': 'abc' })).ok).toBe(false);
+  });
+});
+
+describe('contact and footer sections', () => {
+  const contact = sectionDef('contact')!;
+  const footer = sectionDef('footer')!;
+  const base = { 'f:legalName': 'บริษัท ก จำกัด', 'f:legalNameEn': '', 'f:address': 'กรุงเทพ', 'f:phone': '02-123-4567', 'f:lineId': '@shop', 'f:businessHours': 'จ-ศ 9-18', rows: '2', 'i:0:email': 'a@b.co', 'i:1:email': '' };
+
+  it('parses contact with optional english name and drops blank email rows', () => {
+    const out = parseSectionForm(contact, form(base));
+    expect(out).toEqual({ ok: true, value: { legalName: 'บริษัท ก จำกัด', legalNameEn: '', address: 'กรุงเทพ', phone: '02-123-4567', lineId: '@shop', businessHours: 'จ-ศ 9-18', items: [{ email: 'a@b.co' }] } });
+  });
+
+  it('rejects bad phone, LINE ID, e-mail and missing e-mail', () => {
+    expect(parseSectionForm(contact, form({ ...base, 'f:phone': 'call me' })).ok).toBe(false);
+    expect(parseSectionForm(contact, form({ ...base, 'f:lineId': '@a b<script>' })).ok).toBe(false);
+    expect(parseSectionForm(contact, form({ ...base, 'i:0:email': 'not-an-email' })).ok).toBe(false);
+    expect(parseSectionForm(contact, form({ ...base, 'i:0:email': '' })).ok).toBe(false);
+  });
+
+  it('footer links accept in-site and https only', () => {
+    const f = (href: string) => parseSectionForm(footer, form({ 'f:tagline': 't', 'f:contactHeading': 'c', 'f:linksHeading': 'l', 'f:copyright': '', rows: '1', 'i:0:label': 'x', 'i:0:href': href }));
+    expect(f('/tires').ok).toBe(true);
+    expect(f('https://facebook.com/shop').ok).toBe(true);
+    expect(f('javascript:alert(1)').ok).toBe(false);
+    expect(f('http://plain.example.com').ok).toBe(false);
+    expect(isSafeLink('//evil.com')).toBe(false);
+  });
+
+  it('builds tel/LINE links and the copyright line', () => {
+    expect(telHref('090-665 9835')).toBe('tel:0906659835');
+    expect(lineHref('@shop')).toBe('https://line.me/R/ti/p/%40shop');
+    const c = DEFAULT_LANDING.contact;
+    expect(copyrightLine({ ...DEFAULT_LANDING.footer, copyright: '' }, c, 2026)).toBe(`© 2026 ${c.legalName} สงวนลิขสิทธิ์`);
+    expect(copyrightLine({ ...DEFAULT_LANDING.footer, copyright: '© {year} ร้าน' }, c, 2026)).toBe('© 2026 ร้าน');
   });
 });

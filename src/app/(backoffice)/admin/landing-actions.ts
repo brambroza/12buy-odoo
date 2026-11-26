@@ -10,6 +10,14 @@ import { resetLandingSection, saveLandingSection } from '@/lib/landing/repo';
 import { saveLandingImage } from '@/lib/shop/uploads';
 
 const PATH = '/admin/landing';
+/** Sections shown on every public page (footer, header phone, LINE buttons, legal pages), not only `/`. */
+const SITE_WIDE = new Set(['contact', 'footer']);
+
+/** Refreshes `/`, or every public page for the site-wide sections. */
+function revalidateFor(key: string) {
+  if (SITE_WIDE.has(key)) revalidatePath('/', 'layout');
+  else revalidatePath('/');
+}
 
 function back(tab: string, error?: string): never {
   redirect(`${PATH}?tab=${encodeURIComponent(tab)}${error ? `&error=${encodeURIComponent(error)}` : ''}`);
@@ -43,7 +51,7 @@ export async function saveLandingSectionAction(formData: FormData) {
   if (!parsed.ok) back(def.key, parsed.error);
   await saveLandingSection(def.key, parsed.value, actor.id);
   await audit(actor.id, 'landing.update', 'AppSetting', `landing.${def.key}`, { section: def.key, uploads: Object.values(uploads) });
-  revalidatePath('/');
+  revalidateFor(def.key);
   await flash(`บันทึก “${def.label}” แล้ว`, { icon: 'save', description: 'หน้าแรกอัปเดตแล้ว' });
   back(def.key);
 }
@@ -55,7 +63,7 @@ export async function resetLandingSectionAction(formData: FormData) {
   if (!def) back('hero', 'ไม่พบส่วนที่ต้องการแก้ไข');
   await resetLandingSection(def.key, actor.id);
   await audit(actor.id, 'landing.reset', 'AppSetting', `landing.${def.key}`, { section: def.key });
-  revalidatePath('/');
+  revalidateFor(def.key);
   await flash(`คืนค่าเริ่มต้น “${def.label}” แล้ว`, { icon: 'save' });
   back(def.key);
 }

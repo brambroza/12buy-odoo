@@ -28,12 +28,14 @@ function Field({ field, name, value, library, required }: { field: FieldDef; nam
   const label = `${field.label}${field.optional ? ' (ไม่บังคับ)' : ''}`;
   if (field.kind === 'image') return <LandingImageField name={name} label={label} value={String(value ?? '')} library={library} />;
   const common = { name, defaultValue: value ?? '', required: required && !field.optional, className: 'mt-1' };
+  const linkish = field.kind === 'href' || field.kind === 'url';
+  const type = field.kind === 'number' ? 'number' : field.inputType ?? 'text';
   return (
     <label className="block text-xs font-medium">
       {label}
       {field.kind === 'textarea'
         ? <Textarea {...common} maxLength={field.max} rows={3} />
-        : <Input {...common} type={field.kind === 'number' ? 'number' : 'text'} min={field.kind === 'number' ? 0 : undefined} maxLength={field.kind === 'number' ? undefined : field.max} className={cn('mt-1', field.kind === 'href' && 'font-mono')} placeholder={field.kind === 'href' ? '/tires?type=CAR' : undefined} />}
+        : <Input {...common} type={type} inputMode={field.inputType === 'tel' ? 'tel' : undefined} min={field.kind === 'number' ? 0 : undefined} maxLength={field.kind === 'number' ? undefined : field.max} className={cn('mt-1', linkish && 'font-mono')} placeholder={linkish ? '/tires?type=CAR' : undefined} />}
       {field.hint && <span className="mt-0.5 block text-[11px] font-normal text-muted-foreground">{field.hint}</span>}
     </label>
   );
@@ -116,7 +118,7 @@ export default async function LandingEditorPage({ searchParams }: { searchParams
         <div>
           <h1 className="flex items-center gap-2 text-2xl font-bold"><LayoutTemplate className="size-6" /> เนื้อหาหน้าแรก</h1>
           <p className="text-sm text-muted-foreground">
-            แก้ข้อความและรูปภาพบนหน้าแรกทีละส่วน ส่วนที่ยังไม่แก้จะใช้ข้อความเริ่มต้นของระบบ
+            แก้ข้อความและรูปภาพบนหน้าแรกทีละส่วน รวมถึงข้อมูลติดต่อและส่วนท้าย (ใช้ทุกหน้าสาธารณะ) ส่วนที่ยังไม่แก้จะใช้ข้อความเริ่มต้นของระบบ
             {state.updatedAt && <> · แก้ล่าสุด {fmt.format(new Date(state.updatedAt))}{updatedBy ? ` โดย ${updatedBy.name}` : ''}</>}
           </p>
         </div>

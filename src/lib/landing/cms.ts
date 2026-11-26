@@ -6,14 +6,27 @@
  *
  * Icons and layout stay in code: lists bound to icons (stats, trust points, categories, features,
  * steps) have a fixed length and only their text is editable.
+ *
+ * `contact` and `footer` are not page sections: they feed the footer, header phone, LINE buttons,
+ * legal pages, JSON-LD and /llms.txt on every public page.
  */
 import { z } from 'zod';
 import { FAQ, TRUST_POINTS } from '@/lib/landing-content';
+import { SITE } from '@/lib/seo';
 
-export type FieldKind = 'text' | 'textarea' | 'image' | 'href' | 'number';
+/** `href` = in-site link only; `url` = in-site link or external https (footer links). */
+export type FieldKind = 'text' | 'textarea' | 'image' | 'href' | 'url' | 'number';
+
+/** Extra format check for a text field (phone, e-mail, LINE ID). */
+export type FieldPattern = { re: RegExp; message: string };
 
 /** One editable input. `optional` fields may be left blank. */
-export type FieldDef = { name: string; label: string; kind: FieldKind; max?: number; optional?: boolean; hint?: string };
+export type FieldDef = {
+  name: string; label: string; kind: FieldKind; max?: number; optional?: boolean; hint?: string;
+  pattern?: FieldPattern;
+  /** HTML input type for text fields (mobile keyboard). */
+  inputType?: 'email' | 'tel';
+};
 
 /** A repeated group of fields (FAQ entries, banners, …). `fixed` lists keep their length. */
 export type ListDef = { label: string; fields: FieldDef[]; min: number; max: number; fixed?: boolean };
@@ -49,10 +62,23 @@ export type LandingContent = {
   testimonials: Shown & { eyebrow: string; heading: string; items: { shop: string; province: string; quote: string }[] };
   faq: Shown & { heading: string; items: { q: string; a: string }[] };
   register: Shown & { heading: string; body: string };
+  contact: ContactContent;
+  footer: FooterContent;
+};
+export type ContactContent = {
+  legalName: string; legalNameEn: string; address: string; phone: string; lineId: string; businessHours: string;
+  items: { email: string }[];
+};
+export type FooterContent = {
+  tagline: string; contactHeading: string; linksHeading: string; copyright: string;
+  items: { label: string; href: string }[];
 };
 export type SectionKey = keyof LandingContent;
 
 const T = (name: string, label: string, max = 120, extra: Partial<FieldDef> = {}): FieldDef => ({ name, label, kind: 'text', max, ...extra });
+const PHONE: FieldPattern = { re: /^[0-9+][0-9\s()-]{5,19}$/, message: 'เบอร์โทรใช้ได้เฉพาะตัวเลข + - ( ) และเว้นวรรค' };
+const EMAIL: FieldPattern = { re: /^[^\s@]+@[^\s@]+\.[^\s@]+$/, message: 'รูปแบบอีเมลไม่ถูกต้อง' };
+const LINE_ID: FieldPattern = { re: /^@?[\w.-]{2,40}$/, message: 'LINE ID ใช้ได้เฉพาะ a-z 0-9 . _ - (ขึ้นต้นด้วย @ ได้)' };
 const A = (name: string, label: string, max = 600, extra: Partial<FieldDef> = {}): FieldDef => ({ name, label, kind: 'textarea', max, ...extra });
 
 export const SECTIONS: readonly SectionDef[] = [
@@ -109,7 +135,28 @@ export const SECTIONS: readonly SectionDef[] = [
     fields: [T('heading', 'หัวข้อ', 120)],
     list: { label: 'คำถาม', min: 1, max: 20, fields: [T('q', 'คำถาม', 160), A('a', 'คำตอบ', 800)] },
   },
-  { key: 'register', label: 'สมัครดีลเลอร์', description: 'ข้อความข้างฟอร์มสมัคร (เบอร์โทรและ LINE มาจากข้อมูลบริษัท)', hideable: true, fields: [T('heading', 'หัวข้อ', 120), A('body', 'ข้อความ', 400)] },
+  { key: 'register', label: 'สมัครดีลเลอร์', description: 'ข้อความข้างฟอร์มสมัคร (เบอร์โทรและ LINE มาจากแท็บ “ข้อมูลติดต่อ”)', hideable: true, fields: [T('heading', 'หัวข้อ', 120), A('body', 'ข้อความ', 400)] },
+  {
+    key: 'contact', label: 'ข้อมูลติดต่อ', hideable: false,
+    description: 'ชื่อบริษัท ที่อยู่ เบอร์โทร LINE อีเมล เวลาทำการ · ใช้ทุกหน้าสาธารณะ: footer, เบอร์บนแถบหัว, ปุ่ม LINE, หน้านโยบาย/เงื่อนไข, ข้อมูล Google (JSON-LD) และ /llms.txt (ใบสั่งซื้อ PDF ยังใช้ข้อมูลในระบบ)',
+    fields: [
+      T('legalName', 'ชื่อบริษัท (ไทย)', 120), T('legalNameEn', 'ชื่อบริษัท (อังกฤษ)', 120, { optional: true }),
+      A('address', 'ที่อยู่', 300),
+      T('phone', 'เบอร์โทร', 20, { pattern: PHONE, inputType: 'tel', hint: 'เช่น 090-665-9835 · ปุ่มโทรตัดขีดออกให้อัตโนมัติ' }),
+      T('lineId', 'LINE ID', 41, { pattern: LINE_ID, hint: 'เช่น @arisun · ปุ่ม “ทัก LINE” เปิด line.me ด้วย ID นี้' }),
+      T('businessHours', 'เวลาทำการ', 80),
+    ],
+    list: { label: 'อีเมล', min: 1, max: 3, fields: [T('email', 'อีเมล', 120, { pattern: EMAIL, inputType: 'email' })] },
+  },
+  {
+    key: 'footer', label: 'ส่วนท้าย (Footer)', hideable: false,
+    description: 'ข้อความใต้โลโก้ หัวข้อคอลัมน์ ลิงก์ และบรรทัดลิขสิทธิ์ (ที่อยู่/เบอร์/อีเมลมาจากแท็บ “ข้อมูลติดต่อ”)',
+    fields: [
+      A('tagline', 'ข้อความใต้โลโก้', 300), T('contactHeading', 'หัวข้อคอลัมน์ติดต่อ', 40), T('linksHeading', 'หัวข้อคอลัมน์ลิงก์', 40),
+      T('copyright', 'บรรทัดลิขสิทธิ์', 160, { optional: true, hint: 'เว้นว่าง = “© ปีปัจจุบัน ชื่อบริษัท สงวนลิขสิทธิ์” · ใส่ {year} แทนปีปัจจุบันได้' }),
+    ],
+    list: { label: 'ลิงก์', min: 0, max: 10, fields: [T('label', 'ชื่อลิงก์', 60), { name: 'href', label: 'ลิงก์', kind: 'url', max: 300, hint: 'หน้าในเว็บ เช่น /tires, /#register หรือ https://… (เปิดแท็บใหม่)' }] },
+  },
 ];
 
 export const SECTION_KEYS = SECTIONS.map((s) => s.key);
@@ -181,6 +228,21 @@ export const DEFAULT_LANDING: LandingContent = {
   testimonials: { show: true, eyebrow: 'เสียงจากดีลเลอร์', heading: 'ร้านยางทั่วไทยใช้งานจริง', items: [] },
   faq: { show: true, heading: 'คำถามที่ดีลเลอร์ถามบ่อย', items: FAQ.map(({ q, a }) => ({ q, a })) },
   register: { show: true, heading: 'เปิดร้านยาง? สมัครเป็นดีลเลอร์กับเรา', body: 'กรอกข้อมูลร้านสั้นๆ หรือทักมาทาง LINE ทีมงานเปิดสิทธิ์ให้ภายใน 1 วันทำการ ไม่มีค่าสมัคร' },
+  contact: {
+    legalName: SITE.legalName, legalNameEn: SITE.legalNameEn, address: SITE.address, phone: SITE.phone, lineId: SITE.lineId, businessHours: SITE.businessHours,
+    items: SITE.emails.map((email) => ({ email })),
+  },
+  footer: {
+    tagline: 'ระบบสั่งซื้อยางสำหรับดีลเลอร์ เชื่อมต่อกับระบบบัญชีและสต็อกของบริษัทโดยตรง', contactHeading: 'ติดต่อเรา', linksHeading: 'ลิงก์', copyright: '',
+    items: [
+      { label: 'แคตตาล็อกสินค้า', href: '/tires' },
+      { label: 'เข้าสู่ระบบดีลเลอร์', href: '/login' },
+      { label: 'สมัครเป็นดีลเลอร์', href: '/#register' },
+      { label: 'ฟีเจอร์', href: '/#features' },
+      { label: 'นโยบายความเป็นส่วนตัว', href: '/privacy' },
+      { label: 'เงื่อนไขการใช้งาน', href: '/terms' },
+    ],
+  },
 };
 
 /** Site path (`/landing/x.webp`, `/api/landing-images/x.webp`) or https URL; no protocol-relative or traversal. */
@@ -193,12 +255,41 @@ export function isSafeHref(v: string): boolean {
   return (v.startsWith('/') && !v.startsWith('//') && !v.includes('\\')) || /^#[\w-]+$/.test(v);
 }
 
+/** In-site link, anchor, or external https URL. */
+export function isSafeLink(v: string): boolean {
+  return isSafeHref(v) || /^https:\/\/[^\s"'<>]+$/.test(v);
+}
+
+/** True for links that leave the site (rendered with `target="_blank"`). */
+export function isExternalLink(v: string): boolean {
+  return v.startsWith('https://');
+}
+
+/** `tel:` href for a display phone number ("090-665-9835" → "tel:0906659835"). */
+export function telHref(phone: string): string {
+  return `tel:${phone.replace(/[^0-9+]/g, '')}`;
+}
+
+/** LINE add-friend link for a LINE ID. */
+export function lineHref(lineId: string): string {
+  return `https://line.me/R/ti/p/${encodeURIComponent(lineId)}`;
+}
+
+/** Footer copyright line: `{year}` is replaced; blank uses the default wording. */
+export function copyrightLine(footer: FooterContent, contact: ContactContent, year = new Date().getFullYear()): string {
+  const text = footer.copyright.trim();
+  return text ? text.replaceAll('{year}', String(year)) : `© ${year} ${contact.legalName} สงวนลิขสิทธิ์`;
+}
+
 function fieldSchema(f: FieldDef): z.ZodTypeAny {
   if (f.kind === 'number') return z.coerce.number({ message: `${f.label}: ต้องเป็นตัวเลข` }).int(`${f.label}: ต้องเป็นจำนวนเต็ม`).min(0).max(1_000_000);
   let s = z.string().trim().max(f.max ?? 500, `${f.label}: ยาวเกิน ${f.max ?? 500} ตัวอักษร`);
   if (!f.optional) s = s.min(1, `กรอก${f.label}`);
   if (f.kind === 'image') return s.refine((v) => isSafeImage(v), `${f.label}: ต้องเป็นรูปในเว็บหรือ https URL`);
   if (f.kind === 'href') return s.refine((v) => isSafeHref(v), `${f.label}: ต้องเป็นหน้าในเว็บ เช่น /tires?type=CAR หรือ #register`);
+  if (f.kind === 'url') return s.refine((v) => isSafeLink(v), `${f.label}: ต้องเป็นหน้าในเว็บ (/tires, /#register) หรือ https://…`);
+  const { pattern } = f;
+  if (pattern) return s.refine((v) => (f.optional && v === '') || pattern.re.test(v), `${f.label}: ${pattern.message}`);
   return s;
 }
 
