@@ -7,7 +7,7 @@ import { defaultQtyForUnit, defaultSaleUnit } from '@/lib/shop/units';
 
 /**
  * Price + add-to-cart block on the product page; re-computes the total for the chosen unit and quantity.
- * `cashNote` (credit dealers) tells what paying cash takes off.
+ * `cashNote` tells what paying cash takes off.
  */
 export function PriceBox({ productId, unitPrice, baseUnit, units, defaultQty, stock, soldOut = false, vatNote = '', cashNote = '' }: { productId: number; unitPrice: number; baseUnit: string; units: UnitOption[]; defaultQty: number; stock: React.ReactNode; soldOut?: boolean; vatNote?: string; cashNote?: string }) {
   const [sel, setSel] = useState<{ unit: UnitOption; qty: number }>(() => {

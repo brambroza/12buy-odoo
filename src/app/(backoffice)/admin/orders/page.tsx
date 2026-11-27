@@ -118,6 +118,7 @@ function OrderTotal({ order: o }: { order: ProtoOrder }) {
       {baht(o.total)}
       {o.cashDiscount > 0 && <span className="block whitespace-normal text-xs font-normal text-emerald-700">ลดเงินสด{percentLabel(o.lines)} −{baht(o.cashDiscount)}<span className="hidden xl:inline"> จาก {baht(o.subtotal)}</span></span>}
       {(o.freightDiscount ?? 0) > 0 && <span className="block whitespace-normal text-xs font-normal text-emerald-700">ลดค่าขนส่ง −{baht(o.freightDiscount!)}</span>}
+      {o.promotion && o.promotion.discount > 0 && <span className="block whitespace-normal text-xs font-normal text-emerald-700">โปร {o.promotion.programName} −{baht(o.promotion.discount)}</span>}
       {o.coupon && o.couponDiscount > 0 && <span className="block whitespace-normal text-xs font-normal text-emerald-700">คูปอง {o.coupon.code} −{baht(o.couponDiscount)}</span>}
     </span>
   );

@@ -28,8 +28,10 @@ const READ_METHODS = new Set([
 const WRITE_METHODS: Record<string, ReadonlySet<string>> = {
   'res.partner': new Set(['create', 'write']),
   // `action_cancel`: admin cancels a web order whose SO already exists (web and Odoo stay in step).
-  'sale.order': new Set(['create', 'action_confirm', 'action_cancel', 'message_post']),
+  // `action_open_reward_wizard`: applies the automatic promotion the web chose (see `applyPromotionToOrder`).
+  'sale.order': new Set(['create', 'action_confirm', 'action_cancel', 'message_post', 'action_open_reward_wizard']),
   'sale.loyalty.coupon.wizard': new Set(['create', 'action_apply']),
+  'sale.loyalty.reward.wizard': new Set(['create', 'action_apply']),
   'sale.advance.payment.inv': new Set(['create', 'create_invoices']),
   'product.pricelist': new Set(['create']),
   'product.pricelist.item': new Set(['create', 'write', 'unlink']),

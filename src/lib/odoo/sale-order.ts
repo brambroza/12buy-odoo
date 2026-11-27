@@ -5,7 +5,7 @@
 import type { OdooSync, ProtoOrder } from '@/lib/shop/types';
 import { formatAmount } from '@/lib/money';
 import { findCarrierByName } from './delivery-carrier';
-import { applyCouponToOrder } from './loyalty';
+import { applyCouponToOrder, applyPromotionToOrder } from './loyalty';
 import { odooRead, odooSearchRead, odooWrite } from './rpc';
 
 type SaleOrderRead = { id: number; name: string; state: string; amount_total: number; invoice_ids?: number[] };
@@ -162,10 +162,11 @@ async function freightDiscountLineFor(order: ProtoOrder): Promise<FreightDiscoun
   return { productId, taxField: await saleLineTaxField() };
 }
 
-/** Free-text note on the SO: web order ref, coupon, dealer PO, delivery method, delivery address and the dealer's remark. */
+/** Free-text note on the SO: web order ref, promotion, coupon, dealer PO, delivery method, delivery address and the dealer's remark. */
 export function buildOrderNote(order: ProtoOrder): string {
   return [
     `ออเดอร์เว็บ ${order.ref}`,
+    order.promotion ? `โปรโมชัน: ${order.promotion.programName} (#${order.promotion.programId}) เว็บคำนวณส่วนลด ${formatAmount(order.promotion.discount)} บาท` : '',
     order.coupon ? `คูปอง: ${order.coupon.code} (${order.coupon.programName}) เว็บคำนวณส่วนลด ${formatAmount(order.couponDiscount)} บาท` : '',
     order.poRef ? `เลขที่ใบสั่งซื้อของร้าน: ${order.poRef}` : '',
     `การจัดส่ง: ${order.carrier}`,
@@ -226,7 +227,7 @@ export async function ensureDraftInvoice(saleOrderId: number, invoiceIds: number
 
 /**
  * Creates and confirms the SO for `order`, or returns the existing one with the same
- * `client_order_ref` (safe to retry). A coupon is applied through Odoo's wizard while the
+ * `client_order_ref` (safe to retry). The automatic promotion, then the coupon, are applied through Odoo's wizards while the
  * SO is still a draft. Then a draft invoice is made; if that fails the SO still counts as sent and
  * `invoiceError` says why (the admin can retry). The result compares Odoo's total with the web total.
  */
@@ -250,7 +251,9 @@ export async function pushOrderToOdoo(order: ProtoOrder, partnerId: number): Pro
     so = await readById(Array.isArray(created) ? created[0] : created);
   }
   if (so.state === 'draft' || so.state === 'sent') {
-    if (order.coupon) await applyCouponToOrder(so.id, order.coupon.code);
+    // Promotion first, as the web computed the coupon on what the promotion left.
+    if (order.promotion) await applyPromotionToOrder(so.id, order.promotion.programId, order.promotion.rewardId);
+    if (order.coupon) await applyCouponToOrder(so.id, order.coupon.code, order.coupon.programId);
     await odooWrite<boolean>('sale.order', 'action_confirm', [[so.id]]);
     so = await readById(so.id);
   }

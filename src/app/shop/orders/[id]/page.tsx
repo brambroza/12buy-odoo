@@ -16,7 +16,7 @@ import { baht } from '@/lib/shop/catalog';
 import { getSessionId } from '@/lib/shop/session';
 import { getOrder } from '@/lib/shop/store';
 import { refreshIfStale } from '@/lib/shop/status-sync';
-import { billTotals, uniformCashPercent, withCoupon } from '@/lib/shop/pricing';
+import { billTotals, uniformCashPercent, withCoupon, withPromotion } from '@/lib/shop/pricing';
 import { CREDIT_PAYMENT_STATUS_LABELS, ORDER_STATUS_FLOW, ORDER_STATUS_LABELS, PAYMENT_METHOD_LABELS, type CreditPaymentStatus } from '@/lib/shop/types';
 import { cn } from '@/lib/utils';
 import { advanceOrderAction, cancelOrderAction, reorderAction, requestTaxInvoiceAction, submitCreditPaymentAction, uploadSlipAction } from '../../actions';
@@ -45,7 +45,7 @@ export default async function OrderDetailPage({ params, searchParams }: { params
   const nextStatus = ORDER_STATUS_FLOW[ORDER_STATUS_FLOW.indexOf(order.status) + 1];
   // Demo status buttons: back-office users only, and never unless SHOP_DEMO_CONTROLS=true.
   // Orders from before per-product VAT carry no rate: their prices were VAT-included 7% (Odoo tax "7% (Inc)").
-  const bill = withCoupon(billTotals(order.lines.map((l) => ({ ...l, vatRate: l.vatRate ?? 7 })), order.paymentMethod), order.couponDiscount);
+  const bill = withCoupon(withPromotion(billTotals(order.lines.map((l) => ({ ...l, vatRate: l.vatRate ?? 7 })), order.paymentMethod), order.promotion?.discount ?? 0), order.couponDiscount);
   const cashPercent = uniformCashPercent(order.lines);
   const user = await getCurrentUser();
   const showDemoControls = process.env.SHOP_DEMO_CONTROLS === 'true' && !!user && isBackofficeRole(user.role as Role);
@@ -179,7 +179,7 @@ export default async function OrderDetailPage({ params, searchParams }: { params
           ))}
         </ul>
         <div className="mt-2 space-y-1 border-t border-border pt-2">
-          {(order.cashDiscount > 0 || (order.freightDiscount ?? 0) > 0 || order.couponDiscount > 0) && (
+          {(order.cashDiscount > 0 || (order.freightDiscount ?? 0) > 0 || (order.promotion?.discount ?? 0) > 0 || order.couponDiscount > 0) && (
             <div className="flex justify-between text-sm"><span className="text-muted-foreground">รวมราคาสินค้า</span><span>{baht(order.subtotal)}</span></div>
           )}
           {order.cashDiscount > 0 && (
@@ -187,6 +187,9 @@ export default async function OrderDetailPage({ params, searchParams }: { params
           )}
           {(order.freightDiscount ?? 0) > 0 && (
             <div className="flex justify-between text-sm text-emerald-700 dark:text-emerald-400"><span>ส่วนลดค่าขนส่ง ({order.carrier})</span><span>−{baht(order.freightDiscount!)}</span></div>
+          )}
+          {order.promotion && order.promotion.discount > 0 && (
+            <div className="flex justify-between gap-2 text-sm text-emerald-700 dark:text-emerald-400"><span>โปรโมชัน {order.promotion.programName} · {order.promotion.label}</span><span>−{baht(order.promotion.discount)}</span></div>
           )}
           {order.couponDiscount > 0 && order.coupon && (
             <div className="flex justify-between gap-2 text-sm text-emerald-700 dark:text-emerald-400"><span>คูปอง <span className="font-mono">{order.coupon.code}</span> · {order.coupon.label}</span><span>−{baht(order.couponDiscount)}</span></div>

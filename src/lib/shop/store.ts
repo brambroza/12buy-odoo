@@ -7,13 +7,13 @@ import { randomUUID } from 'node:crypto';
 import { db } from '@/lib/db/client';
 import { DbError, parseTimestamp, quoteFilterValue, unwrap } from '@/lib/db/rows';
 import { canPayCredit } from './credit-payment';
-import type { CartItem, CreditPayment, CreditPaymentOdooLog, OdooSync, OrderActor, OrderStatus, ProtoOrder } from './types';
+import type { CartItem, CreditPayment, CreditPaymentOdooLog, OdooSync, OrderActor, OrderCoupon, OrderPromotion, OrderStatus, ProtoOrder } from './types';
 import { ORDER_STATUS_FLOW } from './types';
 
 type OrderRow = {
   id: string; ref: string; scope: string; dealerName: string; status: OrderStatus; paymentMethod: ProtoOrder['paymentMethod'];
   subtotal: number | string; cashDiscount: number | string; couponDiscount: number | string; total: number | string;
-  lines: ProtoOrder['lines']; coupon: ProtoOrder['coupon']; odooPricelistId: number | null; address: string; carrier: string; carrierId?: number | null; note: string;
+  lines: ProtoOrder['lines']; coupon: StoredCoupon | null; odooPricelistId: number | null; address: string; carrier: string; carrierId?: number | null; note: string;
   poRef: string | null; trackingRef: string | null; payment: ProtoOrder['payment']; events: ProtoOrder['events']; odoo: OdooSync | null; createdAt: string;
 };
 
@@ -23,6 +23,25 @@ export class CartEmptyError extends Error {
     super('CART_EMPTY');
     this.name = 'CartEmptyError';
   }
+}
+
+/**
+ * The `coupon` JSON column holds the coupon and, under `promotion`, the automatic promotion
+ * (no extra column): `{ ...coupon, promotion }`, `{ promotion }` when only a promotion applied, or null.
+ */
+type StoredCoupon = Partial<OrderCoupon> & { promotion?: OrderPromotion | null };
+
+/** Packs the coupon and promotion into the `coupon` column value. */
+export function packCoupon(coupon: OrderCoupon | null | undefined, promotion: OrderPromotion | null | undefined): StoredCoupon | null {
+  if (!coupon && !promotion) return null;
+  return { ...(coupon ?? {}), ...(promotion ? { promotion } : {}) };
+}
+
+/** Splits the `coupon` column value back into coupon and promotion. */
+export function unpackCoupon(stored: StoredCoupon | null | undefined): { coupon: OrderCoupon | null; promotion: OrderPromotion | null } {
+  if (!stored) return { coupon: null, promotion: null };
+  const { promotion, ...coupon } = stored;
+  return { coupon: coupon.code ? coupon as OrderCoupon : null, promotion: promotion ?? null };
 }
 
 const iso = (value: string) => parseTimestamp(value).toISOString();
@@ -40,7 +59,7 @@ function toOrder(row: OrderRow): ProtoOrder {
     cashDiscount: money(row.cashDiscount),
     // Not a column: kept on each line, so older orders simply have none.
     freightDiscount: Math.round((row.lines ?? []).reduce((sum, l) => sum + (l.freightDiscount ?? 0), 0) * 100) / 100,
-    coupon: row.coupon ?? null,
+    ...unpackCoupon(row.coupon),
     couponDiscount: money(row.couponDiscount),
     total: money(row.total),
     odooPricelistId: row.odooPricelistId,
@@ -218,8 +237,8 @@ export type NewOrder = Omit<ProtoOrder, 'id' | 'ref' | 'status' | 'createdAt' | 
  * Throws `CartEmptyError` when the cart was already emptied by a concurrent submit.
  */
 export async function createOrder(input: NewOrder): Promise<ProtoOrder> {
-  const { sessionId, ...rest } = input;
-  const { data, error } = await db().rpc('place_shop_order', { p_order: { ...rest, id: randomUUID().replace(/-/g, ''), scope: sessionId, couponDiscount: input.couponDiscount ?? 0 } });
+  const { sessionId, promotion, ...rest } = input;
+  const { data, error } = await db().rpc('place_shop_order', { p_order: { ...rest, coupon: packCoupon(input.coupon, promotion), id: randomUUID().replace(/-/g, ''), scope: sessionId, couponDiscount: input.couponDiscount ?? 0 } });
   if (error) {
     if (error.message.includes('CART_EMPTY')) throw new CartEmptyError();
     throw new DbError(error.message, error.code, error.details);

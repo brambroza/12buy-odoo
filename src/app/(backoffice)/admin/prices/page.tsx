@@ -57,12 +57,12 @@ export default async function PricesPage({ searchParams }: { searchParams: Promi
           <p className="text-sm text-muted-foreground">เว็บเป็นเจ้าของราคา · 1 ช่อง (โซน × ขนาดดีลเลอร์) = 1 pricelist ของเว็บใน Odoo เมื่ออนุมัติ · pricelist เดิมใน Odoo ไม่ถูกแก้ · กดช่องเพื่อเปิดตารางราคา</p>
         </div>
         <Button size="sm" variant="outline" nativeButton={false} render={<Link href={`${PATH}?pairs=edit`} scroll={false} />}>
-          <Coins /> ส่วนลดเงินสดของลูกค้าเครดิต · {pairs.length} คู่
+          <Coins /> ส่วนลดเงินสด · {pairs.length} คู่
         </Button>
       </div>
       {pairs.length === 0 && (
         <p className="rounded-lg bg-amber-500/10 px-3 py-2 text-sm text-amber-800">
-          ยังไม่ได้จับคู่ pricelist เครดิต–เงินสด ร้านเครดิตที่จ่ายเงินสดจะยังไม่ได้ส่วนลด · <Link href={`${PATH}?pairs=edit`} scroll={false} className="font-medium underline">ตั้งคู่ราคา</Link>
+          ยังไม่ได้จับคู่ pricelist เครดิต–เงินสด ร้านเครดิตที่จ่ายเงินสดจะยังไม่ได้ส่วนลดจากคู่ราคา · <Link href={`${PATH}?pairs=edit`} scroll={false} className="font-medium underline">ตั้งคู่ราคา</Link>
         </p>
       )}
 
@@ -102,7 +102,7 @@ export default async function PricesPage({ searchParams }: { searchParams: Promi
       </TableCard>
 
       {pairsOpen && (
-        <UrlDrawer key="pairs" title="ส่วนลดเงินสดของลูกค้าเครดิต" description={`${percents.length} pricelist ตั้ง % · ${pairs.length} คู่ราคา · ใช้คำนวณส่วนลดเงินสดท้ายบิล`} closeHref={PATH}>
+        <UrlDrawer key="pairs" title="ส่วนลดเงินสด" description={`${percents.length} pricelist ตั้ง % · ${pairs.length} คู่ราคา · ใช้คำนวณส่วนลดเงินสดท้ายบิล`} closeHref={PATH}>
           <CashPairs pricelists={catalog.pricelists} pairs={pairs} percents={percents} saved={params.pairs === '1'} error={params.error} />
         </UrlDrawer>
       )}
@@ -123,7 +123,7 @@ export default async function PricesPage({ searchParams }: { searchParams: Promi
 }
 
 /**
- * Cash discount for credit dealers who pay cash, per pricelist: a % of the price, or (no %) the
+ * Cash discount for every dealer who pays cash (credit or cash customer), per pricelist: a % of the price, or (no %) the
  * price difference to a paired cash pricelist. The dealer form can override the % per product family.
  * Pricelists named "Credit" come first, then the rest so any pricelist used by a credit dealer can get a %.
  */
@@ -134,7 +134,7 @@ function CashPairs({ pricelists, pairs, percents, saved, error }: { pricelists: 
     <form action={saveCashPairsAction} className="space-y-3">
       {saved && <p className="rounded-lg bg-emerald-500/10 px-3 py-2 text-sm text-emerald-700">บันทึกแล้ว</p>}
       {error && <p role="alert" className="rounded-lg bg-destructive/10 px-3 py-2 text-sm text-destructive">{error}</p>}
-      <p className="text-xs text-muted-foreground">ร้านที่ติ๊ก “ลูกค้าเครดิต” แล้วเลือกจ่ายเงินสด จะได้ส่วนลดท้ายบิล คิดรายสินค้าตามลำดับ: % ที่ตั้งในข้อมูลดีลเลอร์ (ต่อกลุ่มสินค้า) → ค่าที่ตั้งรายสินค้า (เมนูส่วนลดเงินสด) → % ของ pricelist ด้านล่าง → ส่วนต่างกับ pricelist เงินสดที่จับคู่ไว้</p>
+      <p className="text-xs text-muted-foreground">ทุกร้านที่จ่ายเงินสด (ทั้งลูกค้าเครดิตและลูกค้าเงินสด) จะได้ส่วนลดท้ายบิล คิดรายสินค้าตามลำดับ: % ที่ตั้งในข้อมูลดีลเลอร์ (ต่อกลุ่มสินค้า) → ค่าที่ตั้งรายสินค้า (เมนูส่วนลดเงินสด) → % ของ pricelist ด้านล่าง → ส่วนต่างกับ pricelist เงินสดที่จับคู่ไว้</p>
       {pricelists.length === 0 && <p className="text-xs text-muted-foreground">อ่าน pricelist จาก Odoo ไม่ได้</p>}
       <div className="hidden grid-cols-[1fr_88px_1fr] gap-2 text-xs text-muted-foreground sm:grid">
         <span>Pricelist</span><span>% เงินสด</span><span>หรือจ่ายสดใช้ราคา</span>

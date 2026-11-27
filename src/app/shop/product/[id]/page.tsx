@@ -35,7 +35,7 @@ export default async function ProductPage({ params }: { params: Promise<{ id: st
   const favorite = (await getFavorites(sid)).includes(product.id);
 
   const unit = resolvePrice(catalog, product, profile);
-  // Credit dealers see what paying cash takes off one unit (same rule as the cart and checkout).
+  // Every dealer sees what paying cash takes off one unit (same rule as the cart and checkout).
   const cashOff = cashDiscountPerUnit(catalog, product, profile, 1, unit);
   const cashRule = cashRuleOf(profile, product);
   const cashNote = cashOff > 0 ? `จ่ายเงินสดลด${cashRule?.kind === 'PERCENT' ? ` ${cashRule.value}%` : ''} −${baht(cashOff)} /${product.baseUnit} (หักท้ายบิล)` : '';

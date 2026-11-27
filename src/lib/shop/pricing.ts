@@ -39,18 +39,17 @@ export function priceFromBook(catalog: Catalog, product: CatalogProduct, book: P
   return Math.round(base * (1 + percent / 100) * 100) / 100;
 }
 
-type CashProfile = Pick<DealerProfile, 'credit' | 'cashPercent' | 'typeCashPercents' | 'dealerCashPercents' | 'productCashDiscounts' | 'typePricelists'>;
+type CashProfile = Pick<DealerProfile, 'cashPercent' | 'typeCashPercents' | 'dealerCashPercents' | 'productCashDiscounts' | 'typePricelists'>;
 
 /** Where a cash discount comes from; `PAIR` = the credit/cash pricelist price difference. */
 export type CashRule = { kind: 'PERCENT' | 'BAHT'; value: number; source: 'DEALER' | 'PRODUCT' | 'PRICELIST' } | { kind: 'PAIR' };
 
 /**
- * Cash discount rule for this product (credit dealers only; null for others), first match wins:
+ * Cash discount rule for this product when the order is paid in cash, for every dealer (credit or cash), first match wins:
  * the dealer's % for the family → the product's own discount (% or baht) → the % of the line's
  * pricelist (the family's own pricelist, else the dealer's main one) → the pricelist pair.
  */
 export function cashRuleOf(profile: CashProfile, product: Pick<CatalogProduct, 'dealerType' | 'tmplId'>): CashRule | null {
-  if (!profile.credit) return null;
   const dealer = profile.dealerCashPercents?.[product.dealerType];
   if (dealer !== undefined) return { kind: 'PERCENT', value: dealer, source: 'DEALER' };
   const own = profile.productCashDiscounts?.[String(product.tmplId)];
@@ -60,17 +59,17 @@ export function cashRuleOf(profile: CashProfile, product: Pick<CatalogProduct, '
   return { kind: 'PAIR' };
 }
 
-/** Cash discount % for this product when its rule is a % (see `cashRuleOf`), else null (baht, pair or not a credit dealer). */
+/** Cash discount % for this product when its rule is a % (see `cashRuleOf`), else null (baht or pair). */
 export function cashPercentOf(profile: CashProfile, product: Pick<CatalogProduct, 'dealerType' | 'tmplId'>): number | null {
   const rule = cashRuleOf(profile, product);
   return rule?.kind === 'PERCENT' ? rule.value : null;
 }
 
 /**
- * Cash discount per base unit for a credit dealer who pays cash, by `cashRuleOf`:
+ * Cash discount per base unit for any dealer who pays cash, by `cashRuleOf`:
  * a % of the shown price, a fixed baht amount, or credit pricelist price − paired cash pricelist price
  * (the family's own pricelist and its pair when one is set).
- * Never negative and never above the shown price. Returns 0 for non-credit dealers or when nothing is set.
+ * Never negative and never above the shown price. Returns 0 when nothing is set.
  */
 export function cashDiscountPerUnit(catalog: Catalog, product: CatalogProduct, profile: DealerProfile, qty = 1, shownPrice?: number): number {
   const rule = cashRuleOf(profile, product);
@@ -129,12 +128,24 @@ export function billTotals(lines: BillLine[], method: PaymentMethod): Bill {
   return { subtotal, cashDiscount, freightDiscount, vatAdded, vat: round2(vatInside + vatAdded), total: round2(subtotal - cashDiscount - freightDiscount + vatAdded) };
 }
 
-/** Takes a coupon discount off a bill's total (never below zero); the VAT inside shrinks in proportion. */
-export function withCoupon<T extends { total: number; vat?: number }>(bill: T, couponDiscount: number): T & { couponDiscount: number } {
-  const discount = round2(Math.min(Math.max(couponDiscount, 0), bill.total));
+/** Takes `amount` off a bill's total (never below zero); the VAT inside shrinks in proportion. */
+function takeOff<T extends { total: number; vat?: number }>(bill: T, amount: number): { discount: number; total: number; vat?: number } {
+  const discount = round2(Math.min(Math.max(amount, 0), bill.total));
   const total = round2(bill.total - discount);
   const vat = bill.vat === undefined ? undefined : bill.total > 0 ? round2(bill.vat * total / bill.total) : 0;
-  return { ...bill, couponDiscount: discount, total, ...(vat === undefined ? {} : { vat }) };
+  return { discount, total, ...(vat === undefined ? {} : { vat }) };
+}
+
+/** Takes an automatic promotion's discount off a bill's total. Applied before `withCoupon`, as Odoo does on the SO. */
+export function withPromotion<T extends { total: number; vat?: number }>(bill: T, promotionDiscount: number): T & { promotionDiscount: number } {
+  const { discount, ...rest } = takeOff(bill, promotionDiscount);
+  return { ...bill, ...rest, promotionDiscount: discount };
+}
+
+/** Takes a coupon discount off a bill's total (never below zero); the VAT inside shrinks in proportion. */
+export function withCoupon<T extends { total: number; vat?: number }>(bill: T, couponDiscount: number): T & { couponDiscount: number } {
+  const { discount, ...rest } = takeOff(bill, couponDiscount);
+  return { ...bill, ...rest, couponDiscount: discount };
 }
 
 function round2(value: number): number {

@@ -1,7 +1,7 @@
 /**
- * Odoo Loyalty (coupons / promo codes): read a code for the cart preview, and apply it
- * to a draft sale order through Odoo's own coupon wizard so Odoo books the discount line
- * and counts the usage. Admins can also create discount-only programs from the web;
+ * Odoo Loyalty (coupons / promo codes and automatic promotions): read a code or the active
+ * automatic promotions for the cart preview, and apply them to a draft sale order through Odoo's
+ * own wizards so Odoo books the discount line and counts the usage. Admins can also create discount-only programs from the web;
  * Odoo stays the source of truth.
  */
 import type { CouponDefinition, CouponReward, CouponRule } from '@/lib/shop/coupon';
@@ -14,7 +14,7 @@ type RawProgram = {
   limit_usage: boolean; max_usage: number; total_order_count: number;
 };
 type RawRule = {
-  id: number; mode: 'auto' | 'with_code'; code: string | false; minimum_amount: number; minimum_qty: number; any_product: boolean;
+  id: number; mode: 'auto' | 'with_code'; code: string | false; minimum_amount: number; minimum_amount_tax_mode?: 'incl' | 'excl'; minimum_qty: number; any_product: boolean;
   valid_product_ids: number[]; product_ids: number[]; product_category_id: Rel; product_tag_id: Rel; product_domain: string | false;
 };
 type RawReward = {
@@ -25,7 +25,7 @@ type RawReward = {
 type RawCard = { id: number; program_id: Rel; code: string; points: number; expiration_date: string | false; partner_id: Rel; active: boolean };
 
 const PROGRAM_FIELDS = ['name', 'program_type', 'trigger', 'active', 'date_from', 'date_to', 'pricelist_ids', 'limit_usage', 'max_usage', 'total_order_count'];
-const RULE_FIELDS = ['mode', 'code', 'minimum_amount', 'minimum_qty', 'any_product', 'valid_product_ids', 'product_ids', 'product_category_id', 'product_tag_id', 'product_domain'];
+const RULE_FIELDS = ['mode', 'code', 'minimum_amount', 'minimum_amount_tax_mode', 'minimum_qty', 'any_product', 'valid_product_ids', 'product_ids', 'product_category_id', 'product_tag_id', 'product_domain'];
 const REWARD_FIELDS = ['reward_type', 'description', 'discount', 'discount_mode', 'discount_applicability', 'discount_max_amount', 'required_points',
   'all_discount_product_ids', 'discount_product_ids', 'discount_product_category_id', 'discount_product_tag_id', 'discount_product_domain'];
 const COUPON_CARD_TYPES = ['coupons', 'next_order_coupons'];
@@ -68,11 +68,13 @@ export function toDefinition(code: string, program: RawProgram, rules: RawRule[]
     card: card ? { points: card.points, expirationDate: text(card.expiration_date), partnerId: relId(card.partner_id), active: card.active } : null,
     rules: usable.map((r): CouponRule => ({
       minimumAmount: r.minimum_amount ?? 0,
+      minimumAmountTaxMode: r.minimum_amount_tax_mode === 'excl' ? 'excl' : 'incl',
       minimumQty: r.minimum_qty ?? 0,
       anyProduct: r.any_product,
       ...(r.any_product ? { productIds: [], categoryId: null, unsupported: false } : productScope(r.valid_product_ids, r.product_ids, r.product_category_id, r.product_tag_id, r.product_domain)),
     })),
     rewards: rewards.map((r): CouponReward => ({
+      id: r.id,
       type: r.reward_type,
       description: r.description || '',
       discount: r.discount ?? 0,
@@ -118,6 +120,53 @@ export async function findCoupon(code: string): Promise<CouponDefinition | null>
   return value;
 }
 
+/** Program types the web evaluates as automatic promotions; loyalty cards, gift cards, eWallets and next-order coupons are not discounts on this order. */
+const AUTO_PROMOTION_TYPES = ['promotion', 'buy_x_get_y'];
+let promotionCache: { value: CouponDefinition[]; expiresAt: number } | null = null;
+
+/**
+ * Active automatic promotions (no code) applying to the current order, as evaluator definitions.
+ * Cached for a minute. `buy_x_get_y` (free product) is loaded but rejected by the evaluator as unsupported.
+ */
+export async function listAutoPromotions(): Promise<CouponDefinition[]> {
+  if (promotionCache && promotionCache.expiresAt > Date.now()) return promotionCache.value;
+  const programs = await odooSearchRead<RawProgram & { applies_on?: string }>('loyalty.program',
+    [['trigger', '=', 'auto'], ['program_type', 'in', AUTO_PROMOTION_TYPES], ['applies_on', 'in', ['current', 'both']]], PROGRAM_FIELDS, { order: 'id asc' });
+  const ids = programs.map((p) => p.id);
+  const [rules, rewards] = ids.length
+    ? await Promise.all([
+      odooSearchRead<RawRule & { program_id: Rel }>('loyalty.rule', [['program_id', 'in', ids]], [...RULE_FIELDS, 'program_id']),
+      odooSearchRead<RawReward & { program_id: Rel }>('loyalty.reward', [['program_id', 'in', ids]], [...REWARD_FIELDS, 'program_id']),
+    ])
+    : [[], []];
+  const value = programs.map((p) => toDefinition('', p, rules.filter((r) => relId(r.program_id) === p.id), rewards.filter((r) => relId(r.program_id) === p.id), null, null));
+  promotionCache = { value, expiresAt: Date.now() + CACHE_TTL_MS };
+  return value;
+}
+
+/** Whether the SO already has a reward line of this program (applying again is skipped, so a retry is safe). */
+async function hasProgramLine(saleOrderId: number, programId: number): Promise<boolean> {
+  // `is_reward_line` is not stored, so search on the reward link instead.
+  return (await odooRead<number>('sale.order.line', 'search_count', [[['order_id', '=', saleOrderId], ['reward_id.program_id', '=', programId]]])) > 0;
+}
+
+/**
+ * Applies the automatic promotion the web chose to a draft SO. `action_open_reward_wizard` refreshes
+ * the order's programs and, when exactly one reward is claimable, applies it itself; when several are
+ * (e.g. both tiers of a ladder) Odoo returns the reward wizard and the web picks `rewardId` in it.
+ * Throws when Odoo has nothing to apply or does not offer that reward (the admin then checks the SO).
+ */
+export async function applyPromotionToOrder(saleOrderId: number, programId: number, rewardId: number | null): Promise<void> {
+  if (await hasProgramLine(saleOrderId, programId)) return;
+  const result = await odooWrite<unknown>('sale.order', 'action_open_reward_wizard', [[saleOrderId]]);
+  if (result && typeof result === 'object' && 'res_model' in result) {
+    if (!rewardId) throw new Error('Odoo มีโปรโมชันให้เลือกหลายแบบ ต้องเลือกในใบสั่งขายของ Odoo');
+    const created = await odooWrite<number | number[]>('sale.loyalty.reward.wizard', 'create', [[{ order_id: saleOrderId, selected_reward_id: rewardId }]]);
+    await odooWrite<unknown>('sale.loyalty.reward.wizard', 'action_apply', [[Array.isArray(created) ? created[0] : created]]);
+  }
+  if (!(await hasProgramLine(saleOrderId, programId))) throw new Error(`Odoo ไม่ได้ใส่โปรโมชัน #${programId} ในใบสั่งขาย ตรวจเงื่อนไขโปรใน Odoo`);
+}
+
 /** Programs that dealers can use by typing a code (for the admin overview). */
 export async function listCodePrograms(): Promise<{ program: RawProgram; codes: string[]; couponCount: number; rewards: RawReward[] }[]> {
   const programs = await odooSearchRead<RawProgram & { coupon_count: number }>('loyalty.program',
@@ -138,13 +187,15 @@ export async function listCodePrograms(): Promise<{ program: RawProgram; codes: 
 
 /**
  * Applies a code to a draft sale order with Odoo's `sale.loyalty.coupon.wizard`.
- * Skips when the order already has a reward line (safe to retry). Throws when Odoo
+ * Skips when the order already has a reward line of the coupon's program (safe to retry). Throws when Odoo
  * rejects the code or asks to choose between several rewards.
  */
-export async function applyCouponToOrder(saleOrderId: number, code: string): Promise<void> {
-  // `is_reward_line` is not stored, so search on the reward link instead.
-  const rewardLines = await odooRead<number>('sale.order.line', 'search_count', [[['order_id', '=', saleOrderId], ['reward_id', '!=', false]]]);
-  if (rewardLines > 0) return;
+export async function applyCouponToOrder(saleOrderId: number, code: string, programId?: number): Promise<void> {
+  // Per program, so an automatic promotion already on the SO does not stop the coupon.
+  const done = programId
+    ? await hasProgramLine(saleOrderId, programId)
+    : (await odooRead<number>('sale.order.line', 'search_count', [[['order_id', '=', saleOrderId], ['reward_id', '!=', false]]])) > 0;
+  if (done) return;
   const created = await odooWrite<number | number[]>('sale.loyalty.coupon.wizard', 'create', [[{ order_id: saleOrderId, coupon_code: code }]]);
   const wizardId = Array.isArray(created) ? created[0] : created;
   const result = await odooWrite<unknown>('sale.loyalty.coupon.wizard', 'action_apply', [[wizardId]]);

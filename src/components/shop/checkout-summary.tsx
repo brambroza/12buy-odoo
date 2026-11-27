@@ -13,7 +13,7 @@ import { creditAfterOrder } from '@/lib/shop/credit';
 import type { PaymentMethod } from '@/lib/shop/types';
 import { cn } from '@/lib/utils';
 
-type Bill = { subtotal: number; cashDiscount: number; freightDiscount: number; couponDiscount: number; vatAdded: number; vat: number; total: number };
+type Bill = { subtotal: number; cashDiscount: number; freightDiscount: number; promotionDiscount: number; couponDiscount: number; vatAdded: number; vat: number; total: number };
 
 /**
  * Payment choice + total + submit for the checkout form.
@@ -73,8 +73,8 @@ export function CheckoutSummary({ credit, creditLocked = null, creditWarning = n
         <div className="min-w-0">
           <p className="text-xs text-muted-foreground">ยอดที่ต้องชำระ (รวม VAT แล้ว){credit && ` · ${method === 'CASH' ? 'เงินสด' : 'เครดิต'}`}</p>
           <p className="text-2xl font-black leading-tight">{baht(bill.total)}</p>
-          {(method === 'CASH' && bill.cashDiscount > 0) || bill.freightDiscount > 0 || bill.couponDiscount > 0
-            ? <p className="text-xs text-emerald-700 dark:text-emerald-400">{[method === 'CASH' && bill.cashDiscount > 0 ? `หักส่วนลดเงินสด${cashPercent !== null ? ` ${cashPercent}%` : ''} ${baht(bill.cashDiscount)}` : '', bill.freightDiscount > 0 ? `ส่วนลดค่าขนส่ง ${baht(bill.freightDiscount)}` : '', bill.couponDiscount > 0 ? `คูปอง ${baht(bill.couponDiscount)}` : ''].filter(Boolean).join(' · ')}</p>
+          {(method === 'CASH' && bill.cashDiscount > 0) || bill.freightDiscount > 0 || bill.promotionDiscount > 0 || bill.couponDiscount > 0
+            ? <p className="text-xs text-emerald-700 dark:text-emerald-400">{[method === 'CASH' && bill.cashDiscount > 0 ? `หักส่วนลดเงินสด${cashPercent !== null ? ` ${cashPercent}%` : ''} ${baht(bill.cashDiscount)}` : '', bill.freightDiscount > 0 ? `ส่วนลดค่าขนส่ง ${baht(bill.freightDiscount)}` : '', bill.promotionDiscount > 0 ? `โปรโมชัน ${baht(bill.promotionDiscount)}` : '', bill.couponDiscount > 0 ? `คูปอง ${baht(bill.couponDiscount)}` : ''].filter(Boolean).join(' · ')}</p>
             : <p className="text-xs text-muted-foreground">{lineCount} รายการ · VAT {baht(bill.vat)}{bill.vatAdded > 0 ? ` (บวกเพิ่ม ${baht(bill.vatAdded)})` : ''}</p>}
         </div>
         <SubmitOrderButton reason={reason} />

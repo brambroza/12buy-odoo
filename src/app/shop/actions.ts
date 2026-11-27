@@ -6,8 +6,8 @@ import { redirect } from 'next/navigation';
 import { z } from 'zod';
 import { baht, defaultQty, findProduct, getCatalog, getDealerCarrier, searchProducts } from '@/lib/shop/catalog';
 import { flash } from '@/lib/flash';
-import { billTotals, cashDiscountPerUnit, cashPercentOf, orderPricelistId, resolvePrice, withCoupon } from '@/lib/shop/pricing';
-import { checkCartCoupon } from '@/lib/shop/cart-coupon';
+import { billTotals, cashDiscountPerUnit, cashPercentOf, orderPricelistId, resolvePrice, withCoupon, withPromotion } from '@/lib/shop/pricing';
+import { checkCartDiscounts, type PricedLine } from '@/lib/shop/cart-coupon';
 import { freightDiscountOf, freightRatesFor } from '@/lib/shop/freight';
 import { listFreightDiscounts } from '@/lib/admin/store';
 import { normalizeCode } from '@/lib/shop/coupon';
@@ -32,7 +32,7 @@ import { addressFromForm, shippingSchema, thaiAddressSchema } from '@/lib/shop/s
 import { formatThaiAddress } from '@/lib/thai-address';
 import { updateDealer } from '@/lib/dealers/repo';
 import { isBackofficeRole, type Role } from '@/lib/auth/roles';
-import { ORDER_STATUS_LABELS, type OrderCoupon, type OrderLine } from '@/lib/shop/types';
+import { ORDER_STATUS_LABELS, type OrderCoupon, type OrderLine, type OrderPromotion } from '@/lib/shop/types';
 
 const qtySchema = z.coerce.number().int().min(1).max(999);
 const idSchema = z.coerce.number().int().positive();
@@ -194,7 +194,7 @@ async function placeOrder(sid: string, input: CheckoutInput, shipTo: string, sli
   const paymentMethod = profile.credit ? input.paymentMethod ?? 'CREDIT' : 'CASH';
 
   const lines: OrderLine[] = [];
-  const priced: Parameters<typeof checkCartCoupon>[3] = [];
+  const priced: PricedLine[] = [];
   for (const item of cart) {
     const product = findProduct(catalog, item.productId);
     if (!product) redirect('/shop/cart?error=' + encodeURIComponent('มีสินค้าในตะกร้าที่ไม่มีขายแล้ว ลบออกก่อนสั่ง'));
@@ -205,17 +205,19 @@ async function placeOrder(sid: string, input: CheckoutInput, shipTo: string, sli
     const cashPercent = cashOff > 0 ? cashPercentOf(profile, product) : null;
     const freightOff = freightDiscountOf(freightRates, product, item.qty, item.unitId, item.qty * (unitPrice - cashOff));
     lines.push({ productId: product.id, name: product.name, code: product.code, size: product.size?.label ?? null, qty: item.qty, unitPrice, cashDiscountPerUnit: cashOff, ...(cashPercent !== null ? { cashDiscountPercent: cashPercent } : {}), ...(freightOff > 0 ? { freightDiscount: freightOff } : {}), unitId: item.unitId ?? null, unitName: item.unitName ?? null, unitQty: item.unitQty ?? null, vatRate: product.vatRate, vatIncluded: product.vatIncluded, taxIds: product.taxIds ?? [] });
-    priced.push({ product, qty: item.qty, unitPrice, cashDiscountPerUnit: cashOff });
+    priced.push({ product, qty: item.qty, unitPrice, cashDiscountPerUnit: cashOff, freightDiscount: freightOff });
   }
-  // The coupon is re-checked against Odoo here: the cart preview may be stale.
+  // Promotion and coupon are re-checked against Odoo here: the cart preview may be stale.
   const code = await store.getCartCoupon(sid);
+  const discounts = (await checkCartDiscounts(code, catalog, profile, priced, [paymentMethod]))[paymentMethod];
+  const promotion: OrderPromotion | null = discounts?.promotion.applied ?? null;
   let coupon: OrderCoupon | null = null;
   if (code) {
-    const result = (await checkCartCoupon(code, catalog, profile, priced, [paymentMethod]))[paymentMethod];
+    const result = discounts?.coupon;
     if (!result?.ok) redirect('/shop/cart?error=' + encodeURIComponent(`โค้ด ${code}: ${result?.reason ?? 'ใช้ไม่ได้'} · ลบโค้ดหรือแก้ตะกร้าก่อนสั่ง`));
     coupon = { code, programId: result.programId, programName: result.programName, label: result.label, discount: result.discount };
   }
-  const totals = withCoupon(billTotals(lines, paymentMethod), coupon?.discount ?? 0);
+  const { promotionDiscount: _promotionDiscount, ...totals } = withCoupon(withPromotion(billTotals(lines, paymentMethod), promotion?.discount ?? 0), coupon?.discount ?? 0);
   if (paymentMethod === 'CREDIT') {
     // Web limit and Odoo credit_limit both apply. Odoo unreachable: only the web limit; sales still confirms the order.
     const { line: credit, overdue } = await getCreditSummary(profile);
@@ -238,6 +240,7 @@ async function placeOrder(sid: string, input: CheckoutInput, shipTo: string, sli
       paymentMethod,
       ...totals,
       coupon,
+      promotion,
       odooPricelistId: orderPricelistId(profile),
       address: shipTo,
       carrier: carrier.name,

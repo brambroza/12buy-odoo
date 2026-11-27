@@ -1,6 +1,6 @@
 import { Document, Page, StyleSheet, Text, View } from '@react-pdf/renderer';
 import { SITE } from '@/lib/seo';
-import { billTotals, uniformCashPercent, withCoupon } from '@/lib/shop/pricing';
+import { billTotals, uniformCashPercent, withCoupon, withPromotion } from '@/lib/shop/pricing';
 import { ORDER_STATUS_LABELS, PAYMENT_METHOD_LABELS, type ProtoOrder } from '@/lib/shop/types';
 
 const money = (n: number) => `${n.toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -41,7 +41,7 @@ const s = StyleSheet.create({
  * exactly as shown on the web. Not a tax document; the invoice comes from Odoo.
  */
 export function OrderDocument({ order, dealer }: { order: ProtoOrder; dealer: { name: string; taxId?: string | null; phone?: string | null } }) {
-  const bill = withCoupon(billTotals(order.lines.map((l) => ({ ...l, vatRate: l.vatRate ?? 7 })), order.paymentMethod), order.couponDiscount);
+  const bill = withCoupon(withPromotion(billTotals(order.lines.map((l) => ({ ...l, vatRate: l.vatRate ?? 7 })), order.paymentMethod), order.promotion?.discount ?? 0), order.couponDiscount);
   const cashPercent = uniformCashPercent(order.lines);
   const pieces = order.lines.reduce((sum, l) => sum + l.qty, 0);
   return (
@@ -102,6 +102,7 @@ export function OrderDocument({ order, dealer }: { order: ProtoOrder; dealer: { 
           <View style={s.tRow}><Text>รวมราคาสินค้า ({pieces} หน่วย)</Text><Text>{money(order.subtotal)}</Text></View>
           {order.cashDiscount > 0 && <View style={s.tRow}><Text>ส่วนลดเงินสด{cashPercent !== null ? ` ${cashPercent}%` : ''}</Text><Text>−{money(order.cashDiscount)}</Text></View>}
           {(order.freightDiscount ?? 0) > 0 && <View style={s.tRow}><Text>ส่วนลดค่าขนส่ง ({order.carrier})</Text><Text>−{money(order.freightDiscount!)}</Text></View>}
+          {order.promotion && order.promotion.discount > 0 && <View style={s.tRow}><Text>โปรโมชัน {order.promotion.programName}</Text><Text>−{money(order.promotion.discount)}</Text></View>}
           {order.couponDiscount > 0 && order.coupon && <View style={s.tRow}><Text>คูปอง {order.coupon.code}</Text><Text>−{money(order.couponDiscount)}</Text></View>}
           {bill.vatAdded > 0 && <View style={s.tRow}><Text>VAT 7% (สินค้าที่ราคายังไม่รวม VAT)</Text><Text>+{money(bill.vatAdded)}</Text></View>}
           <View style={s.tGrand}><Text style={s.grand}>ยอดสุทธิ (รวม VAT)</Text><Text style={s.grand}>{money(order.total)} บาท</Text></View>

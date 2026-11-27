@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 vi.mock('@/lib/odoo/rpc', () => ({ odooSearchRead: vi.fn(), odooRead: vi.fn(), odooWrite: vi.fn() }));
-const { buildProgramValues, generateCoupons, toDefinition } = await import('@/lib/odoo/loyalty');
+const { applyPromotionToOrder, buildProgramValues, generateCoupons, toDefinition } = await import('@/lib/odoo/loyalty');
 const rpc = await import('@/lib/odoo/rpc');
 
 const program = {
@@ -77,5 +77,37 @@ describe('generateCoupons', () => {
       { program_id: 9, points: 1, partner_id: 900, expiration_date: '2026-12-31' },
       { program_id: 9, points: 1, partner_id: 900, expiration_date: '2026-12-31' },
     ]]);
+  });
+});
+
+describe('applyPromotionToOrder', () => {
+
+  it('skips when the SO already has a line of that program', async () => {
+    vi.mocked(rpc.odooRead).mockReset().mockResolvedValueOnce(1);
+    vi.mocked(rpc.odooWrite).mockReset();
+    await applyPromotionToOrder(50, 8, 11);
+    expect(rpc.odooWrite).not.toHaveBeenCalled();
+  });
+
+  it('lets Odoo apply a single claimable reward', async () => {
+    vi.mocked(rpc.odooRead).mockReset().mockResolvedValueOnce(0).mockResolvedValueOnce(1);
+    vi.mocked(rpc.odooWrite).mockReset().mockResolvedValueOnce(true);
+    await applyPromotionToOrder(50, 8, 11);
+    expect(rpc.odooWrite).toHaveBeenCalledTimes(1);
+    expect(rpc.odooWrite).toHaveBeenCalledWith('sale.order', 'action_open_reward_wizard', [[50]]);
+  });
+
+  it('picks the web reward in the wizard when several apply', async () => {
+    vi.mocked(rpc.odooRead).mockReset().mockResolvedValueOnce(0).mockResolvedValueOnce(1);
+    vi.mocked(rpc.odooWrite).mockReset().mockResolvedValueOnce({ res_model: 'sale.loyalty.reward.wizard' }).mockResolvedValueOnce(77).mockResolvedValueOnce(true);
+    await applyPromotionToOrder(50, 7, 10);
+    expect(rpc.odooWrite).toHaveBeenNthCalledWith(2, 'sale.loyalty.reward.wizard', 'create', [[{ order_id: 50, selected_reward_id: 10 }]]);
+    expect(rpc.odooWrite).toHaveBeenNthCalledWith(3, 'sale.loyalty.reward.wizard', 'action_apply', [[77]]);
+  });
+
+  it('throws when Odoo did not add the promotion', async () => {
+    vi.mocked(rpc.odooRead).mockReset().mockResolvedValueOnce(0).mockResolvedValueOnce(0);
+    vi.mocked(rpc.odooWrite).mockReset().mockResolvedValueOnce(true);
+    await expect(applyPromotionToOrder(50, 8, 11)).rejects.toThrow('#8');
   });
 });

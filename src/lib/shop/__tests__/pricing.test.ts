@@ -40,8 +40,8 @@ describe('cash discount for credit dealers', () => {
   it('is the credit − cash price difference per unit', () => {
     expect(cashDiscountPerUnit(ctxCatalog, product, creditDealer)).toBe(120);
   });
-  it('is zero for non-credit dealers or without a paired cash pricelist', () => {
-    expect(cashDiscountPerUnit(ctxCatalog, product, { ...creditDealer, credit: false })).toBe(0);
+  it('applies to cash (non-credit) dealers too; zero without a paired cash pricelist', () => {
+    expect(cashDiscountPerUnit(ctxCatalog, product, { ...creditDealer, credit: false })).toBe(120);
     expect(cashDiscountPerUnit(ctxCatalog, product, { ...creditDealer, cashPricelistId: null })).toBe(0);
   });
   it('never goes negative when cash is dearer than credit', () => {
@@ -99,9 +99,9 @@ describe('cash discount %', () => {
     expect(cashPercentOf({ ...credit, cashPercent: 2, typePricelists: { CAR: 20 } }, product)).toBeNull();
     expect(cashPercentOf({ ...credit, cashPercent: 2, typePricelists: { CAR: 20 }, typeCashPercents: { CAR: 1.5 } }, product)).toBe(1.5);
   });
-  it('gives non-credit dealers nothing', () => {
-    expect(cashDiscountPerUnit(catalog, product, { ...profile, cashPercent: 2, dealerCashPercents: { CAR: 3 }, productCashDiscounts: { '777': { kind: 'PERCENT', value: 5 } } })).toBe(0);
-    expect(cashRuleOf({ ...profile, cashPercent: 2 }, product)).toBeNull();
+  it('gives non-credit (cash) dealers the same cash discount', () => {
+    expect(cashDiscountPerUnit(catalog, product, { ...profile, credit: false, cashPercent: 2, dealerCashPercents: { CAR: 3 }, productCashDiscounts: { '777': { kind: 'PERCENT', value: 5 } } })).toBe(72);
+    expect(cashRuleOf({ ...profile, cashPercent: 2 }, product)).toEqual({ kind: 'PERCENT', value: 2, source: 'PRICELIST' });
   });
   it('labels a single shared %', () => {
     expect(uniformCashPercent([{ cashDiscountPerUnit: 48, cashDiscountPercent: 2 }, { cashDiscountPerUnit: 0 }])).toBe(2);

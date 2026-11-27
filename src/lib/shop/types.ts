@@ -154,6 +154,9 @@ export type OrderLine = {
 
 export type OrderCoupon = { code: string; programId: number; programName: string; label: string; discount: number };
 
+/** Automatic Odoo Loyalty promotion (no code) applied to an order; `rewardId` is picked in Odoo's reward wizard when several apply. */
+export type OrderPromotion = { programId: number; rewardId: number | null; programName: string; label: string; discount: number };
+
 export type CreditPaymentStatus = 'PENDING' | 'VERIFIED' | 'REJECTED';
 
 export const CREDIT_PAYMENT_STATUS_LABELS: Record<CreditPaymentStatus, string> = { PENDING: 'รอตรวจ', VERIFIED: 'ตรวจแล้ว', REJECTED: 'ไม่ผ่าน' };
@@ -233,7 +236,9 @@ export type ProtoOrder = {
   coupon?: OrderCoupon | null;
   /** Discount from `coupon` (0 when none). */
   couponDiscount: number;
-  /** Amount due = subtotal − cashDiscount − freightDiscount − couponDiscount (+ VAT added on top). */
+  /** Automatic promotion applied before the coupon (absent/null = none). Stored inside the `coupon` JSON column. */
+  promotion?: OrderPromotion | null;
+  /** Amount due = subtotal − cashDiscount − freightDiscount − promotion − couponDiscount (+ VAT added on top). */
   total: number;
   /** Odoo pricelist of the published price book the dealer bought from; set on the SO so Odoo recomputes with web prices. */
   odooPricelistId?: number | null;

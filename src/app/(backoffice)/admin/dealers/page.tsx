@@ -528,7 +528,7 @@ function prefillFrom(c: OdooCustomer): DealerPrefill {
  */
 /**
  * Pricelist and cash discount % per product family. A blank % uses the product's own cash discount,
- * then the % set on the pricelist (/admin/prices); 0 = no cash discount for that family. The % only applies to credit dealers paying cash.
+ * then the % set on the pricelist (/admin/prices); 0 = no cash discount for that family. The % applies whenever the dealer pays cash, credit customer or not.
  */
 function TypePricelistFields({ saved, savedPercents, pricelists }: { saved: Partial<Record<DealerType, number>>; savedPercents: Partial<Record<DealerType, number>>; pricelists: OdooPricelistOption[] }) {
   return (
@@ -557,7 +557,7 @@ function TypePricelistFields({ saved, savedPercents, pricelists }: { saved: Part
           );
         })}
       </div>
-      <p className="mt-1 text-[11px] text-muted-foreground">ช่อง % = ส่วนลดเงินสดเมื่อลูกค้าเครดิตเลือกจ่ายสด ใช้ก่อนทุกค่า · ว่าง = ใช้ค่าที่ตั้งรายสินค้า (หน้าส่วนลดเงินสด) แล้วจึงใช้ % ของ pricelist · 0 = ไม่ให้ส่วนลดกลุ่มนี้</p>
+      <p className="mt-1 text-[11px] text-muted-foreground">ช่อง % = ส่วนลดเงินสดเมื่อจ่ายเงินสด (ทั้งลูกค้าเครดิตและเงินสด) ใช้ก่อนทุกค่า · ว่าง = ใช้ค่าที่ตั้งรายสินค้า (หน้าส่วนลดเงินสด) แล้วจึงใช้ % ของ pricelist · 0 = ไม่ให้ส่วนลดกลุ่มนี้</p>
     </fieldset>
   );
 }

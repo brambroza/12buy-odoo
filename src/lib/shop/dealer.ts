@@ -125,11 +125,11 @@ export function encodeProfile(profile: DealerProfile): string {
   return Buffer.from(JSON.stringify(stored), 'utf8').toString('base64url');
 }
 
-/** Attaches the published price book, customer group and (credit dealers) product cash discounts from the current admin settings. */
+/** Attaches the published price book, customer group and product cash discounts from the current admin settings. */
 export function withAdminSettings(profile: DealerProfile, data: admin.AdminShape): DealerProfile {
   const book = profile.priceBookId ? data.books.find((b) => b.id === profile.priceBookId) : undefined;
   const group = profile.customerGroupId ? data.groups.find((g) => g.id === profile.customerGroupId) : undefined;
-  return { ...profile, priceBook: book?.status === 'PUBLISHED' ? book : null, customerGroup: group ?? null, productCashDiscounts: profile.credit ? data.productCashDiscounts : {} };
+  return { ...profile, priceBook: book?.status === 'PUBLISHED' ? book : null, customerGroup: group ?? null, productCashDiscounts: data.productCashDiscounts };
 }
 
 /** Reads the impersonation cookie, if any. */
@@ -147,7 +147,7 @@ async function readImpersonationCookie(): Promise<DealerProfile | null> {
 /**
  * Builds the shop profile for a DB dealer: product families, customer group, tier, province and
  * the published web price book for its zone, plus the Odoo pricelist of the linked partner,
- * the per-family pricelists set on the dealer and, for credit dealers, the cash % and the cash pricelists paired with them.
+ * the per-family pricelists set on the dealer and the cash % and paired cash pricelists (cash discount applies to every dealer paying cash).
  */
 export async function profileFromDealer(dealer: Dealer, settings?: admin.AdminShape): Promise<DealerProfile> {
   const data = settings ?? await admin.getAdminSnapshot();
@@ -179,12 +179,12 @@ export async function profileFromDealer(dealer: Dealer, settings?: admin.AdminSh
     priceBookId: book?.status === 'PUBLISHED' ? book.id : null,
     odooPartnerId: dealer.odooPartnerId,
     credit: dealer.creditEnabled,
-    cashPricelistId: dealer.creditEnabled ? admin.cashPricelistFor(pricelistId, data.cashPairs) : null,
+    cashPricelistId: admin.cashPricelistFor(pricelistId, data.cashPairs),
     typePricelists,
-    typeCashPricelists: dealer.creditEnabled ? cashPricelistsFor(typePricelists, data.cashPairs) : {},
-    cashPercent: dealer.creditEnabled ? admin.cashPercentFor(pricelistId, data.cashPercents) : null,
-    typeCashPercents: dealer.creditEnabled ? cashPercentsFor(typePricelists, data.cashPercents) : {},
-    dealerCashPercents: dealer.creditEnabled ? sanitizeTypeCashPercents(dealer.typeCashPercents) : {},
+    typeCashPricelists: cashPricelistsFor(typePricelists, data.cashPairs),
+    cashPercent: admin.cashPercentFor(pricelistId, data.cashPercents),
+    typeCashPercents: cashPercentsFor(typePricelists, data.cashPercents),
+    dealerCashPercents: sanitizeTypeCashPercents(dealer.typeCashPercents),
     customerGroupId: admin.groupForDealerIn(data, dealer.id)?.id ?? null,
     avatarFile: dealer.avatarFile ?? null,
   }), data);

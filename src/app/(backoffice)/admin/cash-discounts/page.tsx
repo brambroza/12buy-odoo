@@ -19,7 +19,7 @@ const TYPES = Object.keys(DEALER_TYPE_LABELS) as DealerType[];
 const input = 'h-9 rounded-lg border border-border bg-background px-2 text-sm';
 
 /**
- * Cash discount per Odoo product (% of the dealer's price or baht per base unit) for credit dealers
+ * Cash discount per Odoo product (% of the dealer's price or baht per base unit) for every dealer paying cash (credit or cash customers)
  * who pay cash. Comes after the % set on the dealer and before the pricelist % and pricelist pairs.
  */
 export default async function CashDiscountsPage({ searchParams }: { searchParams: Promise<Params> }) {
@@ -50,7 +50,7 @@ export default async function CashDiscountsPage({ searchParams }: { searchParams
     <div className="space-y-4">
       <div>
         <h1 className="text-2xl font-bold">ส่วนลดเงินสดรายสินค้า</h1>
-        <p className="text-sm text-muted-foreground">สินค้าทั้งหมดจาก Odoo · ใช้กับดีลเลอร์ที่ติ๊ก “ลูกค้าเครดิต” แล้วเลือกจ่ายเงินสด แสดงเป็นส่วนลดท้ายบิลตอน checkout</p>
+        <p className="text-sm text-muted-foreground">สินค้าทั้งหมดจาก Odoo · ใช้กับทุกดีลเลอร์ที่จ่ายเงินสด (ทั้งลูกค้าเครดิตและลูกค้าเงินสด) แสดงเป็นส่วนลดท้ายบิลตอน checkout</p>
         <p className="text-xs text-muted-foreground">ลำดับที่ใช้: % ที่ตั้งในข้อมูลดีลเลอร์ (ต่อกลุ่มสินค้า) → ค่าของสินค้าในหน้านี้ → % ของ pricelist และคู่ราคาที่ <Link href="/admin/prices?pairs=open" className="text-primary underline">ตารางราคา</Link></p>
       </div>
 

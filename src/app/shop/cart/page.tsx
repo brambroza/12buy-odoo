@@ -1,15 +1,15 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
-import { TriangleAlert } from 'lucide-react';
+import { BadgePercent, TriangleAlert } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { baht, findProduct, getCatalog, getDealerCarrier } from '@/lib/shop/catalog';
 import { getCreditSummary } from '@/lib/shop/credit-line';
 import { isInGrace, isOverdueLocked, overdueGraceMessage, overdueLockMessage } from '@/lib/shop/credit';
 import { getWireTransferAccounts } from '@/lib/odoo/wire-transfer';
-import { billTotals, cashDiscountPerUnit, cashPercentOf, resolvePrice, uniformCashPercent, withCoupon } from '@/lib/shop/pricing';
+import { billTotals, cashDiscountPerUnit, cashPercentOf, resolvePrice, uniformCashPercent, withCoupon, withPromotion } from '@/lib/shop/pricing';
 import { canSeeProduct, getDealerProfile } from '@/lib/shop/dealer';
-import { checkCartCoupon } from '@/lib/shop/cart-coupon';
+import { checkCartDiscounts } from '@/lib/shop/cart-coupon';
 import { freightDiscountOf, freightRatesFor, freightUnitLabel } from '@/lib/shop/freight';
 import { listFreightDiscounts } from '@/lib/admin/store';
 import { getSessionId } from '@/lib/shop/session';
@@ -45,14 +45,18 @@ export default async function CartPage({ searchParams }: { searchParams: Promise
     .map((l) => ({ ...l, freightOff: freightDiscountOf(freightRates, l.product, l.item.qty, l.item.unitId, l.item.qty * (l.unit - l.cashOff)) }));
   const billLines = lines.map((l) => ({ qty: l.item.qty, unitPrice: l.unit, cashDiscountPerUnit: l.cashOff, freightDiscount: l.freightOff, vatRate: l.product.vatRate, vatIncluded: l.product.vatIncluded }));
   const couponCode = await getCartCoupon(sid);
-  const coupon = couponCode && lines.length
-    ? await checkCartCoupon(couponCode, catalog, profile, lines.map((l) => ({ product: l.product, qty: l.item.qty, unitPrice: l.unit, cashDiscountPerUnit: l.cashOff })), profile.credit ? ['CREDIT', 'CASH'] : ['CASH'])
+  // Automatic Odoo promotions (e.g. ครบ 25,000 ลด 4%) apply by themselves; the coupon is computed after them.
+  const discounts = lines.length
+    ? await checkCartDiscounts(couponCode, catalog, profile, lines.map((l) => ({ product: l.product, qty: l.item.qty, unitPrice: l.unit, cashDiscountPerUnit: l.cashOff, freightDiscount: l.freightOff })), profile.credit ? ['CREDIT', 'CASH'] : ['CASH'])
     : {};
-  const couponOff = (method: 'CREDIT' | 'CASH') => { const r = coupon[method]; return r?.ok ? r.discount : 0; };
-  const creditBill = withCoupon(billTotals(billLines, 'CREDIT'), couponOff('CREDIT'));
-  const cashBill = withCoupon(billTotals(billLines, 'CASH'), couponOff('CASH'));
+  const promotionOff = (method: 'CREDIT' | 'CASH') => discounts[method]?.promotion.applied?.discount ?? 0;
+  const couponOff = (method: 'CREDIT' | 'CASH') => { const r = discounts[method]?.coupon; return r?.ok ? r.discount : 0; };
+  const creditBill = withCoupon(withPromotion(billTotals(billLines, 'CREDIT'), promotionOff('CREDIT')), couponOff('CREDIT'));
+  const cashBill = withCoupon(withPromotion(billTotals(billLines, 'CASH'), promotionOff('CASH')), couponOff('CASH'));
   const cashPercent = uniformCashPercent(lines.map((l) => ({ cashDiscountPerUnit: l.cashOff, cashDiscountPercent: l.cashPercent })));
-  const couponResult = coupon[profile.credit ? 'CREDIT' : 'CASH'] ?? coupon.CASH;
+  const shownMethod = profile.credit ? 'CREDIT' : 'CASH';
+  const couponResult = discounts[shownMethod]?.coupon ?? discounts.CASH?.coupon ?? null;
+  const promotion = discounts[shownMethod]?.promotion ?? null;
   // Live: the tighter of the web limit and Odoo's credit_limit; Odoo unreachable leaves only the web limit.
   const [{ line: creditLine, overdue }, bank] = await Promise.all([getCreditSummary(profile), getWireTransferAccounts()]);
   const creditLocked = isOverdueLocked(overdue) ? overdueLockMessage(overdue!) : null;
@@ -138,6 +142,17 @@ export default async function CartPage({ searchParams }: { searchParams: Promise
       </div>
 
       <div className="space-y-3 lg:sticky lg:top-24">
+      {(promotion?.applied || promotion?.next) && (
+        <div className="space-y-1.5 rounded-xl border border-emerald-600/30 bg-emerald-500/5 p-4 text-sm">
+          <h2 className="flex items-center gap-1.5 font-semibold text-emerald-800 dark:text-emerald-300"><BadgePercent className="size-4" /> โปรโมชัน</h2>
+          {promotion.applied && (
+            <p className="text-emerald-800 dark:text-emerald-300">{promotion.applied.programName} · {promotion.applied.label} · ลด {baht(promotion.applied.discount)}{profile.credit && creditBill.promotionDiscount !== cashBill.promotionDiscount ? ' (ยอดลดตามวิธีชำระ)' : ''}</p>
+          )}
+          {promotion.next && (
+            <p className="text-xs text-muted-foreground">ซื้อสินค้าที่ร่วมรายการเพิ่มอีก {baht(promotion.next.remaining)} รับ {promotion.next.programName} ({promotion.next.label})</p>
+          )}
+        </div>
+      )}
       <div className="space-y-2 rounded-xl border border-border bg-card p-4">
         <h2 className="text-sm font-semibold">โค้ดส่วนลด / คูปอง</h2>
         {couponCode ? (
