@@ -51,6 +51,32 @@ describe('guessThaiAddress', () => {
     expect(guessThaiAddress(d, '12 ม.1 ต.ศรีภูมิ อ.เมือง จ.เชียงใหม่')?.district).toBe('เมืองเชียงใหม่');
   });
 
+  it('reads an Odoo partner whose city is a bare "เมือง"', () => {
+    expect(guessThaiAddress(d, '11/3 ถนนทุ่งศรีเมือง กาฬสินธุ์ เมือง จังหวัดกาฬสินธุ์ 46000', 'กาฬสินธุ์'))
+      .toEqual({ line: '11/3 ถนนทุ่งศรีเมือง', subdistrict: 'กาฬสินธุ์', district: 'เมืองกาฬสินธุ์', province: 'กาฬสินธุ์', postalCode: '46000' });
+  });
+
+  it('does not read the อำเภอ name as a second ตำบล', () => {
+    expect(guessThaiAddress(d, '33/3 หมู่ 3 พระขาว บางบาล จังหวัดพระนครศรีอยุธยา 13250'))
+      .toEqual({ line: '33/3 หมู่ 3', subdistrict: 'พระขาว', district: 'บางบาล', province: 'พระนครศรีอยุธยา', postalCode: '13250' });
+    expect(guessThaiAddress(d, 'เลขที่ 560/132 หมู่ที่ 3 ตำบลหนองขาม อำเภอศรีราชา 20110', 'ชลบุรี')?.subdistrict).toBe('หนองขาม');
+  });
+
+  it('prefers a ตำบล name that stands as its own word', () => {
+    expect(guessThaiAddress(d, '185/3 หมู่ 1 ถนนบ้านนา-แก่งคอย ชะอม แก่งคอย จังหวัดสระบุรี 18110'))
+      .toEqual({ line: '185/3 หมู่ 1 ถนนบ้านนา-แก่งคอย', subdistrict: 'ชะอม', district: 'แก่งคอย', province: 'สระบุรี', postalCode: '18110' });
+    expect(guessThaiAddress(d, '99/3 หมู่ 3 ถนนสีคิ้ว-ชัยภูมิ สีคิ้ว สีคิ้ว จังหวัดนครราชสีมา 30140')?.line).toBe('99/3 หมู่ 3 ถนนสีคิ้ว-ชัยภูมิ');
+  });
+
+  it('keeps the zip from the text when it differs from the dataset', () => {
+    expect(guessThaiAddress(d, '177 หมู่ที่ 7 บ้านโพธิ์ เมือง จังหวัดนครราชสีมา 30000'))
+      .toEqual({ line: '177 หมู่ที่ 7', subdistrict: 'บ้านโพธิ์', district: 'เมืองนครราชสีมา', province: 'นครราชสีมา', postalCode: '30000' });
+  });
+
+  it('reads อำเภอ<province> as the เมือง district', () => {
+    expect(guessThaiAddress(d, 'เลขที่ 97/1 หมู่ 3 ตำบลนาดี อำเภอสมุทรสาคร จังหวัดสมุทรสาคร 74000')?.district).toBe('เมืองสมุทรสาคร');
+  });
+
   it('round-trips the formatted address', () => {
     const address = { line: '55/7 ถ.มิตรภาพ', subdistrict: 'ในเมือง', district: 'เมืองนครราชสีมา', province: 'นครราชสีมา', postalCode: '30000' };
     expect(guessThaiAddress(d, formatThaiAddress(address))).toEqual(address);

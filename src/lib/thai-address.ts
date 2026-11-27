@@ -61,6 +61,25 @@ export function parseThaiAddress(value: unknown): ThaiAddress | null {
 /** Words written before a subdistrict, district or province name in free-text Thai addresses. */
 const LEVEL_PREFIX = /(?:ตำบล|ต\.|แขวง|อำเภอ|อ\.|เขต|จังหวัด|จ\.)\s*$/;
 
+/** `text` with the last occurrence of `part` blanked out (same length, so positions still match `text`). */
+function removeLast(text: string, part: string): string {
+  const at = text.lastIndexOf(part);
+  return at < 0 ? text : `${text.slice(0, at)}${' '.repeat(part.length)}${text.slice(at + part.length)}`;
+}
+
+/**
+ * Where `name` stands as its own word (after a space or ต./ตำบล/แขวง, before a space, comma or อ./อำเภอ/เขต),
+ * else where it first appears inside another word, else -1. "ถนนสีคิ้ว-ชัยภูมิ สีคิ้ว" finds the second สีคิ้ว.
+ */
+function findName(text: string, name: string): { at: number; word: boolean } {
+  for (let at = text.indexOf(name); at >= 0; at = text.indexOf(name, at + 1)) {
+    const before = text.slice(0, at);
+    const after = text.slice(at + name.length);
+    if ((!before || /(?:\s|ตำบล|ต\.|แขวง)$/.test(before)) && (!after || /^(?:[\s,]|อ\.|อำเภอ|เขต)/.test(after))) return { at, word: true };
+  }
+  return { at: text.indexOf(name), word: false };
+}
+
 /**
  * Best-effort structured address from one free-text line, e.g. an Odoo partner's street/street2/city/zip
  * or the `Dealer.address` saved before the picker existed. The ตำบล/แขวง and อำเภอ/เขต must both appear in
@@ -72,20 +91,33 @@ export function guessThaiAddress(data: ThaiAddressData, text: string, provinceHi
   if (!clean) return null;
   const zip = [...clean.matchAll(/(?<!\d)\d{5}(?!\d)/g)].at(-1)?.[0] ?? null;
   const hint = provinceHint?.replace(/^จังหวัด/, '').trim() || null;
-  type Hit = { province: string; district: string; subdistrict: string; postalCode: string; score: number };
+  type Hit = { province: string; district: string; subdistrict: string; postalCode: string; score: number; at: number };
   let best: Hit | null = null;
   let tie = false;
   for (const [province, districts] of data) {
     const provinceInText = clean.includes(province) || (province === BANGKOK && /กรุงเทพ|กทม/.test(clean));
+    const provinceKnown = provinceInText || hint === province;
+    // The province name itself is not the ตำบล (ตำบลกาฬสินธุ์ only counts when it appears a second time).
+    const withoutProvince = clean.includes(province) ? removeLast(clean, province) : clean;
     for (const [district, subs] of districts) {
-      // "เมืองเชียงใหม่" is often written "อ.เมือง จ.เชียงใหม่".
-      const districtInText = clean.includes(district) || (district.startsWith('เมือง') && provinceInText && /(?:อ\.|อำเภอ)\s*เมือง/.test(clean));
+      // "เมืองเชียงใหม่" is often written "อ.เมือง จ.เชียงใหม่", a bare "เมือง" word (Odoo city field)
+      // or "อำเภอสมุทรสาคร".
+      const town = district.startsWith('เมือง') ? district.slice('เมือง'.length) : '';
+      const districtInText = clean.includes(district)
+        || (Boolean(town) && provinceInText && /(?:อ\.|อำเภอ)\s*เมือง|(?:^|\s)เมือง(?=\s|$)/.test(clean))
+        || (Boolean(town) && (clean.includes(`อำเภอ${town}`) || clean.includes(`อ.${town}`)));
       if (!districtInText) continue;
+      // The อำเภอ name is not the ตำบล either: "พระขาว บางบาล" is ตำบลพระขาว, not ตำบลบางบาล.
+      const rest = withoutProvince.includes(district) ? removeLast(withoutProvince, district) : withoutProvince;
       for (const [subdistrict, postalCode] of subs) {
-        if (!clean.includes(subdistrict)) continue;
-        if (zip && postalCode !== zip) continue;
-        const score = subdistrict.length + district.length + (provinceInText ? 20 : 0) + (hint === province ? 10 : 0) + (zip ? 20 : 0);
-        if (!best || score > best.score) { best = { province, district, subdistrict, postalCode, score }; tie = false; }
+        const found = findName(rest, subdistrict);
+        if (found.at < 0) continue;
+        // The dataset keeps one zip per ตำบล; a different zip in the text still fits when the province is known.
+        const zipMatches = !zip || postalCode === zip;
+        if (!zipMatches && !provinceKnown) continue;
+        const score = subdistrict.length + district.length + (provinceInText ? 20 : 0) + (hint === province ? 10 : 0) + (zip && zipMatches ? 20 : 0) + (found.word ? 15 : 0);
+        const hit = { province, district, subdistrict, postalCode: zip ?? postalCode, score, at: found.at };
+        if (!best || score > best.score) { best = hit; tie = false; }
         else if (score === best.score) tie = true;
       }
     }
@@ -93,7 +125,6 @@ export function guessThaiAddress(data: ThaiAddressData, text: string, provinceHi
   if (!best || tie) return null;
   if (!zip && !best.score) return null;
   // `line` = text before the subdistrict, without its ต./แขวง prefix or trailing separators.
-  const at = clean.indexOf(best.subdistrict);
-  const line = clean.slice(0, at).replace(LEVEL_PREFIX, '').replace(/[\s,]+$/, '').trim();
+  const line = clean.slice(0, best.at).replace(LEVEL_PREFIX, '').replace(/[\s,]+$/, '').trim();
   return { line, subdistrict: best.subdistrict, district: best.district, province: best.province, postalCode: best.postalCode };
 }
